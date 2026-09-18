@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
 import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
@@ -54,6 +55,7 @@ fun SurveyScreen(
     var showConfigPanel by remember { mutableStateOf(false) }
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
     var pointPhoto by remember { mutableStateOf<Uri?>(null) }
+    var followReceiver by remember { mutableStateOf(false) }
 
     var measuring by remember { mutableStateOf(false) }
     var secondsRemaining by remember { mutableIntStateOf(0) }
@@ -82,6 +84,18 @@ fun SurveyScreen(
         secondsRemaining = duration
         lastMessage = null
         measuring = true
+    }
+
+    LaunchedEffect(gnss.latitude, gnss.longitude, followReceiver) {
+        if (followReceiver) {
+            val lat = gnss.latitude
+            val lon = gnss.longitude
+            if (lat != null && lon != null) {
+                mapRef?.animateCamera(
+                    CameraUpdateFactory.newLatLngZoom(LatLng(lat, lon), 18.0)
+                )
+            }
+        }
     }
 
     LaunchedEffect(measuring) {
@@ -172,8 +186,54 @@ fun SurveyScreen(
                 .padding(end = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            FloatingActionButton(onClick = { mapRef?.animateCamera(CameraUpdateFactory.zoomIn()) }) { Text("+") }
-            FloatingActionButton(onClick = { mapRef?.animateCamera(CameraUpdateFactory.zoomOut()) }) { Text("−") }
+            SmallFloatingActionButton(
+                onClick = { mapRef?.animateCamera(CameraUpdateFactory.zoomIn()) }
+            ) { Text("+") }
+
+            SmallFloatingActionButton(
+                onClick = { mapRef?.animateCamera(CameraUpdateFactory.zoomOut()) }
+            ) { Text("−") }
+
+            SmallFloatingActionButton(
+                onClick = {
+                    val lat = gnss.latitude
+                    val lon = gnss.longitude
+                    if (lat != null && lon != null) {
+                        mapRef?.animateCamera(
+                            CameraUpdateFactory.newLatLngZoom(LatLng(lat, lon), 18.0)
+                        )
+                    } else {
+                        lastMessage = "Aún no hay posición GNSS para centrar."
+                    }
+                }
+            ) { Text("◎") }
+
+            SmallFloatingActionButton(
+                onClick = {
+                    val pts = savedPoints.filter { it.latitude != null && it.longitude != null }
+                    if (pts.isNotEmpty()) {
+                        val p = pts.last()
+                        mapRef?.animateCamera(
+                            CameraUpdateFactory.newLatLngZoom(
+                                LatLng(p.latitude!!, p.longitude!!),
+                                17.0
+                            )
+                        )
+                    } else {
+                        mapRef?.animateCamera(
+                            CameraUpdateFactory.newLatLngZoom(LatLng(9.7489, -83.7534), 7.0)
+                        )
+                    }
+                }
+            ) { Text("▣") }
+
+            SmallFloatingActionButton(
+                onClick = { followReceiver = !followReceiver }
+            ) { Text(if (followReceiver) "F✓" else "F") }
+
+            SmallFloatingActionButton(
+                onClick = { lastMessage = "Capas y estilo del mapa se administran desde Capas." }
+            ) { Text("▱") }
         }
 
         Box(
