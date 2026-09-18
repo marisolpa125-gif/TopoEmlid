@@ -39,6 +39,7 @@ fun ProjectLayersScreen(project: TopoProject?) {
     var selectedBasemap by remember(project.id) { mutableStateOf(basemapStore.selected(project.id)) }
     var mapboxToken by remember { mutableStateOf(basemapStore.mapboxToken()) }
     var layers by remember(project.id) { mutableStateOf(store.load(project.id)) }
+    var library by remember { mutableStateOf(store.loadLibrary()) }
     var editing by remember { mutableStateOf<LayerItem?>(null) }
     var creating by remember { mutableStateOf(false) }
     var menuLayer by remember { mutableStateOf<LayerItem?>(null) }
@@ -63,6 +64,15 @@ fun ProjectLayersScreen(project: TopoProject?) {
                     layers.map { if (it.id == saved.id) saved else it }
                 }
                 persist(updated)
+
+                val libraryUpdated = if (library.any { it.id == saved.id }) {
+                    library.map { if (it.id == saved.id) saved.copy(visible = true) else it }
+                } else {
+                    library + saved.copy(visible = true, order = library.size)
+                }
+                library = libraryUpdated
+                store.saveLibrary(libraryUpdated)
+
                 creating = false
                 editing = null
             }
@@ -177,10 +187,64 @@ fun ProjectLayersScreen(project: TopoProject?) {
 
         Spacer(Modifier.height(10.dp))
 
+        Text("Biblioteca global de capas", fontWeight = FontWeight.Bold)
+        Text(
+            "Estas capas quedan disponibles para todos los proyectos.",
+            style = MaterialTheme.typography.bodySmall
+        )
+
+        val availableLibraryLayers = library.filter { lib -> layers.none { it.id == lib.id } }
+        if (library.isEmpty()) {
+            Text(
+                "Aún no hay capas globales. Las capas nuevas que cree se guardarán aquí automáticamente.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        } else if (availableLibraryLayers.isEmpty()) {
+            Text(
+                "Todas las capas globales ya están agregadas a este proyecto.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        } else {
+            availableLibraryLayers.forEach { lib ->
+                Card(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 5.dp)
+                ) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(lib.name, fontWeight = FontWeight.Bold)
+                            Text(lib.type.label, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Button(
+                            onClick = {
+                                persist(
+                                    layers + lib.copy(
+                                        visible = true,
+                                        order = layers.size
+                                    )
+                                )
+                            }
+                        ) {
+                            Text("Agregar")
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
         Text("Capas del proyecto", fontWeight = FontWeight.Bold)
 
         if (layers.isEmpty()) {
-            Text("No hay capas superpuestas. El mapa base seleccionado arriba se usa aparte; aquí puede agregar WMS, WMTS, XYZ/TMS, archivos locales o capas de dibujo.")
+            Text("No hay capas superpuestas en este proyecto. Puede agregarlas desde la biblioteca global o crear una nueva.")
         }
 
         layers.forEach { layer ->
