@@ -353,12 +353,12 @@ private fun ReceiverDetailScreen(
 
         if (gnss.connected && gnss.receiverName == receiver.name) {
             ReceiverMenuRow("Estado", gnss.solution) { page = ReceiverPage.STATUS }
-            ReceiverMenuRow("Entrada de correcciones", "NTRIP / LoRa / apagado") { page = ReceiverPage.CORRECTIONS }
-            ReceiverMenuRow("Salida de la base 1", "RTCM3") { page = ReceiverPage.BASE_OUTPUT }
-            ReceiverMenuRow("Configuración de la base", "Coordenadas y altura") { page = ReceiverPage.BASE_CONFIG }
-            ReceiverMenuRow("Registro", "RINEX / LLH / RTCM3") { page = ReceiverPage.LOGGING }
-            ReceiverMenuRow("Wi‑Fi", "Redes y punto de acceso") { page = ReceiverPage.WIFI }
-            ReceiverMenuRow("Configuración", "GNSS, Bluetooth y transmisiones") { page = ReceiverPage.SETTINGS }
+            ReceiverMenuRow("Entrada de correcciones", "Perfil NTRIP de Topo Emlid") { page = ReceiverPage.CORRECTIONS }
+            ReceiverMenuRow("Salida de la base 1", "Administración del receptor: pendiente") { page = ReceiverPage.BASE_OUTPUT }
+            ReceiverMenuRow("Configuración de la base", "Administración del receptor: pendiente") { page = ReceiverPage.BASE_CONFIG }
+            ReceiverMenuRow("Registro", "Administración del receptor: pendiente") { page = ReceiverPage.LOGGING }
+            ReceiverMenuRow("Wi‑Fi", "Administración del receptor: pendiente") { page = ReceiverPage.WIFI }
+            ReceiverMenuRow("Configuración", "Administración del receptor: pendiente") { page = ReceiverPage.SETTINGS }
 
             Spacer(Modifier.height(12.dp))
             Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) {
@@ -451,11 +451,38 @@ private fun ReceiverSubPage(
             ReceiverPage.STATUS -> {
                 Text("Resumen del estado", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))
+                StatusLine("Bluetooth", if (gnss.connected) "Conectado" else "Desconectado")
+                StatusLine("Flujo NMEA", if (gnss.nmeaReceiving) "RECIBIENDO" else "ESPERANDO")
                 StatusLine("Relación señal/ruido", gnss.signalNoiseAvgDbHz?.let { "%.1f dB-Hz".format(it) } ?: "—")
                 StatusLine("Satélites a la vista", (gnss.satellitesInView ?: gnss.satellites)?.toString() ?: "—")
+                StatusLine("Satélites usados", gnss.satellites?.toString() ?: "—")
                 StatusLine("PDOP", gnss.pdop?.let { "%.2f".format(it) } ?: "—")
                 StatusLine("Solución", gnss.solution)
                 StatusLine("Modo de posicionamiento", gnss.positioningMode ?: "—")
+                StatusLine("Edad de corrección", gnss.correctionAgeS?.let { "%.1f s".format(it) } ?: "—")
+
+                if (gnss.satelliteSnrValues.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text("Señal de satélites", fontWeight = FontWeight.Bold)
+                    Text("Barras de SNR recibidas por NMEA GSV.", style = MaterialTheme.typography.bodySmall)
+                    gnss.satelliteSnrValues.take(24).forEachIndexed { index, snr ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("S${index + 1}", modifier = Modifier.width(36.dp), style = MaterialTheme.typography.bodySmall)
+                            LinearProgressIndicator(
+                                progress = { (snr / 60.0).coerceIn(0.0, 1.0).toFloat() },
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                "${"%.0f".format(snr)}",
+                                modifier = Modifier.width(42.dp),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
 
                 Spacer(Modifier.height(12.dp))
                 Text("Coordenadas y precisión", fontWeight = FontWeight.Bold)
@@ -464,6 +491,13 @@ private fun ReceiverSubPage(
                 StatusLine("Altura elipsoidal", gnss.ellipsoidalHeightM?.let { "%.3f m".format(it) } ?: "—")
                 StatusLine("Precisión horizontal", gnss.horizontalAccuracyM?.let { "%.3f m".format(it) } ?: "—")
                 StatusLine("Precisión vertical", gnss.verticalAccuracyM?.let { "%.3f m".format(it) } ?: "—")
+
+                Spacer(Modifier.height(12.dp))
+                Text("Diagnóstico NMEA", fontWeight = FontWeight.Bold)
+                Text(
+                    gnss.lastNmeaSentence ?: "Todavía no se ha recibido ninguna trama NMEA.",
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
 
             ReceiverPage.CORRECTIONS -> ReceiverAdminPlaceholder(
@@ -545,7 +579,7 @@ private fun ReceiverSubPage(
         Spacer(Modifier.height(18.dp))
         Text(
             if (page == ReceiverPage.STATUS)
-                "Estos valores se actualizan desde el flujo NMEA real del receptor."
+                "Estos valores se actualizan únicamente con datos reales recibidos del receptor por NMEA. Si aparece ESPERANDO, Topo Emlid tiene Bluetooth pero todavía no está recibiendo tramas de posición."
             else
                 "Esta pantalla ya forma parte de TopoEmlid. La lectura y modificación real de estos ajustes requiere integrar el canal de administración del Reach; por ahora no se muestran valores inventados.",
             style = MaterialTheme.typography.bodySmall
@@ -568,6 +602,11 @@ private fun StatusLine(label: String, value: String) {
 @Composable
 private fun ReceiverAdminPlaceholder(title: String, rows: List<String>) {
     Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Esta sección todavía no controla la configuración interna del receptor. Se muestra como referencia y quedará habilitada cuando exista comunicación real con la administración del equipo.",
+        style = MaterialTheme.typography.bodySmall
+    )
     Spacer(Modifier.height(12.dp))
     rows.forEach { row ->
         Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
@@ -576,7 +615,7 @@ private fun ReceiverAdminPlaceholder(title: String, rows: List<String>) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(row)
-                Text("›")
+                Text("Pendiente", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
