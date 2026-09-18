@@ -30,6 +30,35 @@ private data class NearbyReceiver(
     val rssi: Int
 )
 
+private fun isLikelyGnssReceiver(name: String): Boolean {
+    val n = name.lowercase()
+    val markers = listOf(
+        "reach", "emlid", "topcon", "hiper", "trimble", "leica", "south", "stonex",
+        "hi-target", "hitarget", "chc", "chcnav", "kolida", "spectra",
+        "sokkia", "foif", "comnav", "singular", "septentrio", "hemisphere",
+        "gnss", "rtk", "gps"
+    )
+    return markers.any { it in n }
+}
+
+private fun receiverBrand(name: String): String {
+    val n = name.lowercase()
+    return when {
+        "emlid" in n || "reach" in n -> "Emlid"
+        "topcon" in n || "hiper" in n -> "Topcon"
+        "trimble" in n -> "Trimble"
+        "leica" in n -> "Leica"
+        "south" in n -> "South"
+        "stonex" in n -> "Stonex"
+        "hi-target" in n || "hitarget" in n -> "Hi-Target"
+        "chc" in n || "chcnav" in n -> "CHCNAV"
+        "kolida" in n -> "Kolida"
+        "sokkia" in n -> "Sokkia"
+        "spectra" in n -> "Spectra"
+        else -> "GNSS"
+    }
+}
+
 @SuppressLint("MissingPermission")
 @Composable
 fun ReceiverSection(
@@ -116,12 +145,12 @@ private fun ReceiversScreen(
         else adapter.bondedDevices
             .filter {
                 val n = runCatching { it.name.orEmpty() }.getOrDefault("")
-                n.contains("reach", ignoreCase = true) || n.contains("emlid", ignoreCase = true)
+                isLikelyGnssReceiver(n)
             }
             .map {
                 ReceiverProfile(
                     id = profiles.firstOrNull { p -> p.address == it.address }?.id ?: UUID.randomUUID().toString(),
-                    name = runCatching { it.name }.getOrNull() ?: "Reach",
+                    name = runCatching { it.name }.getOrNull() ?: "Receptor GNSS",
                     address = it.address,
                     transport = "Bluetooth Classic"
                 )
@@ -133,7 +162,7 @@ private fun ReceiversScreen(
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val device = result.device
                 val name = runCatching { device.name }.getOrNull() ?: result.scanRecord?.deviceName ?: return
-                if (!name.contains("reach", true) && !name.contains("emlid", true)) return
+                if (!isLikelyGnssReceiver(name)) return
                 val candidate = NearbyReceiver(name, device.address, result.rssi)
                 nearby = (nearby.filterNot { it.address == candidate.address } + candidate).sortedByDescending { it.rssi }
             }
@@ -196,7 +225,7 @@ private fun ReceiversScreen(
         if (adapter?.isEnabled != true) {
             InfoCard("Active Bluetooth en la tablet para buscar y conectar receptores.")
         } else if (!permissionGranted) {
-            InfoCard("Autorice Bluetooth para detectar receptores Reach.")
+            InfoCard("Autorice Bluetooth para detectar receptores GNSS cercanos.")
         }
 
         if (scanning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 10.dp))
@@ -205,7 +234,7 @@ private fun ReceiversScreen(
             val stored = profiles.firstOrNull { it.address == p.address } ?: p
             ReceiverCard(
                 profile = stored,
-                subtitle = "Emparejado • listo para NMEA",
+                subtitle = "${receiverBrand(stored.name)} • emparejado • conexión NMEA",
                 selected = stored.id == activeReceiverId,
                 onClick = {
                     if (profiles.none { it.address == stored.address }) onProfilesChanged(profiles + stored)
@@ -220,13 +249,13 @@ private fun ReceiversScreen(
                 Column(Modifier.padding(14.dp)) {
                     Text(r.name, fontWeight = FontWeight.Bold)
                     Text("Detectado por BLE • señal ${r.rssi} dBm", style = MaterialTheme.typography.bodySmall)
-                    Text("Para usar NMEA, empareje este Reach primero en Bluetooth de Android.", style = MaterialTheme.typography.bodySmall)
+                    Text("${receiverBrand(r.name)} detectado. Para recibir NMEA, empareje el receptor primero en Bluetooth de Android.", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
 
         if (!scanning && pairedReach.isEmpty() && nearby.isEmpty()) {
-            InfoCard("No se han encontrado receptores. Acérquese al Reach, compruebe que esté encendido y pulse Actualizar.")
+            InfoCard("No se han encontrado receptores GNSS. Compruebe que la antena esté encendida, Bluetooth esté visible y pulse Actualizar.")
         }
 
         if (profiles.isNotEmpty()) {
