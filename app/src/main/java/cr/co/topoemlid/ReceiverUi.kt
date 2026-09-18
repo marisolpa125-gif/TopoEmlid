@@ -65,6 +65,7 @@ fun ReceiverSection(
     profiles: List<ReceiverProfile>,
     onProfilesChanged: (List<ReceiverProfile>) -> Unit,
     activeReceiverId: String?,
+    gnss: GnssStatus,
     onSelectReceiver: (ReceiverProfile) -> Unit,
     ntripProfiles: List<NtripProfile>,
     onNtripProfilesChanged: (List<NtripProfile>) -> Unit,
@@ -114,6 +115,7 @@ fun ReceiverSection(
                 profiles = profiles,
                 onProfilesChanged = onProfilesChanged,
                 activeReceiverId = activeReceiverId,
+                gnss = gnss,
                 onSelectReceiver = onSelectReceiver,
                 onOpenReceiver = { detailReceiver = it }
             )
@@ -234,7 +236,11 @@ private fun ReceiversScreen(
             ) { Text(if (scanning) "Buscando…" else "↻ Actualizar") }
         }
 
-        Text("Disponible", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+        Text("Dispositivos emparejados / detectados", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+        Text(
+            "Aparecer aquí no significa que el receptor esté conectado. Topo Emlid muestra los equipos que Android ya tiene emparejados y los que detecta cerca.",
+            style = MaterialTheme.typography.bodySmall
+        )
 
         if (adapter?.isEnabled != true) {
             InfoCard("Active Bluetooth en la tablet para buscar y conectar receptores.")
@@ -248,7 +254,14 @@ private fun ReceiversScreen(
             val stored = profiles.firstOrNull { it.address == p.address } ?: p
             ReceiverCard(
                 profile = stored,
-                subtitle = "${receiverBrand(stored.name)} • emparejado • conexión NMEA",
+                subtitle = when {
+                    stored.id == activeReceiverId && gnss.connected && gnss.receiverName == stored.name && gnss.nmeaReceiving ->
+                        "${receiverBrand(stored.name)} • conectado • NMEA recibiendo"
+                    stored.id == activeReceiverId && gnss.connected && gnss.receiverName == stored.name ->
+                        "${receiverBrand(stored.name)} • Bluetooth conectado • esperando NMEA"
+                    else ->
+                        "${receiverBrand(stored.name)} • emparejado en Android • no conectado"
+                },
                 selected = stored.id == activeReceiverId,
                 onClick = {
                     if (profiles.none { it.address == stored.address }) onProfilesChanged(profiles + stored)
