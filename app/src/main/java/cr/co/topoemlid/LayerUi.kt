@@ -32,6 +32,9 @@ fun ProjectLayersScreen(project: TopoProject?) {
     }
 
     val store = remember(project.id) { LayerStore(context) }
+    val basemapStore = remember(project.id) { BasemapStore(context) }
+    var selectedBasemap by remember(project.id) { mutableStateOf(basemapStore.selected(project.id)) }
+    var mapboxToken by remember { mutableStateOf(basemapStore.mapboxToken()) }
     var layers by remember(project.id) { mutableStateOf(store.load(project.id)) }
     var editing by remember { mutableStateOf<LayerItem?>(null) }
     var creating by remember { mutableStateOf(false) }
@@ -124,6 +127,54 @@ fun ProjectLayersScreen(project: TopoProject?) {
         }
 
         Spacer(Modifier.height(10.dp))
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Mapa base", fontWeight = FontWeight.Bold)
+                BasemapType.entries.forEach { type ->
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedBasemap == type,
+                            onClick = {
+                                selectedBasemap = type
+                                basemapStore.setSelected(project.id, type)
+                            }
+                        )
+                        Text(type.label)
+                    }
+                }
+
+                if (selectedBasemap == BasemapType.MAPBOX_STREETS ||
+                    selectedBasemap == BasemapType.MAPBOX_SATELLITE
+                ) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = mapboxToken,
+                        onValueChange = {
+                            mapboxToken = it
+                            basemapStore.setMapboxToken(it)
+                        },
+                        label = { Text("Token público de Mapbox") },
+                        supportingText = {
+                            Text(
+                                if (mapboxToken.isBlank())
+                                    "Necesario para cargar Mapbox."
+                                else
+                                    "Token guardado."
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        Text("Capas del proyecto", fontWeight = FontWeight.Bold)
 
         if (layers.isEmpty()) {
             Text("No hay capas. Puede agregar WMS, WMTS, XYZ/TMS, archivos locales o capas de dibujo.")
