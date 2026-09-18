@@ -2,7 +2,11 @@ package cr.co.topoemlid
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.os.Handler
@@ -16,11 +20,14 @@ import java.util.UUID
 import kotlin.concurrent.thread
 
 class ReceiverConnectionManager(context: Context) {
+    private val appContext = context.applicationContext
     private val adapter: BluetoothAdapter? =
         (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
     private val mainHandler = Handler(Looper.getMainLooper())
     private var socket: BluetoothSocket? = null
+    private var gatt: BluetoothGatt? = null
     private var worker: Thread? = null
+    private var autoFallbackProfile: ReceiverProfile? = null
 
     var status by mutableStateOf(GnssStatus())
         private set
@@ -34,14 +41,133 @@ class ReceiverConnectionManager(context: Context) {
     @SuppressLint("MissingPermission")
     fun connect(profile: ReceiverProfile) {
         disconnect()
-        val device = adapter?.bondedDevices?.firstOrNull { it.address == profile.address }
+        connecting = true
+        lastError = null
+
+        when (profile.preferredMode) {
+            ReceiverConnectionMode.AUTO -> {
+                if (isEmlidLike(profile.name)) {
+                    autoFallbackProfile = profile
+                    connectBle(profile, allowFallback = true)
+                } else {
+                    connectNmea(profile)
+                }
+            }
+            ReceiverConnectionMode.BLE -> connectBle(profile, allowFallback = false)
+            ReceiverConnectionMode.BLUETOOTH_NMEA -> connectNmea(profile)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun connectBle(profile: ReceiverProfile, allowFallback: Boolean) {
+        val device = runCatching { adapter?.getRemoteDevice(profile.address) }.getOrNull()
         if (device == null) {
-            lastError = "El receptor debe estar emparejado primero en Bluetooth de Android."
+            connecting = false
+            lastError = "No se pudo obtener el dispositivo BLE. Actualice la lista y vuelva a seleccionarlo."
             return
         }
 
-        connecting = true
-        lastError = null
+        postStatus(
+            GnssStatus(
+                receiverName = profile.name,
+                connected = false,
+                connectionTransport = "BLE",
+                solution = "CONECTANDO BLE"
+            )
+        )
+
+        val callback = object : BluetoothGattCallback() {
+            override fun onConnectionStateChange(g: BluetoothGatt, statusCode: Int, newState: Int) {
+                when (newState) {
+                    BluetoothProfile.STATE_CONNECTED -> {
+                        gatt = g
+                        mainHandler.post {
+                            connecting = false
+                            lastError = null
+                            status = status.copy(
+                                connected = true,
+                                receiverName = profile.name,
+                                connectionTransport = "BLE",
+                                solution = "BLE CONECTADO",
+                                nmeaReceiving = false
+                            )
+                        }
+                        runCatching { g.discoverServices() }
+                    }
+
+                    BluetoothProfile.STATE_DISCONNECTED -> {
+                        runCatching { g.close() }
+                        if (gatt === g) gatt = null
+
+                        if (allowFallback && autoFallbackProfile?.id == profile.id) {
+                            autoFallbackProfile = null
+                            mainHandler.post {
+                                connecting = true
+                                status = GnssStatus(
+                                    receiverName = profile.name,
+                                    connectionTransport = "Bluetooth / NMEA",
+                                    solution = "BLE NO DISPONIBLE • PROBANDO NMEA"
+                                )
+                            }
+                            connectNmea(profile.copy(preferredMode = ReceiverConnectionMode.BLUETOOTH_NMEA))
+                        } else {
+                            mainHandler.post {
+                                connecting = false
+                                status = status.copy(connected = false, solution = "SIN SEÑAL")
+                                if (statusCode != BluetoothGatt.GATT_SUCCESS) {
+                                    lastError = "No se pudo mantener la conexión BLE (código $statusCode)."
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            override fun onServicesDiscovered(g: BluetoothGatt, statusCode: Int) {
+                if (statusCode == BluetoothGatt.GATT_SUCCESS) {
+                    val count = g.services?.size ?: 0
+                    mainHandler.post {
+                        status = status.copy(
+                            connected = true,
+                            connectionTransport = "BLE",
+                            bleServicesDiscovered = count,
+                            solution = "BLE CONECTADO"
+                        )
+                    }
+                }
+            }
+        }
+
+        try {
+            gatt = device.connectGatt(appContext, false, callback, BluetoothDevice.TRANSPORT_LE)
+        } catch (e: Exception) {
+            if (allowFallback) {
+                autoFallbackProfile = null
+                connectNmea(profile.copy(preferredMode = ReceiverConnectionMode.BLUETOOTH_NMEA))
+            } else {
+                connecting = false
+                lastError = e.message ?: "No se pudo iniciar la conexión BLE."
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun connectNmea(profile: ReceiverProfile) {
+        val device = adapter?.bondedDevices?.firstOrNull { it.address == profile.address }
+        if (device == null) {
+            connecting = false
+            lastError = "Para Bluetooth/NMEA, el receptor debe estar emparejado primero en Bluetooth de Android."
+            return
+        }
+
+        postStatus(
+            GnssStatus(
+                receiverName = profile.name,
+                connected = false,
+                connectionTransport = "Bluetooth / NMEA",
+                solution = "CONECTANDO"
+            )
+        )
 
         worker = thread(name = "gnss-nmea") {
             try {
@@ -76,7 +202,7 @@ class ReceiverConnectionManager(context: Context) {
 
                 val s = connectedSocket
                     ?: throw IllegalStateException(
-                        "No se pudo abrir un canal Bluetooth de datos con ${profile.name}. " +
+                        "No se pudo abrir un canal Bluetooth/NMEA con ${profile.name}. " +
                             "Verifique que el receptor tenga salida NMEA por Bluetooth activada.",
                         lastConnectError
                     )
@@ -86,6 +212,7 @@ class ReceiverConnectionManager(context: Context) {
                     status.copy(
                         connected = true,
                         receiverName = profile.name,
+                        connectionTransport = "Bluetooth / NMEA",
                         solution = "ESPERANDO NMEA"
                     )
                 )
@@ -99,12 +226,14 @@ class ReceiverConnectionManager(context: Context) {
                             status.copy(
                                 connected = true,
                                 receiverName = profile.name,
+                                connectionTransport = "Bluetooth / NMEA",
                                 nmeaReceiving = true,
                                 lastNmeaSentence = line.take(160),
                                 lastNmeaAt = System.currentTimeMillis()
                             )
                         )
                     }
+
                     NmeaParser.parseGga(line)?.let { gga ->
                         val solution = when (gga.fixQuality) {
                             4 -> "FIX"
@@ -117,6 +246,7 @@ class ReceiverConnectionManager(context: Context) {
                             status.copy(
                                 connected = true,
                                 receiverName = profile.name,
+                                connectionTransport = "Bluetooth / NMEA",
                                 solution = solution,
                                 satellites = gga.satellites,
                                 latitude = gga.latitude,
@@ -180,12 +310,21 @@ class ReceiverConnectionManager(context: Context) {
     }
 
     fun disconnect() {
+        autoFallbackProfile = null
         worker?.interrupt()
         worker = null
         runCatching { socket?.close() }
         socket = null
+        runCatching { gatt?.disconnect() }
+        runCatching { gatt?.close() }
+        gatt = null
         connecting = false
         status = GnssStatus(receiverName = status.receiverName)
+    }
+
+    private fun isEmlidLike(name: String): Boolean {
+        val n = name.lowercase()
+        return "reach" in n || "emlid" in n
     }
 
     private fun postStatus(newStatus: GnssStatus) {
