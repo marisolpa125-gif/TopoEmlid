@@ -387,11 +387,36 @@ fun SurveyScreen(
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = code,
-                    onValueChange = { code = it },
+                    onValueChange = { code = it.uppercase() },
                     label = { Text("Código") },
-                    supportingText = { Text("Luego aquí se conectará la biblioteca editable de códigos.") },
+                    supportingText = { Text("Puede escoger uno de la lista o escribir cualquier código manualmente.") },
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                Spacer(Modifier.height(8.dp))
+                Text("Códigos frecuentes", style = MaterialTheme.typography.titleSmall)
+
+                val defaultCodes = listOf(
+                    "CALLE", "CORDÓN", "CUNETA", "CAÑO", "ASFALTO", "LASTRE",
+                    "POSTE", "LOTE", "LINDERO", "CERCA", "ACERA", "MURO",
+                    "EDIFICIO", "ESQUINA", "EJE", "ALCANTARILLA", "ÁRBOL",
+                    "HIDRANTE", "CAJA", "TAPA", "TALUD", "PIE TALUD",
+                    "CORONA", "QUEBRADA", "RÍO", "PUENTE", "PORTÓN",
+                    "PUNTO CONTROL"
+                )
+
+                androidx.compose.foundation.layout.FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    defaultCodes.forEach { item ->
+                        AssistChip(
+                            onClick = { code = item },
+                            label = { Text(item) }
+                        )
+                    }
+                }
 
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
