@@ -16,6 +16,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -240,6 +243,11 @@ private fun LayerEditorDialog(
     var localUri by remember(initial?.id) { mutableStateOf(initial?.localUri) }
     var localFileName by remember(initial?.id) { mutableStateOf<String?>(null) }
     var typeMenu by remember { mutableStateOf(false) }
+    var wmsLoading by remember { mutableStateOf(false) }
+    var wmsOptions by remember { mutableStateOf<List<WmsLayerOption>>(emptyList()) }
+    var wmsMenuOpen by remember { mutableStateOf(false) }
+    var wmsError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
@@ -286,10 +294,86 @@ private fun LayerEditorDialog(
 
                 if (type == LayerType.WMS || type == LayerType.WMTS) {
                     Spacer(Modifier.height(8.dp))
+
+                    if (type == LayerType.WMS) {
+                        Button(
+                            onClick = {
+                                if (url.isNotBlank()) {
+                                    wmsLoading = true
+                                    wmsError = null
+                                    scope.launch {
+                                        val result = withContext(Dispatchers.IO) {
+                                            WmsCapabilitiesClient.load(url)
+                                        }
+                                        wmsLoading = false
+                                        result.onSuccess {
+                                            wmsOptions = it
+                                            wmsMenuOpen = true
+                                        }.onFailure {
+                                            wmsError = it.message ?: "No se pudieron cargar las capas WMS."
+                                        }
+                                    }
+                                }
+                            },
+                            enabled = url.isNotBlank() && !wmsLoading,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (wmsLoading) "Consultando servicio…" else "Cargar capas WMS")
+                        }
+
+                        wmsError?.let {
+                            Text(
+                                it,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+
+                        if (wmsOptions.isNotEmpty()) {
+                            Box {
+                                OutlinedButton(
+                                    onClick = { wmsMenuOpen = true },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        if (layerName.isBlank()) "Seleccionar capa WMS"
+                                        else "Capa: $layerName"
+                                    )
+                                }
+
+                                DropdownMenu(
+                                    expanded = wmsMenuOpen,
+                                    onDismissRequest = { wmsMenuOpen = false }
+                                ) {
+                                    wmsOptions.forEach { option ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Column {
+                                                    Text(option.title, fontWeight = FontWeight.Bold)
+                                                    Text(option.name, style = MaterialTheme.typography.bodySmall)
+                                                }
+                                            },
+                                            onClick = {
+                                                layerName = option.name
+                                                if (name.isBlank()) name = option.title
+                                                if (option.crs.any { it.equals("EPSG:3857", true) }) {
+                                                    crs = "EPSG:3857"
+                                                }
+                                                wmsMenuOpen = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = layerName,
                         onValueChange = { layerName = it },
-                        label = { Text("Nombre de capa / layer") },
+                        label = { Text("Nombre técnico de capa / layer") },
+                        supportingText = { Text("En WMS conviene cargar la lista y seleccionar el Name publicado por el servicio.") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(8.dp))
