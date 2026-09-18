@@ -1,5 +1,7 @@
 package cr.co.topoemlid
 
+import kotlin.math.floor
+
 data class GgaFix(
     val latitude: Double,
     val longitude: Double,
@@ -11,7 +13,7 @@ data class GgaFix(
 
 object NmeaParser {
     fun parseGga(sentence: String): GgaFix? {
-        if (!sentence.startsWith("$GPGGA") && !sentence.startsWith("$GNGGA")) return null
+        if (!sentence.startsWith("\$GPGGA") && !sentence.startsWith("\$GNGGA")) return null
         val p = sentence.substringBefore('*').split(',')
         if (p.size < 10) return null
         val lat = nmeaCoord(p[2], p[3]) ?: return null
