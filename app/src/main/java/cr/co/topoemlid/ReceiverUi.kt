@@ -276,12 +276,14 @@ private fun ReceiversScreen(
             ReceiverCard(
                 profile = stored,
                 subtitle = when {
+                    stored.id == activeReceiverId && gnss.connected && gnss.receiverName == stored.name && gnss.connectionTransport == "BLE" ->
+                        "${receiverBrand(stored.name)} • BLE conectado"
                     stored.id == activeReceiverId && gnss.connected && gnss.receiverName == stored.name && gnss.nmeaReceiving ->
-                        "${receiverBrand(stored.name)} • conectado • NMEA recibiendo"
+                        "${receiverBrand(stored.name)} • Bluetooth/NMEA • datos recibiendo"
                     stored.id == activeReceiverId && gnss.connected && gnss.receiverName == stored.name ->
-                        "${receiverBrand(stored.name)} • Bluetooth conectado • esperando NMEA"
+                        "${receiverBrand(stored.name)} • ${gnss.connectionTransport ?: "Bluetooth"} conectado"
                     else ->
-                        "${receiverBrand(stored.name)} • emparejado en Android • no conectado"
+                        "${receiverBrand(stored.name)} • ${stored.preferredMode.label} • no conectado"
                 },
                 selected = stored.id == activeReceiverId,
                 onClick = {
@@ -293,11 +295,28 @@ private fun ReceiversScreen(
         }
 
         nearby.filter { n -> pairedGnss.none { it.address == n.address } }.forEach { r ->
-            Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+            val existing = profiles.firstOrNull { it.address == r.address }
+            val candidate = existing ?: ReceiverProfile(
+                id = UUID.randomUUID().toString(),
+                name = r.name,
+                address = r.address,
+                transport = "BLE",
+                preferredMode = ReceiverConnectionMode.BLE
+            )
+            Card(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 5.dp)
+                    .clickable {
+                        if (existing == null) onProfilesChanged(profiles + candidate)
+                        onSelectReceiver(candidate)
+                        onOpenReceiver(candidate)
+                    }
+            ) {
                 Column(Modifier.padding(14.dp)) {
                     Text(r.name, fontWeight = FontWeight.Bold)
                     Text("Detectado por BLE • señal ${r.rssi} dBm", style = MaterialTheme.typography.bodySmall)
-                    Text("${receiverBrand(r.name)} detectado. Para recibir NMEA, empareje el receptor primero en Bluetooth de Android.", style = MaterialTheme.typography.bodySmall)
+                    Text("Toque para seleccionar y probar conexión BLE.", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
