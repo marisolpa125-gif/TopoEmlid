@@ -106,3 +106,21 @@ data class ReceiverTelemetry(
     val nmeaReceiving: Boolean = false,
     val internetSource: String? = null
 )
+
+data class SurveyPoint(
+    val id: String,
+    val projectId: String,
+    val pointNumber: String,
+    val description: String,
+    val code: String,
+    val antennaHeightM: Double,
+    val occupationSeconds: Int,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val ellipsoidalHeightM: Double? = null,
+    val horizontalAccuracyM: Double? = null,
+    val verticalAccuracyM: Double? = null,
+    val solution: String = "SIN SOLUCIÓN",
+    val satellites: Int? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)
