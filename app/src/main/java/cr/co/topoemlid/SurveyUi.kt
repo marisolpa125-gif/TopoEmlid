@@ -73,6 +73,7 @@ fun SurveyScreen(
     var activeMapTool by remember { mutableStateOf(MapFieldTool.NONE) }
     var toolPoints by remember { mutableStateOf<List<LatLng>>(emptyList()) }
     var toolResult by remember { mutableStateOf<String?>(null) }
+    var parallelOffsetText by remember { mutableStateOf("1.00") }
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
     var pointPhoto by remember { mutableStateOf<Uri?>(null) }
     var followReceiver by remember { mutableStateOf(false) }
@@ -219,12 +220,13 @@ fun SurveyScreen(
                                     }
 
                                     toolPoints = updated
-                                    toolResult = renderFieldTool(map, activeMapTool, updated)
+                                    toolResult = renderFieldTool(map, activeMapTool, updated, parallelOffsetText.toDoubleOrNull() ?: 1.0)
 
                                     if (
                                         activeMapTool == MapFieldTool.POINT ||
                                         ((activeMapTool == MapFieldTool.RECTANGLE ||
-                                          activeMapTool == MapFieldTool.CIRCLE) && updated.size >= 2)
+                                          activeMapTool == MapFieldTool.CIRCLE ||
+                                          activeMapTool == MapFieldTool.PARALLEL) && updated.size >= 2)
                                     ) {
                                         activeMapTool = MapFieldTool.NONE
                                     }
@@ -429,9 +431,22 @@ fun SurveyScreen(
                     MapFieldTool.LINE,
                     MapFieldTool.DISTANCE,
                     MapFieldTool.AREA,
+                    MapFieldTool.PERIMETER,
+                    MapFieldTool.POLYGON,
                     MapFieldTool.RECTANGLE,
-                    MapFieldTool.CIRCLE
+                    MapFieldTool.CIRCLE,
+                    MapFieldTool.PARALLEL
                 )
+
+                OutlinedTextField(
+                    value = parallelOffsetText,
+                    onValueChange = { parallelOffsetText = it },
+                    label = { Text("Separación paralela (m)") },
+                    supportingText = { Text("Se usa al elegir Línea paralela.") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(8.dp))
 
                 tools.forEach { tool ->
                     Button(
@@ -453,6 +468,24 @@ fun SurveyScreen(
                 Spacer(Modifier.height(8.dp))
 
                 if (activeMapTool != MapFieldTool.NONE) {
+                    if (activeMapTool == MapFieldTool.LINE ||
+                        activeMapTool == MapFieldTool.DISTANCE ||
+                        activeMapTool == MapFieldTool.AREA ||
+                        activeMapTool == MapFieldTool.PERIMETER ||
+                        activeMapTool == MapFieldTool.POLYGON
+                    ) {
+                        Button(
+                            onClick = {
+                                activeMapTool = MapFieldTool.NONE
+                                showToolsPanel = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Terminar herramienta")
+                        }
+                        Spacer(Modifier.height(6.dp))
+                    }
+
                     OutlinedButton(
                         onClick = {
                             activeMapTool = MapFieldTool.NONE
@@ -794,14 +827,18 @@ private enum class MapFieldTool(
     LINE("Crear línea", "Toque varios puntos para crear la línea."),
     DISTANCE("Medir distancia", "Toque dos o más puntos. Se mostrará la distancia acumulada."),
     AREA("Medir área", "Toque tres o más puntos para formar el área."),
+    PERIMETER("Medir perímetro", "Toque tres o más vértices del polígono."),
+    POLYGON("Crear polígono", "Toque tres o más vértices para dibujar el polígono."),
     RECTANGLE("Rectángulo / cuadrado", "Toque dos esquinas opuestas."),
-    CIRCLE("Círculo", "Toque el centro y luego un punto del borde.")
+    CIRCLE("Círculo", "Toque el centro y luego un punto del borde."),
+    PARALLEL("Línea paralela", "Toque dos puntos de la línea base. Se creará una paralela con la separación indicada.")
 }
 
 private fun renderFieldTool(
     map: MapLibreMap,
     tool: MapFieldTool,
-    points: List<LatLng>
+    points: List<LatLng>,
+    parallelOffsetM: Double
 ): String? {
     map.clear()
     if (points.isEmpty()) return tool.instructions
@@ -848,6 +885,34 @@ private fun renderFieldTool(
             return "Marque al menos 3 puntos."
         }
 
+        MapFieldTool.PERIMETER -> {
+            points.forEach { map.addMarker(MarkerOptions().position(it)) }
+            if (points.size >= 2) {
+                val closed = if (points.size >= 3) points + points.first() else points
+                map.addPolyline(PolylineOptions().addAll(closed).width(4f))
+            }
+            return if (points.size >= 3) {
+                val perimeter = polylineDistanceMeters(points + points.first())
+                "Perímetro: %.2f m".format(perimeter)
+            } else {
+                "Marque al menos 3 vértices."
+            }
+        }
+
+        MapFieldTool.POLYGON -> {
+            points.forEach { map.addMarker(MarkerOptions().position(it)) }
+            if (points.size >= 3) {
+                map.addPolygon(PolygonOptions().addAll(points))
+                val perimeter = polylineDistanceMeters(points + points.first())
+                val area = polygonAreaMeters2(points)
+                return "Polígono: área %.2f m² • perímetro %.2f m".format(area, perimeter)
+            }
+            if (points.size >= 2) {
+                map.addPolyline(PolylineOptions().addAll(points).width(4f))
+            }
+            return "Marque al menos 3 vértices."
+        }
+
         MapFieldTool.RECTANGLE -> {
             points.forEach { map.addMarker(MarkerOptions().position(it)) }
             if (points.size >= 2) {
@@ -878,6 +943,21 @@ private fun renderFieldTool(
                 )
             }
             return "Marque un punto sobre el borde."
+        }
+
+        MapFieldTool.PARALLEL -> {
+            points.forEach { map.addMarker(MarkerOptions().position(it)) }
+            if (points.size >= 2) {
+                val base = points.take(2)
+                map.addPolyline(PolylineOptions().addAll(base).width(4f))
+                val parallel = parallelLine(base[0], base[1], parallelOffsetM)
+                map.addPolyline(PolylineOptions().addAll(parallel).width(4f))
+                return "Paralela: separación %.2f m • longitud %.2f m".format(
+                    parallelOffsetM,
+                    haversineMeters(parallel[0], parallel[1])
+                )
+            }
+            return "Marque el segundo punto de la línea base."
         }
 
         MapFieldTool.NONE -> return null
@@ -915,6 +995,27 @@ private fun polygonAreaMeters2(points: List<LatLng>): Double {
         sum += xy[i].first * xy[j].second - xy[j].first * xy[i].second
     }
     return abs(sum) / 2.0
+}
+
+private fun parallelLine(a: LatLng, b: LatLng, offsetM: Double): List<LatLng> {
+    val meanLat = Math.toRadians((a.latitude + b.latitude) / 2.0)
+    val metersPerDegLat = 111132.92
+    val metersPerDegLon = 111412.84 * cos(meanLat)
+
+    val dx = (b.longitude - a.longitude) * metersPerDegLon
+    val dy = (b.latitude - a.latitude) * metersPerDegLat
+    val length = hypot(dx, dy).takeIf { it > 0.0001 } ?: return listOf(a, b)
+
+    val nx = -dy / length
+    val ny = dx / length
+
+    val dLon = (nx * offsetM) / metersPerDegLon
+    val dLat = (ny * offsetM) / metersPerDegLat
+
+    return listOf(
+        LatLng(a.latitude + dLat, a.longitude + dLon),
+        LatLng(b.latitude + dLat, b.longitude + dLon)
+    )
 }
 
 private fun circlePolygon(center: LatLng, radiusM: Double, steps: Int): List<LatLng> {
