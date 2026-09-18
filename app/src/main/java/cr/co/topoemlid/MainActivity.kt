@@ -100,11 +100,11 @@ fun TopoEmlidApp() {
         topBar = { GnssBar(gnss, activeProject?.name) },
         bottomBar = {
             NavigationBar {
-                listOf("Levantamiento", "Capas", "NTRIP", "Proyecto").forEach { item ->
+                listOf("Levantamiento", "Replanteo", "Capas", "NTRIP", "Proyecto").forEach { item ->
                     NavigationBarItem(
                         selected = page == item,
                         onClick = { page = item },
-                        icon = { Text(if (item == "Levantamiento") "⌖" else if (item == "Capas") "▱" else if (item == "NTRIP") "RTK" else "⚙") },
+                        icon = { Text(if (item == "Levantamiento") "⌖" else if (item == "Replanteo") "⇢" else if (item == "Capas") "▱" else if (item == "NTRIP") "RTK" else "⚙") },
                         label = { Text(item) }
                     )
                 }
@@ -113,6 +113,7 @@ fun TopoEmlidApp() {
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (page) {
+                "Replanteo" -> StakeoutScreen(activeProject, gnss)
                 "Capas" -> ProjectLayersScreen(activeProject)
                 "NTRIP" -> NtripProfilesScreen(
                     profiles = ntripProfiles,
