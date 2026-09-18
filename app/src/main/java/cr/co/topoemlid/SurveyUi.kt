@@ -24,6 +24,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
 import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.annotations.MarkerOptions
+import org.maplibre.android.annotations.PolylineOptions
+import org.maplibre.android.annotations.PolygonOptions
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
@@ -34,6 +37,7 @@ import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
 import java.util.UUID
 import kotlin.math.roundToInt
+import kotlin.math.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,6 +69,10 @@ fun SurveyScreen(
     var seconds by remember { mutableStateOf("5") }
     var showConfigPanel by remember { mutableStateOf(false) }
     var showLayersPanel by remember { mutableStateOf(false) }
+    var showToolsPanel by remember { mutableStateOf(false) }
+    var activeMapTool by remember { mutableStateOf(MapFieldTool.NONE) }
+    var toolPoints by remember { mutableStateOf<List<LatLng>>(emptyList()) }
+    var toolResult by remember { mutableStateOf<String?>(null) }
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
     var pointPhoto by remember { mutableStateOf<Uri?>(null) }
     var followReceiver by remember { mutableStateOf(false) }
@@ -198,6 +206,31 @@ fun SurveyScreen(
                                 addSelectedBasemap(style, selectedBasemap, mapboxToken)
                                 addProjectRasterLayers(style, projectLayers)
                             }
+
+                            map.addOnMapClickListener { latLng ->
+                                if (activeMapTool == MapFieldTool.NONE) {
+                                    false
+                                } else {
+                                    val updated = when (activeMapTool) {
+                                        MapFieldTool.POINT -> listOf(latLng)
+                                        MapFieldTool.RECTANGLE, MapFieldTool.CIRCLE ->
+                                            if (toolPoints.size >= 2) listOf(latLng) else toolPoints + latLng
+                                        else -> toolPoints + latLng
+                                    }
+
+                                    toolPoints = updated
+                                    toolResult = renderFieldTool(map, activeMapTool, updated)
+
+                                    if (
+                                        activeMapTool == MapFieldTool.POINT ||
+                                        ((activeMapTool == MapFieldTool.RECTANGLE ||
+                                          activeMapTool == MapFieldTool.CIRCLE) && updated.size >= 2)
+                                    ) {
+                                        activeMapTool = MapFieldTool.NONE
+                                    }
+                                    true
+                                }
+                            }
                         }
                     }
                 }
@@ -291,6 +324,10 @@ fun SurveyScreen(
             ) { Text("N") }
 
             SmallFloatingActionButton(
+                onClick = { showToolsPanel = true }
+            ) { Text("✣") }
+
+            SmallFloatingActionButton(
                 onClick = {
                     projectLayers = project?.let { layerStore.load(it.id) } ?: emptyList()
                     showLayersPanel = true
@@ -339,6 +376,12 @@ fun SurveyScreen(
                 .padding(horizontal = 12.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            toolResult?.let { result ->
+                Surface(tonalElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
+                    Text(result, modifier = Modifier.padding(10.dp))
+                }
+            }
+
             lastMessage?.let { message ->
                 Surface(tonalElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
                     Text(message, modifier = Modifier.padding(10.dp))
@@ -361,6 +404,71 @@ fun SurveyScreen(
                 onClick = { showConfigPanel = true },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Configurar punto") }
+        }
+    }
+
+    if (showToolsPanel) {
+        ModalBottomSheet(onDismissRequest = { showToolsPanel = false }) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text("Herramientas del mapa", style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Seleccione una herramienta y luego toque el mapa para marcar los puntos.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                val tools = listOf(
+                    MapFieldTool.POINT,
+                    MapFieldTool.LINE,
+                    MapFieldTool.DISTANCE,
+                    MapFieldTool.AREA,
+                    MapFieldTool.RECTANGLE,
+                    MapFieldTool.CIRCLE
+                )
+
+                tools.forEach { tool ->
+                    Button(
+                        onClick = {
+                            activeMapTool = tool
+                            toolPoints = emptyList()
+                            toolResult = tool.instructions
+                            mapRef?.clear()
+                            showToolsPanel = false
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Text(tool.label)
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                if (activeMapTool != MapFieldTool.NONE) {
+                    OutlinedButton(
+                        onClick = {
+                            activeMapTool = MapFieldTool.NONE
+                            toolPoints = emptyList()
+                            toolResult = null
+                            mapRef?.clear()
+                            showToolsPanel = false
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Cancelar herramienta")
+                    }
+                }
+
+                Spacer(Modifier.height(20.dp))
+            }
         }
     }
 
@@ -674,4 +782,157 @@ private fun sanitizeWmsBaseUrl(raw: String): String {
         }
 
     return if (kept.isEmpty()) base else base + "?" + kept.joinToString("&")
+}
+
+
+private enum class MapFieldTool(
+    val label: String,
+    val instructions: String
+) {
+    NONE("", ""),
+    POINT("Crear punto", "Toque el mapa para crear un punto."),
+    LINE("Crear línea", "Toque varios puntos para crear la línea."),
+    DISTANCE("Medir distancia", "Toque dos o más puntos. Se mostrará la distancia acumulada."),
+    AREA("Medir área", "Toque tres o más puntos para formar el área."),
+    RECTANGLE("Rectángulo / cuadrado", "Toque dos esquinas opuestas."),
+    CIRCLE("Círculo", "Toque el centro y luego un punto del borde.")
+}
+
+private fun renderFieldTool(
+    map: MapLibreMap,
+    tool: MapFieldTool,
+    points: List<LatLng>
+): String? {
+    map.clear()
+    if (points.isEmpty()) return tool.instructions
+
+    when (tool) {
+        MapFieldTool.POINT -> {
+            val p = points.last()
+            map.addMarker(MarkerOptions().position(p))
+            return "Punto: %.7f, %.7f".format(p.latitude, p.longitude)
+        }
+
+        MapFieldTool.LINE -> {
+            points.forEach { map.addMarker(MarkerOptions().position(it)) }
+            if (points.size >= 2) {
+                map.addPolyline(PolylineOptions().addAll(points).width(4f))
+                return "Línea: %.2f m".format(polylineDistanceMeters(points))
+            }
+            return "Marque otro punto para continuar la línea."
+        }
+
+        MapFieldTool.DISTANCE -> {
+            points.forEach { map.addMarker(MarkerOptions().position(it)) }
+            if (points.size >= 2) {
+                map.addPolyline(PolylineOptions().addAll(points).width(4f))
+                return "Distancia: %.2f m".format(polylineDistanceMeters(points))
+            }
+            return "Marque el siguiente punto."
+        }
+
+        MapFieldTool.AREA -> {
+            points.forEach { map.addMarker(MarkerOptions().position(it)) }
+            if (points.size >= 2) {
+                map.addPolyline(PolylineOptions().addAll(points).width(4f))
+            }
+            if (points.size >= 3) {
+                map.addPolygon(PolygonOptions().addAll(points))
+                val area = polygonAreaMeters2(points)
+                return if (area >= 10000.0) {
+                    "Área: %.2f m² (%.4f ha)".format(area, area / 10000.0)
+                } else {
+                    "Área: %.2f m²".format(area)
+                }
+            }
+            return "Marque al menos 3 puntos."
+        }
+
+        MapFieldTool.RECTANGLE -> {
+            points.forEach { map.addMarker(MarkerOptions().position(it)) }
+            if (points.size >= 2) {
+                val a = points[0]
+                val b = points[1]
+                val rect = listOf(
+                    LatLng(a.latitude, a.longitude),
+                    LatLng(a.latitude, b.longitude),
+                    LatLng(b.latitude, b.longitude),
+                    LatLng(b.latitude, a.longitude)
+                )
+                map.addPolygon(PolygonOptions().addAll(rect))
+                return "Rectángulo: %.2f m²".format(polygonAreaMeters2(rect))
+            }
+            return "Marque la esquina opuesta."
+        }
+
+        MapFieldTool.CIRCLE -> {
+            points.forEach { map.addMarker(MarkerOptions().position(it)) }
+            if (points.size >= 2) {
+                val center = points[0]
+                val radius = haversineMeters(center, points[1])
+                val circle = circlePolygon(center, radius, 64)
+                map.addPolygon(PolygonOptions().addAll(circle))
+                return "Círculo: radio %.2f m • área %.2f m²".format(
+                    radius,
+                    PI * radius * radius
+                )
+            }
+            return "Marque un punto sobre el borde."
+        }
+
+        MapFieldTool.NONE -> return null
+    }
+}
+
+private fun polylineDistanceMeters(points: List<LatLng>): Double {
+    if (points.size < 2) return 0.0
+    return points.zipWithNext().sumOf { (a, b) -> haversineMeters(a, b) }
+}
+
+private fun haversineMeters(a: LatLng, b: LatLng): Double {
+    val r = 6371008.8
+    val lat1 = Math.toRadians(a.latitude)
+    val lat2 = Math.toRadians(b.latitude)
+    val dLat = lat2 - lat1
+    val dLon = Math.toRadians(b.longitude - a.longitude)
+    val h = sin(dLat / 2).pow(2) +
+        cos(lat1) * cos(lat2) * sin(dLon / 2).pow(2)
+    return 2 * r * asin(sqrt(h))
+}
+
+private fun polygonAreaMeters2(points: List<LatLng>): Double {
+    if (points.size < 3) return 0.0
+    val meanLat = Math.toRadians(points.map { it.latitude }.average())
+    val r = 6371008.8
+    val xy = points.map {
+        val x = r * Math.toRadians(it.longitude) * cos(meanLat)
+        val y = r * Math.toRadians(it.latitude)
+        x to y
+    }
+    var sum = 0.0
+    for (i in xy.indices) {
+        val j = (i + 1) % xy.size
+        sum += xy[i].first * xy[j].second - xy[j].first * xy[i].second
+    }
+    return abs(sum) / 2.0
+}
+
+private fun circlePolygon(center: LatLng, radiusM: Double, steps: Int): List<LatLng> {
+    val r = 6371008.8
+    val lat1 = Math.toRadians(center.latitude)
+    val lon1 = Math.toRadians(center.longitude)
+    val angular = radiusM / r
+
+    return (0 until steps).map { i ->
+        val bearing = 2.0 * PI * i / steps
+        val lat2 = asin(
+            sin(lat1) * cos(angular) +
+                cos(lat1) * sin(angular) * cos(bearing)
+        )
+        val lon2 = lon1 + atan2(
+            sin(bearing) * sin(angular) * cos(lat1),
+            cos(angular) - sin(lat1) * sin(lat2)
+        )
+        LatLng(Math.toDegrees(lat2), Math.toDegrees(lon2))
+    }
 }
