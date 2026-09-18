@@ -40,8 +40,11 @@ fun TopoEmlidApp() {
     val context = LocalContext.current
     val store = remember { ProjectStore(context) }
     val ntripStore = remember { NtripStore(context) }
+    val receiverStore = remember { ReceiverStore(context) }
     var projects by remember { mutableStateOf(store.loadProjects()) }
     var ntripProfiles by remember { mutableStateOf(ntripStore.loadProfiles()) }
+    var receiverProfiles by remember { mutableStateOf(receiverStore.loadProfiles()) }
+    var activeReceiverId by remember { mutableStateOf<String?>(null) }
     var activeProjectId by remember { mutableStateOf(store.activeProjectId()) }
     var selectedProjectId by remember { mutableStateOf<String?>(null) }
     var page by remember { mutableStateOf("Levantamiento") }
@@ -102,11 +105,11 @@ fun TopoEmlidApp() {
         topBar = { GnssBar(gnss, activeProject?.name) },
         bottomBar = {
             NavigationBar {
-                listOf("Levantamiento", "Replanteo", "Capas", "NTRIP", "Proyecto").forEach { item ->
+                listOf("Receptores", "Levantamiento", "Replanteo", "Capas", "NTRIP", "Proyecto").forEach { item ->
                     NavigationBarItem(
                         selected = page == item,
                         onClick = { page = item },
-                        icon = { Text(if (item == "Levantamiento") "⌖" else if (item == "Replanteo") "⇢" else if (item == "Capas") "▱" else if (item == "NTRIP") "RTK" else "⚙") },
+                        icon = { Text(if (item == "Receptores") "⌁" else if (item == "Levantamiento") "⌖" else if (item == "Replanteo") "⇢" else if (item == "Capas") "▱" else if (item == "NTRIP") "RTK" else "⚙") },
                         label = { Text(item) }
                     )
                 }
@@ -115,6 +118,17 @@ fun TopoEmlidApp() {
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (page) {
+                "Receptores" -> ReceiversScreen(
+                    profiles = receiverProfiles,
+                    onProfilesChanged = {
+                        receiverProfiles = it
+                        receiverStore.saveProfiles(it)
+                    },
+                    activeReceiverId = activeReceiverId,
+                    onSelectReceiver = { receiver ->
+                        activeReceiverId = receiver.id
+                    }
+                )
                 "Replanteo" -> StakeoutScreen(activeProject, gnss)
                 "Capas" -> ProjectLayersScreen(activeProject)
                 "NTRIP" -> NtripProfilesScreen(
