@@ -10,7 +10,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import org.maplibre.android.MapLibre
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -150,6 +152,10 @@ fun TopoEmlidApp() {
                             onUpdate = { updated ->
                                 persist(projects.map { if (it.id == updated.id) updated else it })
                             },
+                            onSaveAndBack = { updated ->
+                                persist(projects.map { if (it.id == updated.id) updated else it })
+                                selectedProjectId = null
+                            },
                             onDelete = { deleteCandidate = selected },
                             ntripProfiles = ntripProfiles
                         )
@@ -177,6 +183,7 @@ private fun GnssBar(status: GnssStatus, projectName: String?) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ProjectHub(
     projects: List<TopoProject>,
@@ -187,6 +194,24 @@ private fun ProjectHub(
     onView: (TopoProject) -> Unit,
     onDelete: (TopoProject) -> Unit
 ) {
+    var menuProject by remember { mutableStateOf<TopoProject?>(null) }
+
+    menuProject?.let { p ->
+        AlertDialog(
+            onDismissRequest = { menuProject = null },
+            title = { Text(p.name) },
+            text = {
+                Column {
+                    TextButton(onClick = { menuProject = null; onOpen(p) }) { Text("Abrir") }
+                    TextButton(onClick = { menuProject = null; onEdit(p) }) { Text("Editar") }
+                    TextButton(onClick = { menuProject = null; onView(p) }) { Text("Ver información") }
+                    TextButton(onClick = { menuProject = null; onDelete(p) }) { Text("Eliminar") }
+                }
+            },
+            confirmButton = {}
+        )
+    }
+
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Proyectos", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -197,7 +222,15 @@ private fun ProjectHub(
             Text("Aún no hay proyectos. Cree uno para definir su CRS, geoide y demás parámetros.")
         }
         projects.forEach { p ->
-            Card(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+            Card(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp)
+                    .combinedClickable(
+                        onClick = { onOpen(p) },
+                        onLongClick = { menuProject = p }
+                    )
+            ) {
                 Column(Modifier.padding(14.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(p.name, fontWeight = FontWeight.Bold)
@@ -205,13 +238,11 @@ private fun ProjectHub(
                     }
                     if (p.location.isNotBlank()) Text(p.location, style = MaterialTheme.typography.bodySmall)
                     Text("CRS: ${p.crsName} • Geoide: ${p.geoidFileName ?: p.geoidModel.label}", style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(8.dp))
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Button(onClick = { onOpen(p) }) { Text("Abrir") }
-                        OutlinedButton(onClick = { onEdit(p) }) { Text("Editar") }
-                        OutlinedButton(onClick = { onView(p) }) { Text("Ver datos") }
-                        OutlinedButton(onClick = { onDelete(p) }) { Text("Eliminar") }
-                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Toque para abrir • Mantenga presionado para más opciones",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
         }
@@ -246,6 +277,7 @@ private fun ProjectDetails(
     onBack: () -> Unit,
     onSetActive: () -> Unit,
     onUpdate: (TopoProject) -> Unit,
+    onSaveAndBack: (TopoProject) -> Unit,
     onDelete: () -> Unit,
     ntripProfiles: List<NtripProfile>
 ) {
@@ -307,16 +339,20 @@ private fun ProjectDetails(
         )
 
         Spacer(Modifier.height(16.dp))
-        Button(onClick = {
-            onUpdate(project.copy(
-                name = name.ifBlank { project.name },
-                location = location,
-                crsName = crsName,
-                geoidFileUri = geoidFileUri,
-                geoidFileName = geoidFileName,
-                antennaHeightM = antennaText.toDoubleOrNull() ?: project.antennaHeightM
-            ))
-        }) { Text("Guardar cambios") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                onSaveAndBack(project.copy(
+                    name = name.ifBlank { project.name },
+                    location = location,
+                    crsName = crsName,
+                    geoidFileUri = geoidFileUri,
+                    geoidFileName = geoidFileName,
+                    antennaHeightM = antennaText.toDoubleOrNull() ?: project.antennaHeightM
+                ))
+            }) { Text("Guardar proyecto") }
+
+            OutlinedButton(onClick = onBack) { Text("Cancelar") }
+        }
 
         if (!isActive) {
             OutlinedButton(onClick = onSetActive, modifier = Modifier.padding(top = 8.dp)) { Text("Establecer como proyecto activo") }
