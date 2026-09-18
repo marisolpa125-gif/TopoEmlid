@@ -243,3 +243,45 @@ fun ReceiversScreen(
         )
     }
 }
+
+
+@Composable
+fun ReceiverSection(
+    profiles: List<ReceiverProfile>,
+    onProfilesChanged: (List<ReceiverProfile>) -> Unit,
+    activeReceiverId: String?,
+    onSelectReceiver: (ReceiverProfile) -> Unit,
+    ntripProfiles: List<NtripProfile>,
+    onNtripProfilesChanged: (List<NtripProfile>) -> Unit
+) {
+    var tab by remember { mutableStateOf("Receptores") }
+
+    Column(Modifier.fillMaxSize()) {
+        TabRow(selectedTabIndex = if (tab == "Receptores") 0 else 1) {
+            Tab(
+                selected = tab == "Receptores",
+                onClick = { tab = "Receptores" },
+                text = { Text("Receptores") }
+            )
+            Tab(
+                selected = tab == "NTRIP",
+                onClick = { tab = "NTRIP" },
+                text = { Text("NTRIP / RTK") }
+            )
+        }
+
+        if (tab == "Receptores") {
+            ReceiversScreen(
+                profiles = profiles,
+                onProfilesChanged = onProfilesChanged,
+                activeReceiverId = activeReceiverId,
+                onSelectReceiver = onSelectReceiver
+            )
+        } else {
+            NtripProfilesScreen(
+                profiles = ntripProfiles,
+                onProfilesChanged = onNtripProfilesChanged
+            )
+        }
+    }
+}
