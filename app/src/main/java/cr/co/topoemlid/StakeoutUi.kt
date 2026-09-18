@@ -280,6 +280,12 @@ private fun StakeoutGuidancePanel(
     val eastM = (target.longitude - lon) * metersPerDegLon
     val distanceM = hypot(northM, eastM)
 
+    val targetElevation = target.ellipsoidalHeightM
+    val currentElevation = gnss.ellipsoidalHeightM
+    val verticalDelta = if (targetElevation != null && currentElevation != null) {
+        targetElevation - currentElevation
+    } else null
+
     val stage = when {
         distanceM > 5.0 -> "Aproximación"
         distanceM > 0.5 -> "Zona de tolerancia"
@@ -292,6 +298,19 @@ private fun StakeoutGuidancePanel(
             Text("Distancia al punto: %.3f m".format(distanceM))
             Text("Corrección E/O: %.3f m".format(eastM))
             Text("Corrección N/S: %.3f m".format(northM))
+            if (verticalDelta != null) {
+                val verticalText = when {
+                    verticalDelta > 0.005 -> "RELLENO %.3f m".format(verticalDelta)
+                    verticalDelta < -0.005 -> "CORTE %.3f m".format(abs(verticalDelta))
+                    else -> "COTA OK ±0.005 m"
+                }
+                Text(verticalText, fontWeight = FontWeight.Bold)
+                Text("Diferencia vertical: %.3f m".format(verticalDelta))
+                Text("Cota objetivo: %.3f m".format(targetElevation))
+                Text("Cota actual: %.3f m".format(currentElevation))
+            } else {
+                Text("Sin comparación vertical: falta cota objetivo o cota GNSS.")
+            }
             Spacer(Modifier.height(12.dp))
 
             Box(
