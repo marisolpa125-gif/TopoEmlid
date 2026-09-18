@@ -41,20 +41,18 @@ fun TopoEmlidApp() {
     val store = remember { ProjectStore(context) }
     val ntripStore = remember { NtripStore(context) }
     val receiverStore = remember { ReceiverStore(context) }
-    val receiverStore = remember { ReceiverStore(context) }
+    val receiverConnection = remember { ReceiverConnectionManager(context) }
     var projects by remember { mutableStateOf(store.loadProjects()) }
     var ntripProfiles by remember { mutableStateOf(ntripStore.loadProfiles()) }
     var receiverProfiles by remember { mutableStateOf(receiverStore.loadProfiles()) }
     var activeReceiverId by remember { mutableStateOf(receiverStore.activeReceiverId()) }
-    var receiverProfiles by remember { mutableStateOf(receiverStore.loadProfiles()) }
-    var activeReceiverId by remember { mutableStateOf<String?>(null) }
     var activeProjectId by remember { mutableStateOf(store.activeProjectId()) }
     var selectedProjectId by remember { mutableStateOf<String?>(null) }
     var page by remember { mutableStateOf("Levantamiento") }
     var selectedTool by remember { mutableStateOf(DrawTool.POINT) }
     var showNewProject by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<TopoProject?>(null) }
-    val gnss = remember { GnssStatus() }
+    val gnss = receiverConnection.status
 
     fun persist(list: List<TopoProject>) {
         projects = list
@@ -108,11 +106,11 @@ fun TopoEmlidApp() {
         topBar = { GnssBar(gnss, activeProject?.name) },
         bottomBar = {
             NavigationBar {
-                listOf("Receptores", "Levantamiento", "Replanteo", "Capas", "NTRIP", "Proyecto").forEach { item ->
+                listOf("Receptores", "Levantamiento", "Replanteo", "Capas", "Proyecto").forEach { item ->
                     NavigationBarItem(
                         selected = page == item,
                         onClick = { page = item },
-                        icon = { Text(if (item == "Receptores") "⌁" else if (item == "Levantamiento") "⌖" else if (item == "Replanteo") "⇢" else if (item == "Capas") "▱" else if (item == "NTRIP") "RTK" else "⚙") },
+                        icon = { Text(if (item == "Receptores") "◉" else if (item == "Levantamiento") "⌖" else if (item == "Replanteo") "⇢" else if (item == "Capas") "▱" else "⚙") },
                         label = { Text(item) }
                     )
                 }
@@ -121,17 +119,6 @@ fun TopoEmlidApp() {
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (page) {
-                "Receptores" -> ReceiversScreen(
-                    profiles = receiverProfiles,
-                    onProfilesChanged = {
-                        receiverProfiles = it
-                        receiverStore.saveProfiles(it)
-                    },
-                    activeReceiverId = activeReceiverId,
-                    onSelectReceiver = { receiver ->
-                        activeReceiverId = receiver.id
-                    }
-                )
                 "Receptores" -> ReceiverSection(
                     profiles = receiverProfiles,
                     onProfilesChanged = {
@@ -147,7 +134,12 @@ fun TopoEmlidApp() {
                     onNtripProfilesChanged = {
                         ntripProfiles = it
                         ntripStore.saveProfiles(it)
-                    }
+                    },
+                    gnss = gnss,
+                    connecting = receiverConnection.connecting,
+                    lastError = receiverConnection.lastError,
+                    onConnect = { receiver -> receiverConnection.connect(receiver) },
+                    onDisconnect = { receiverConnection.disconnect() }
                 )
                 "Replanteo" -> StakeoutScreen(activeProject, gnss)
                 "Capas" -> ProjectLayersScreen(activeProject)
