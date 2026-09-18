@@ -137,6 +137,7 @@ private fun NtripProfileDialog(
     var mountPoints by remember { mutableStateOf<List<NtripMountPoint>>(emptyList()) }
     var mountMenuOpen by remember { mutableStateOf(false) }
     var loadError by remember { mutableStateOf<String?>(null) }
+    var connectionStatus by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     fun loadMountPoints() {
@@ -145,6 +146,7 @@ private fun NtripProfileDialog(
 
         loadingMounts = true
         loadError = null
+        connectionStatus = "Probando dirección…"
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 NtripSourceTableClient.load(
@@ -157,8 +159,10 @@ private fun NtripProfileDialog(
             loadingMounts = false
             result.onSuccess {
                 mountPoints = it
+                connectionStatus = "Caster encontrado • ${it.size} punto(s) de montaje"
                 mountMenuOpen = true
             }.onFailure {
+                connectionStatus = null
                 loadError = it.message ?: "No se pudieron cargar los puntos de montaje."
             }
         }
@@ -278,6 +282,14 @@ private fun NtripProfileDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(if (loadingMounts) "Cargando…" else "Cargar puntos de montaje")
+                }
+
+                connectionStatus?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
                 }
 
                 loadError?.let {
