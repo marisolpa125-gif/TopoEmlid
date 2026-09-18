@@ -7,6 +7,9 @@ data class GnssStatus(
     val horizontalAccuracyM: Double? = null,
     val verticalAccuracyM: Double? = null,
     val satellites: Int? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val ellipsoidalHeightM: Double? = null,
     val antennaHeightM: Double = 2.0
 )
 
