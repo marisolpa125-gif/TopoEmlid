@@ -42,7 +42,29 @@ enum class DrawTool(val label: String) {
     POINT("Punto"), LINE("Línea"), POLYGON("Polígono"), RECTANGLE("Rectángulo"), TRIANGLE("Triángulo"), CIRCLE("Círculo")
 }
 
-data class LayerItem(val name: String, val visible: Boolean = true)
+enum class LayerType(val label: String) {
+    WMS("WMS"),
+    WMTS("WMTS"),
+    XYZ("XYZ / TMS"),
+    LOCAL_FILE("Archivo local"),
+    DRAWING("Dibujo / CAD")
+}
+
+data class LayerItem(
+    val id: String,
+    val name: String,
+    val type: LayerType,
+    val visible: Boolean = true,
+    val opacity: Float = 1f,
+    val url: String? = null,
+    val layerName: String? = null,
+    val styleName: String? = null,
+    val imageFormat: String = "image/png",
+    val transparent: Boolean = true,
+    val crs: String = "EPSG:3857",
+    val localUri: String? = null,
+    val order: Int = 0
+)
 
 
 data class TopoProject(
