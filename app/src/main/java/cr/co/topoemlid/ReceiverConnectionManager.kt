@@ -92,6 +92,25 @@ class ReceiverConnectionManager(context: Context) {
                             )
                         )
                     }
+
+                    NmeaParser.parseGsa(line)?.let { gsa ->
+                        postStatus(
+                            status.copy(
+                                pdop = gsa.pdop,
+                                positioningMode = gsa.mode
+                            )
+                        )
+                    }
+
+                    NmeaParser.parseGsv(line)?.let { gsv ->
+                        val avg = gsv.snrValues.takeIf { it.isNotEmpty() }?.average()
+                        postStatus(
+                            status.copy(
+                                satellitesInView = gsv.satellitesInView ?: status.satellitesInView,
+                                signalNoiseAvgDbHz = avg ?: status.signalNoiseAvgDbHz
+                            )
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 mainHandler.post {
