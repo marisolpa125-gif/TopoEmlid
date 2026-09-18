@@ -10,7 +10,8 @@ data class GgaFix(
     val satellites: Int,
     val hdop: Double?,
     val altitudeM: Double?,
-    val geoidSeparationM: Double? = null
+    val geoidSeparationM: Double? = null,
+    val correctionAgeS: Double? = null
 ) {
     val ellipsoidalHeightM: Double?
         get() = if (altitudeM != null && geoidSeparationM != null) altitudeM + geoidSeparationM else null
@@ -45,7 +46,8 @@ object NmeaParser {
             satellites = p[7].toIntOrNull() ?: 0,
             hdop = p[8].toDoubleOrNull(),
             altitudeM = p[9].toDoubleOrNull(),
-            geoidSeparationM = p.getOrNull(11)?.toDoubleOrNull()
+            geoidSeparationM = p.getOrNull(11)?.toDoubleOrNull(),
+            correctionAgeS = p.getOrNull(13)?.toDoubleOrNull()
         )
     }
 
