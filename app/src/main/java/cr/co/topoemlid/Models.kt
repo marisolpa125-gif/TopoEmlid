@@ -56,6 +56,8 @@ data class TopoProject(
     val antennaHeightM: Double = 2.0,
     val ntripProfileName: String? = null,
     val ntripProfileId: String? = null,
+    val receiverProfileId: String? = null,
+    val receiverProfileName: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
 
