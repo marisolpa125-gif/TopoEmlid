@@ -494,13 +494,14 @@ private fun addProjectRasterLayers(
 }
 
 private fun buildWmsTileUrl(layer: LayerItem): String? {
-    val base = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val raw = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return null
     val layerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
 
-    if (base.contains("{bbox-epsg-3857}", ignoreCase = true)) {
-        return base
+    if (raw.contains("{bbox-epsg-3857}", ignoreCase = true)) {
+        return raw
     }
 
+    val base = sanitizeWmsBaseUrl(raw)
     val separator = if (base.contains("?")) {
         if (base.endsWith("?") || base.endsWith("&")) "" else "&"
     } else {
@@ -530,4 +531,32 @@ private fun buildWmsTileUrl(layer: LayerItem): String? {
         append("&width=256")
         append("&height=256")
     }
+}
+
+
+private fun sanitizeWmsBaseUrl(raw: String): String {
+    val qIndex = raw.indexOf('?')
+    if (qIndex < 0) return raw
+
+    val base = raw.substring(0, qIndex)
+    val kept = raw.substring(qIndex + 1)
+        .split('&')
+        .filter { it.isNotBlank() }
+        .filterNot { part ->
+            val key = part.substringBefore('=').trim().lowercase()
+            key == "request" ||
+            key == "service" ||
+            key == "version" ||
+            key == "layers" ||
+            key == "styles" ||
+            key == "format" ||
+            key == "transparent" ||
+            key == "srs" ||
+            key == "crs" ||
+            key == "bbox" ||
+            key == "width" ||
+            key == "height"
+        }
+
+    return if (kept.isEmpty()) base else base + "?" + kept.joinToString("&")
 }
