@@ -177,7 +177,7 @@ fun ProjectLayersScreen(project: TopoProject?) {
         Text("Capas del proyecto", fontWeight = FontWeight.Bold)
 
         if (layers.isEmpty()) {
-            Text("No hay capas. Puede agregar WMS, WMTS, XYZ/TMS, archivos locales o capas de dibujo.")
+            Text("No hay capas superpuestas. El mapa base seleccionado arriba se usa aparte; aquí puede agregar WMS, WMTS, XYZ/TMS, archivos locales o capas de dibujo.")
         }
 
         layers.forEach { layer ->
