@@ -98,7 +98,16 @@ fun ReceiverSection(
                     onSelectReceiver(detailReceiver!!)
                     onConnect(detailReceiver!!)
                 },
-                onDisconnect = onDisconnect
+                onDisconnect = onDisconnect,
+                onForget = {
+                    val forgotten = detailReceiver!!
+                    onDisconnect()
+                    onProfilesChanged(profiles.filterNot { it.address == forgotten.address })
+                    if (activeReceiverId == forgotten.id) {
+                        // Selection is cleared by returning to the receiver list; a new device can be selected.
+                    }
+                    detailReceiver = null
+                }
             )
         } else {
             ReceiversScreen(
@@ -140,22 +149,27 @@ private fun ReceiversScreen(
         )
     }
 
-    val pairedReach = remember(permissionGranted, adapter?.isEnabled, profiles) {
+    val allPaired = remember(permissionGranted, adapter?.isEnabled, profiles) {
         if (!permissionGranted || adapter?.isEnabled != true) emptyList()
         else adapter.bondedDevices
-            .filter {
-                val n = runCatching { it.name.orEmpty() }.getOrDefault("")
-                isLikelyGnssReceiver(n)
-            }
             .map {
+                val deviceName = runCatching { it.name }.getOrNull()?.takeIf { n -> n.isNotBlank() }
+                    ?: "Dispositivo Bluetooth"
                 ReceiverProfile(
                     id = profiles.firstOrNull { p -> p.address == it.address }?.id ?: UUID.randomUUID().toString(),
-                    name = runCatching { it.name }.getOrNull() ?: "Receptor GNSS",
+                    name = deviceName,
                     address = it.address,
                     transport = "Bluetooth Classic"
                 )
             }
+            .sortedWith(
+                compareByDescending<ReceiverProfile> { isLikelyGnssReceiver(it.name) }
+                    .thenBy { it.name.lowercase() }
+            )
     }
+
+    val pairedGnss = allPaired.filter { isLikelyGnssReceiver(it.name) }
+    val pairedOther = allPaired.filterNot { isLikelyGnssReceiver(it.name) }
 
     val callback = remember {
         object : ScanCallback() {
@@ -230,7 +244,7 @@ private fun ReceiversScreen(
 
         if (scanning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 10.dp))
 
-        pairedReach.forEach { p ->
+        pairedGnss.forEach { p ->
             val stored = profiles.firstOrNull { it.address == p.address } ?: p
             ReceiverCard(
                 profile = stored,
@@ -244,7 +258,7 @@ private fun ReceiversScreen(
             )
         }
 
-        nearby.filter { n -> pairedReach.none { it.address == n.address } }.forEach { r ->
+        nearby.filter { n -> pairedGnss.none { it.address == n.address } }.forEach { r ->
             Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
                 Column(Modifier.padding(14.dp)) {
                     Text(r.name, fontWeight = FontWeight.Bold)
@@ -254,8 +268,30 @@ private fun ReceiversScreen(
             }
         }
 
-        if (!scanning && pairedReach.isEmpty() && nearby.isEmpty()) {
-            InfoCard("No se han encontrado receptores GNSS. Compruebe que la antena esté encendida, Bluetooth esté visible y pulse Actualizar.")
+        if (pairedOther.isNotEmpty()) {
+            Spacer(Modifier.height(14.dp))
+            Text("Otros dispositivos Bluetooth emparejados", fontWeight = FontWeight.Bold)
+            Text(
+                "Si su receptor aparece con un nombre genérico, selecciónelo aquí y Topo Emlid intentará usarlo como GNSS/NMEA.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            pairedOther.forEach { p ->
+                val stored = profiles.firstOrNull { it.address == p.address } ?: p
+                ReceiverCard(
+                    profile = stored,
+                    subtitle = "Bluetooth emparejado • probar como GNSS",
+                    selected = stored.id == activeReceiverId,
+                    onClick = {
+                        if (profiles.none { it.address == stored.address }) onProfilesChanged(profiles + stored)
+                        onSelectReceiver(stored)
+                        onOpenReceiver(stored)
+                    }
+                )
+            }
+        }
+
+        if (!scanning && allPaired.isEmpty() && nearby.isEmpty()) {
+            InfoCard("No se han encontrado receptores ni dispositivos Bluetooth emparejados. Compruebe que la antena esté encendida, visible y emparejada en Android; luego pulse Actualizar.")
         }
 
         if (profiles.isNotEmpty()) {
@@ -286,7 +322,8 @@ private fun ReceiverDetailScreen(
     onBack: () -> Unit,
     onSelect: () -> Unit,
     onConnect: () -> Unit,
-    onDisconnect: () -> Unit
+    onDisconnect: () -> Unit,
+    onForget: () -> Unit
 ) {
     var page by remember(receiver.id) { mutableStateOf(ReceiverPage.HOME) }
 
@@ -327,6 +364,10 @@ private fun ReceiverDetailScreen(
             Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) {
                 Text("Desconectar")
             }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) {
+                Text("Olvidar en Topo Emlid")
+            }
         } else {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp)) {
@@ -352,6 +393,16 @@ private fun ReceiverDetailScreen(
             Button(onClick = onConnect, enabled = !connecting, modifier = Modifier.fillMaxWidth()) {
                 Text(if (connecting) "Conectando…" else "Conectar al software")
             }
+
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) {
+                Text("Olvidar en Topo Emlid")
+            }
+            Text(
+                "Esto elimina el receptor guardado de la aplicación. Para quitar también el emparejamiento Bluetooth, hágalo desde Ajustes de Android.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 6.dp)
+            )
         }
     }
 }
