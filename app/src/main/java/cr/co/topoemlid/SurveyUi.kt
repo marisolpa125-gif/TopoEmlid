@@ -28,6 +28,10 @@ import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
+import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.RasterLayer
+import org.maplibre.android.style.sources.RasterSource
+import org.maplibre.android.style.sources.TileSet
 import java.util.UUID
 import kotlin.math.roundToInt
 
@@ -39,6 +43,10 @@ fun SurveyScreen(
 ) {
     val context = LocalContext.current
     val pointStore = remember(project?.id) { SurveyPointStore(context) }
+    val layerStore = remember(project?.id) { LayerStore(context) }
+    val projectLayers = remember(project?.id) {
+        project?.let { layerStore.load(it.id) } ?: emptyList()
+    }
     var savedPoints by remember(project?.id) {
         mutableStateOf(project?.let { pointStore.load(it.id) } ?: emptyList())
     }
@@ -154,7 +162,9 @@ fun SurveyScreen(
                         mapRef = map
                         map.setStyle(
                             Style.Builder().fromUri("https://demotiles.maplibre.org/style.json")
-                        )
+                        ) { style ->
+                            addProjectRasterLayers(style, projectLayers)
+                        }
                     }
                 }
             }
@@ -389,4 +399,73 @@ private fun nextPointNumber(points: List<SurveyPoint>): String {
 
 private fun incrementPointNumber(current: String): String {
     return current.toIntOrNull()?.plus(1)?.toString() ?: current
+}
+
+
+private fun addProjectRasterLayers(
+    style: Style,
+    layers: List<LayerItem>
+) {
+    layers
+        .filter { it.visible }
+        .sortedBy { it.order }
+        .forEach { layer ->
+            val tileUrl = when (layer.type) {
+                LayerType.WMS -> buildWmsTileUrl(layer)
+                LayerType.XYZ, LayerType.WMTS -> layer.url
+                else -> null
+            } ?: return@forEach
+
+            val sourceId = "project-source-${layer.id}"
+            val layerId = "project-layer-${layer.id}"
+
+            runCatching {
+                val tileSet = TileSet("2.2.0", tileUrl)
+                style.addSource(RasterSource(sourceId, tileSet, 256))
+                style.addLayer(
+                    RasterLayer(layerId, sourceId).withProperties(
+                        PropertyFactory.rasterOpacity(layer.opacity)
+                    )
+                )
+            }
+        }
+}
+
+private fun buildWmsTileUrl(layer: LayerItem): String? {
+    val base = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val layerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
+
+    if (base.contains("{bbox-epsg-3857}", ignoreCase = true)) {
+        return base
+    }
+
+    val separator = if (base.contains("?")) {
+        if (base.endsWith("?") || base.endsWith("&")) "" else "&"
+    } else {
+        "?"
+    }
+
+    val encodedLayer = java.net.URLEncoder.encode(layerName, "UTF-8")
+    val encodedStyle = java.net.URLEncoder.encode(layer.styleName.orEmpty(), "UTF-8")
+    val encodedFormat = java.net.URLEncoder.encode(layer.imageFormat, "UTF-8")
+
+    return buildString {
+        append(base)
+        append(separator)
+        append("service=WMS")
+        append("&request=GetMap")
+        append("&version=1.1.1")
+        append("&layers=")
+        append(encodedLayer)
+        append("&styles=")
+        append(encodedStyle)
+        append("&format=")
+        append(encodedFormat)
+        append("&transparent=")
+        append(layer.transparent)
+        append("&srs=EPSG:3857")
+        append("&bbox={bbox-epsg-3857}")
+        append("&width=256")
+        append("&height=256")
+    }
 }
