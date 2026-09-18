@@ -58,3 +58,27 @@ data class TopoProject(
     val ntripProfileId: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
+
+data class ReceiverProfile(
+    val id: String,
+    val name: String,
+    val address: String,
+    val transport: String = "Bluetooth",
+    val lastConnectedAt: Long? = null
+)
+
+data class ReceiverTelemetry(
+    val connected: Boolean = false,
+    val receiverName: String? = null,
+    val transport: String? = null,
+    val solution: String = "SIN SEÑAL",
+    val satellites: Int? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val ellipsoidalHeightM: Double? = null,
+    val horizontalAccuracyM: Double? = null,
+    val verticalAccuracyM: Double? = null,
+    val correctionAgeS: Double? = null,
+    val nmeaReceiving: Boolean = false,
+    val internetSource: String? = null
+)
