@@ -9,6 +9,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun NtripProfilesScreen(
@@ -116,6 +119,7 @@ fun NtripProfilesScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NtripProfileDialog(
     profile: NtripProfile?,
@@ -129,27 +133,169 @@ private fun NtripProfileDialog(
     var username by remember(profile?.id) { mutableStateOf(profile?.username ?: "") }
     var password by remember(profile?.id) { mutableStateOf(profile?.password ?: "") }
 
+    var loadingMounts by remember { mutableStateOf(false) }
+    var mountPoints by remember { mutableStateOf<List<NtripMountPoint>>(emptyList()) }
+    var mountMenuOpen by remember { mutableStateOf(false) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun loadMountPoints() {
+        val p = port.toIntOrNull() ?: return
+        if (host.isBlank()) return
+
+        loadingMounts = true
+        loadError = null
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                NtripSourceTableClient.load(
+                    host = host.trim(),
+                    port = p,
+                    username = username.trim(),
+                    password = password
+                )
+            }
+            loadingMounts = false
+            result.onSuccess {
+                mountPoints = it
+                mountMenuOpen = true
+            }.onFailure {
+                loadError = it.message ?: "No se pudieron cargar los puntos de montaje."
+            }
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (profile == null) "Nuevo perfil NTRIP" else "Editar perfil NTRIP") },
+        title = { Text(if (profile == null) "Nuevo perfil de NTRIP" else "Editar perfil NTRIP") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Nombre del perfil") })
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = host, onValueChange = { host = it }, label = { Text("Servidor / IP") })
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("Puerto") })
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = mountPoint, onValueChange = { mountPoint = it }, label = { Text("Mountpoint") })
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Usuario") })
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña") })
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Nombre del perfil") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = host,
+                    onValueChange = {
+                        host = it
+                        mountPoints = emptyList()
+                        mountPoint = ""
+                    },
+                    label = { Text("Dirección") },
+                    supportingText = { Text("Obligatorio") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = port,
+                    onValueChange = {
+                        port = it
+                        mountPoints = emptyList()
+                        mountPoint = ""
+                    },
+                    label = { Text("Puerto") },
+                    supportingText = { Text("Obligatorio") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text("Nombre de usuario") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Contraseña") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                ExposedDropdownMenuBox(
+                    expanded = mountMenuOpen,
+                    onExpandedChange = {
+                        if (mountPoints.isNotEmpty()) mountMenuOpen = !mountMenuOpen
+                    }
+                ) {
+                    OutlinedTextField(
+                        value = mountPoint,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Punto de montaje") },
+                        supportingText = {
+                            Text(
+                                if (mountPoint.isBlank()) "Obligatorio" else "Seleccionado"
+                            )
+                        },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = mountMenuOpen)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor()
+                    )
+
+                    ExposedDropdownMenu(
+                        expanded = mountMenuOpen,
+                        onDismissRequest = { mountMenuOpen = false }
+                    ) {
+                        mountPoints.forEach { mp ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(mp.name, fontWeight = FontWeight.Bold)
+                                        val meta = listOf(mp.identifier, mp.format, mp.country)
+                                            .filter { it.isNotBlank() }
+                                            .joinToString(" • ")
+                                        if (meta.isNotBlank()) {
+                                            Text(meta, style = MaterialTheme.typography.bodySmall)
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    mountPoint = mp.name
+                                    mountMenuOpen = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                Button(
+                    onClick = { loadMountPoints() },
+                    enabled = host.isNotBlank() && port.toIntOrNull() != null && !loadingMounts,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (loadingMounts) "Cargando…" else "Cargar puntos de montaje")
+                }
+
+                loadError?.let {
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
-                enabled = name.isNotBlank() && host.isNotBlank() && port.toIntOrNull() != null,
+                enabled = name.isNotBlank() &&
+                    host.isNotBlank() &&
+                    port.toIntOrNull() != null &&
+                    mountPoint.isNotBlank(),
                 onClick = {
                     onSave(
                         NtripProfile(
