@@ -18,6 +18,9 @@ class ReceiverStore(context: Context) {
                     name = o.getString("name"),
                     address = o.getString("address"),
                     transport = o.optString("transport", "Bluetooth"),
+                    preferredMode = runCatching {
+                        ReceiverConnectionMode.valueOf(o.optString("preferredMode", "AUTO"))
+                    }.getOrDefault(ReceiverConnectionMode.AUTO),
                     lastConnectedAt = if (o.has("lastConnectedAt") && !o.isNull("lastConnectedAt")) o.getLong("lastConnectedAt") else null
                 )
             }
@@ -40,6 +43,7 @@ class ReceiverStore(context: Context) {
                 put("name", p.name)
                 put("address", p.address)
                 put("transport", p.transport)
+                put("preferredMode", p.preferredMode.name)
                 put("lastConnectedAt", p.lastConnectedAt)
             })
         }
