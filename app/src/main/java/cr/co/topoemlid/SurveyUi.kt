@@ -295,20 +295,10 @@ fun SurveyScreen(
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = { showConfigPanel = true },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Configurar punto") }
-
-                OutlinedButton(
-                    onClick = { },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Replanteo") }
-            }
+            Button(
+                onClick = { showConfigPanel = true },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Configurar punto") }
         }
     }
 
