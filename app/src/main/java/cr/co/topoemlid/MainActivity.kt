@@ -42,11 +42,21 @@ fun TopoEmlidApp() {
     val ntripStore = remember { NtripStore(context) }
     val receiverStore = remember { ReceiverStore(context) }
     val receiverConnection = remember { ReceiverConnectionManager(context) }
-    var projects by remember { mutableStateOf(store.loadProjects()) }
+    val initialProjects = remember { store.loadProjects() }
+    var projects by remember { mutableStateOf(initialProjects) }
     var ntripProfiles by remember { mutableStateOf(ntripStore.loadProfiles()) }
     var receiverProfiles by remember { mutableStateOf(receiverStore.loadProfiles()) }
     var activeReceiverId by remember { mutableStateOf(receiverStore.activeReceiverId()) }
-    var activeProjectId by remember { mutableStateOf(store.activeProjectId()) }
+    var activeProjectId by remember {
+        val stored = store.activeProjectId()
+        mutableStateOf(
+            when {
+                stored != null && initialProjects.any { it.id == stored } -> stored
+                initialProjects.size == 1 -> initialProjects.first().id
+                else -> null
+            }
+        )
+    }
     var selectedProjectId by remember { mutableStateOf<String?>(null) }
     var page by remember { mutableStateOf("Levantamiento") }
     var selectedTool by remember { mutableStateOf(DrawTool.POINT) }
@@ -60,6 +70,15 @@ fun TopoEmlidApp() {
     }
 
     val activeProject = projects.firstOrNull { it.id == activeProjectId }
+
+    LaunchedEffect(activeProjectId, projects.size) {
+        if (activeProjectId != null) {
+            store.setActiveProject(activeProjectId)
+        } else if (projects.size == 1) {
+            activeProjectId = projects.first().id
+            store.setActiveProject(projects.first().id)
+        }
+    }
 
     if (showNewProject) {
         NewProjectDialog(
