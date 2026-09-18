@@ -65,7 +65,6 @@ fun ReceiverSection(
     profiles: List<ReceiverProfile>,
     onProfilesChanged: (List<ReceiverProfile>) -> Unit,
     activeReceiverId: String?,
-    gnss: GnssStatus,
     onSelectReceiver: (ReceiverProfile) -> Unit,
     ntripProfiles: List<NtripProfile>,
     onNtripProfilesChanged: (List<NtripProfile>) -> Unit,
@@ -100,6 +99,25 @@ fun ReceiverSection(
                     onConnect(detailReceiver!!)
                 },
                 onDisconnect = onDisconnect,
+                onModeChanged = { mode ->
+                    val current = detailReceiver!!
+                    val updated = current.copy(
+                        preferredMode = mode,
+                        transport = when (mode) {
+                            ReceiverConnectionMode.AUTO -> "Automático"
+                            ReceiverConnectionMode.BLE -> "BLE"
+                            ReceiverConnectionMode.BLUETOOTH_NMEA -> "Bluetooth / NMEA"
+                        }
+                    )
+                    detailReceiver = updated
+                    onProfilesChanged(
+                        if (profiles.any { it.address == updated.address })
+                            profiles.map { if (it.address == updated.address) updated else it }
+                        else profiles + updated
+                    )
+                    onSelectReceiver(updated)
+                    onDisconnect()
+                },
                 onForget = {
                     val forgotten = detailReceiver!!
                     onDisconnect()
@@ -129,6 +147,7 @@ private fun ReceiversScreen(
     profiles: List<ReceiverProfile>,
     onProfilesChanged: (List<ReceiverProfile>) -> Unit,
     activeReceiverId: String?,
+    gnss: GnssStatus,
     onSelectReceiver: (ReceiverProfile) -> Unit,
     onOpenReceiver: (ReceiverProfile) -> Unit
 ) {
@@ -161,7 +180,9 @@ private fun ReceiversScreen(
                     id = profiles.firstOrNull { p -> p.address == it.address }?.id ?: UUID.randomUUID().toString(),
                     name = deviceName,
                     address = it.address,
-                    transport = "Bluetooth Classic"
+                    transport = profiles.firstOrNull { p -> p.address == it.address }?.transport ?: "Automático",
+                    preferredMode = profiles.firstOrNull { p -> p.address == it.address }?.preferredMode
+                        ?: ReceiverConnectionMode.AUTO
                 )
             }
             .sortedWith(
@@ -336,6 +357,7 @@ private fun ReceiverDetailScreen(
     onSelect: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
+    onModeChanged: (ReceiverConnectionMode) -> Unit,
     onForget: () -> Unit
 ) {
     var page by remember(receiver.id) { mutableStateOf(ReceiverPage.HOME) }
