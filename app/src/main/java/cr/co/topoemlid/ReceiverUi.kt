@@ -259,60 +259,258 @@ private fun ReceiverDetailScreen(
     onConnect: () -> Unit,
     onDisconnect: () -> Unit
 ) {
+    var page by remember(receiver.id) { mutableStateOf(ReceiverPage.HOME) }
+
+    if (page != ReceiverPage.HOME) {
+        ReceiverSubPage(
+            page = page,
+            receiver = receiver,
+            gnss = gnss,
+            onBack = { page = ReceiverPage.HOME }
+        )
+        return
+    }
+
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         TextButton(onClick = onBack) { Text("← Receptores") }
         Text(receiver.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text(receiver.address, style = MaterialTheme.typography.bodySmall)
-        Text(receiver.transport, style = MaterialTheme.typography.bodySmall)
+        Text(
+            when {
+                connecting -> "Conectando…"
+                gnss.connected && gnss.receiverName == receiver.name -> "Conectado"
+                else -> "Desconectado"
+            },
+            style = MaterialTheme.typography.bodyMedium
+        )
 
-        Spacer(Modifier.height(14.dp))
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp)) {
-                Text("Estado", fontWeight = FontWeight.Bold)
-                Text(
-                    when {
-                        connecting -> "Conectando…"
-                        gnss.connected && gnss.receiverName == receiver.name -> "CONECTADO"
-                        else -> "DESCONECTADO"
-                    }
-                )
-                Text("Solución: ${if (gnss.connected) gnss.solution else "—"}")
-                Text("Satélites: ${gnss.satellites ?: "—"}")
-                Text("Precisión H: ${gnss.horizontalAccuracyM?.let { "%.3f m".format(it) } ?: "—"}")
-                Text("Precisión V: ${gnss.verticalAccuracyM?.let { "%.3f m".format(it) } ?: "—"}")
-                Text("Latitud: ${gnss.latitude?.let { "%.8f".format(it) } ?: "—"}")
-                Text("Longitud: ${gnss.longitude?.let { "%.8f".format(it) } ?: "—"}")
-                Text("Altura elipsoidal: ${gnss.ellipsoidalHeightM?.let { "%.3f m".format(it) } ?: "—"}")
-            }
-        }
-
-        lastError?.let {
-            Spacer(Modifier.height(10.dp))
-            Text(it, color = MaterialTheme.colorScheme.error)
-        }
-
-        Spacer(Modifier.height(14.dp))
-        if (!isSelected) {
-            OutlinedButton(onClick = onSelect, modifier = Modifier.fillMaxWidth()) {
-                Text("Seleccionar receptor")
-            }
-            Spacer(Modifier.height(8.dp))
-        }
+        Spacer(Modifier.height(10.dp))
 
         if (gnss.connected && gnss.receiverName == receiver.name) {
-            Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) { Text("Desconectar") }
+            ReceiverMenuRow("Estado", gnss.solution) { page = ReceiverPage.STATUS }
+            ReceiverMenuRow("Entrada de correcciones", "NTRIP / LoRa / apagado") { page = ReceiverPage.CORRECTIONS }
+            ReceiverMenuRow("Salida de la base 1", "RTCM3") { page = ReceiverPage.BASE_OUTPUT }
+            ReceiverMenuRow("Configuración de la base", "Coordenadas y altura") { page = ReceiverPage.BASE_CONFIG }
+            ReceiverMenuRow("Registro", "RINEX / LLH / RTCM3") { page = ReceiverPage.LOGGING }
+            ReceiverMenuRow("Wi‑Fi", "Redes y punto de acceso") { page = ReceiverPage.WIFI }
+            ReceiverMenuRow("Configuración", "GNSS, Bluetooth y transmisiones") { page = ReceiverPage.SETTINGS }
+
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) {
+                Text("Desconectar")
+            }
         } else {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Receptor seleccionado", fontWeight = FontWeight.Bold)
+                    Text(receiver.address)
+                    Text(receiver.transport)
+                }
+            }
+
+            lastError?.let {
+                Spacer(Modifier.height(10.dp))
+                Text(it, color = MaterialTheme.colorScheme.error)
+            }
+
+            Spacer(Modifier.height(14.dp))
+            if (!isSelected) {
+                OutlinedButton(onClick = onSelect, modifier = Modifier.fillMaxWidth()) {
+                    Text("Seleccionar receptor")
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
             Button(onClick = onConnect, enabled = !connecting, modifier = Modifier.fillMaxWidth()) {
                 Text(if (connecting) "Conectando…" else "Conectar al software")
             }
         }
+    }
+}
 
-        Spacer(Modifier.height(14.dp))
+private enum class ReceiverPage {
+    HOME, STATUS, CORRECTIONS, BASE_OUTPUT, BASE_CONFIG, LOGGING, WIFI, SETTINGS
+}
+
+@Composable
+private fun ReceiverMenuRow(title: String, subtitle: String, onClick: () -> Unit) {
+    Card(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Bold)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall)
+            }
+            Text("›", style = MaterialTheme.typography.headlineSmall)
+        }
+    }
+}
+
+@Composable
+private fun ReceiverSubPage(
+    page: ReceiverPage,
+    receiver: ReceiverProfile,
+    gnss: GnssStatus,
+    onBack: () -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        TextButton(onClick = onBack) { Text("← ${pageTitle(page)}") }
+
+        when (page) {
+            ReceiverPage.STATUS -> {
+                Text("Resumen del estado", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(12.dp))
+                StatusLine("Relación señal/ruido", gnss.signalNoiseAvgDbHz?.let { "%.1f dB-Hz".format(it) } ?: "—")
+                StatusLine("Satélites a la vista", (gnss.satellitesInView ?: gnss.satellites)?.toString() ?: "—")
+                StatusLine("PDOP", gnss.pdop?.let { "%.2f".format(it) } ?: "—")
+                StatusLine("Solución", gnss.solution)
+                StatusLine("Modo de posicionamiento", gnss.positioningMode ?: "—")
+
+                Spacer(Modifier.height(12.dp))
+                Text("Coordenadas y precisión", fontWeight = FontWeight.Bold)
+                StatusLine("Latitud", gnss.latitude?.let { "%.8f".format(it) } ?: "—")
+                StatusLine("Longitud", gnss.longitude?.let { "%.8f".format(it) } ?: "—")
+                StatusLine("Altura elipsoidal", gnss.ellipsoidalHeightM?.let { "%.3f m".format(it) } ?: "—")
+                StatusLine("Precisión horizontal", gnss.horizontalAccuracyM?.let { "%.3f m".format(it) } ?: "—")
+                StatusLine("Precisión vertical", gnss.verticalAccuracyM?.let { "%.3f m".format(it) } ?: "—")
+            }
+
+            ReceiverPage.CORRECTIONS -> ReceiverAdminPlaceholder(
+                title = "Entrada de correcciones",
+                rows = listOf(
+                    "NTRIP a través del dispositivo móvil",
+                    "NTRIP a través de Reach",
+                    "Radio LoRa",
+                    "Apagado"
+                )
+            )
+
+            ReceiverPage.BASE_OUTPUT -> ReceiverAdminPlaceholder(
+                title = "Salida de la base 1",
+                rows = listOf(
+                    "Apagado",
+                    "Radio LoRa",
+                    "NTRIP",
+                    "Serie RS‑232",
+                    "Servidor TCP",
+                    "Cliente TCP",
+                    "NTRIP local",
+                    "Bluetooth"
+                )
+            )
+
+            ReceiverPage.BASE_CONFIG -> ReceiverAdminPlaceholder(
+                title = "Configuración de la base",
+                rows = listOf(
+                    "Método de introducción de coordenadas",
+                    "Altura de la antena",
+                    "Tiempo medio",
+                    "Marcador de base",
+                    "Mensajes RTCM3"
+                )
+            )
+
+            ReceiverPage.LOGGING -> ReceiverAdminPlaceholder(
+                title = "Registro",
+                rows = listOf(
+                    "Almacenamiento",
+                    "RINEX 3.03",
+                    "Trayectoria de la posición (LLH)",
+                    "Corrección de base (RTCM3)",
+                    "Configuración y registros grabados"
+                )
+            )
+
+            ReceiverPage.WIFI -> ReceiverAdminPlaceholder(
+                title = "Wi‑Fi",
+                rows = listOf(
+                    "Modo de punto de acceso",
+                    "Redes disponibles",
+                    "Red conectada",
+                    "Activar / desactivar Wi‑Fi"
+                )
+            )
+
+            ReceiverPage.SETTINGS -> ReceiverAdminPlaceholder(
+                title = "Configuración",
+                rows = listOf(
+                    "Salida de la base 2",
+                    "Datos móviles",
+                    "Bluetooth",
+                    "Configuración de GNSS",
+                    "Transmisión de posición 1",
+                    "Transmisión de posición 2",
+                    "Actualizaciones de firmware",
+                    "Información del receptor",
+                    "Solución de problemas",
+                    "Sonidos",
+                    "Modo nocturno"
+                )
+            )
+
+            ReceiverPage.HOME -> Unit
+        }
+
+        Spacer(Modifier.height(18.dp))
         Text(
-            "Para recibir coordenadas, configure en Emlid Flow la transmisión de posición por Bluetooth en formato NMEA y empareje el Reach en Bluetooth de Android.",
+            if (page == ReceiverPage.STATUS)
+                "Estos valores se actualizan desde el flujo NMEA real del receptor."
+            else
+                "Esta pantalla ya forma parte de TopoEmlid. La lectura y modificación real de estos ajustes requiere integrar el canal de administración del Reach; por ahora no se muestran valores inventados.",
             style = MaterialTheme.typography.bodySmall
         )
     }
+}
+
+@Composable
+private fun StatusLine(label: String, value: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 7.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(label)
+        Text(value, fontWeight = FontWeight.Medium)
+    }
+    HorizontalDivider()
+}
+
+@Composable
+private fun ReceiverAdminPlaceholder(title: String, rows: List<String>) {
+    Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(12.dp))
+    rows.forEach { row ->
+        Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Row(
+                Modifier.fillMaxWidth().padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(row)
+                Text("›")
+            }
+        }
+    }
+}
+
+private fun pageTitle(page: ReceiverPage): String = when (page) {
+    ReceiverPage.STATUS -> "Estado"
+    ReceiverPage.CORRECTIONS -> "Entrada de correcciones"
+    ReceiverPage.BASE_OUTPUT -> "Salida de la base 1"
+    ReceiverPage.BASE_CONFIG -> "Configuración de la base"
+    ReceiverPage.LOGGING -> "Registro"
+    ReceiverPage.WIFI -> "Wi‑Fi"
+    ReceiverPage.SETTINGS -> "Configuración"
+    ReceiverPage.HOME -> "Receptor"
 }
 
 @Composable
