@@ -45,11 +45,9 @@ fun SurveyScreen(
     val pointStore = remember(project?.id) { SurveyPointStore(context) }
     val layerStore = remember(project?.id) { LayerStore(context) }
     val basemapStore = remember(project?.id) { BasemapStore(context) }
-    val selectedBasemap = remember(project?.id) { basemapStore.selected(project?.id) }
-    val mapboxToken = remember(project?.id) { basemapStore.mapboxToken() }
-    val projectLayers = remember(project?.id) {
-        project?.let { layerStore.load(it.id) } ?: emptyList()
-    }
+    val selectedBasemap = basemapStore.selected(project?.id)
+    val mapboxToken = basemapStore.mapboxToken()
+    val projectLayers = project?.let { layerStore.load(it.id) } ?: emptyList()
     var savedPoints by remember(project?.id) {
         mutableStateOf(project?.let { pointStore.load(it.id) } ?: emptyList())
     }
@@ -154,25 +152,54 @@ fun SurveyScreen(
             .fillMaxSize()
             .onGloballyPositioned { parentSize = it.size }
     ) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { mapContext ->
-                MapView(mapContext).apply {
-                    onCreate(null)
-                    onStart()
-                    onResume()
-                    getMapAsync { map ->
-                        mapRef = map
-                        map.setStyle(
-                            Style.Builder().fromUri("https://demotiles.maplibre.org/style.json")
-                        ) { style ->
-                            addSelectedBasemap(style, selectedBasemap, mapboxToken)
-                            addProjectRasterLayers(style, projectLayers)
+        key(
+            project?.id,
+            selectedBasemap,
+            mapboxToken,
+            projectLayers.hashCode()
+        ) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { mapContext ->
+                    MapView(mapContext).apply {
+                        onCreate(null)
+                        onStart()
+                        onResume()
+                        getMapAsync { map ->
+                            mapRef = map
+
+                            val baseStyle = when (selectedBasemap) {
+                                BasemapType.BASIC -> Style.Builder()
+                                    .fromUri("https://demotiles.maplibre.org/style.json")
+
+                                BasemapType.MAPBOX_STREETS,
+                                BasemapType.MAPBOX_SATELLITE -> Style.Builder()
+                                    .fromJson(
+                                        """
+                                        {
+                                          "version": 8,
+                                          "sources": {},
+                                          "layers": [
+                                            {
+                                              "id": "background",
+                                              "type": "background",
+                                              "paint": {"background-color": "#d9dde1"}
+                                            }
+                                          ]
+                                        }
+                                        """.trimIndent()
+                                    )
+                            }
+
+                            map.setStyle(baseStyle) { style ->
+                                addSelectedBasemap(style, selectedBasemap, mapboxToken)
+                                addProjectRasterLayers(style, projectLayers)
+                            }
                         }
                     }
                 }
-            }
-        )
+            )
+        }
 
         Surface(
             modifier = Modifier
@@ -414,14 +441,15 @@ private fun addSelectedBasemap(
     if (basemap == BasemapType.BASIC) return
     if (mapboxToken.isBlank()) return
 
-    val styleId = when (basemap) {
-        BasemapType.MAPBOX_STREETS -> "streets-v12"
-        BasemapType.MAPBOX_SATELLITE -> "satellite-streets-v12"
+    val tileUrl = when (basemap) {
+        BasemapType.MAPBOX_STREETS ->
+            "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}?access_token=$mapboxToken"
+
+        BasemapType.MAPBOX_SATELLITE ->
+            "https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg90?access_token=$mapboxToken"
+
         BasemapType.BASIC -> return
     }
-
-    val tileUrl =
-        "https://api.mapbox.com/styles/v1/mapbox/$styleId/tiles/256/{z}/{x}/{y}?access_token=$mapboxToken"
 
     runCatching {
         val sourceId = "basemap-mapbox-source"
