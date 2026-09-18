@@ -24,6 +24,14 @@ class ReceiverStore(context: Context) {
         }.getOrDefault(emptyList())
     }
 
+    fun activeReceiverId(): String? = prefs.getString("active_receiver_id", null)
+
+    fun setActiveReceiver(id: String?) {
+        prefs.edit().apply {
+            if (id == null) remove("active_receiver_id") else putString("active_receiver_id", id)
+        }.apply()
+    }
+
     fun saveProfiles(profiles: List<ReceiverProfile>) {
         val array = JSONArray()
         profiles.forEach { p ->
