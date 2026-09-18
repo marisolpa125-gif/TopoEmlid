@@ -47,7 +47,9 @@ fun SurveyScreen(
     val basemapStore = remember(project?.id) { BasemapStore(context) }
     val selectedBasemap = basemapStore.selected(project?.id)
     val mapboxToken = basemapStore.mapboxToken()
-    val projectLayers = project?.let { layerStore.load(it.id) } ?: emptyList()
+    var projectLayers by remember(project?.id) {
+        mutableStateOf(project?.let { layerStore.load(it.id) } ?: emptyList())
+    }
     var savedPoints by remember(project?.id) {
         mutableStateOf(project?.let { pointStore.load(it.id) } ?: emptyList())
     }
@@ -62,6 +64,7 @@ fun SurveyScreen(
     }
     var seconds by remember { mutableStateOf("5") }
     var showConfigPanel by remember { mutableStateOf(false) }
+    var showLayersPanel by remember { mutableStateOf(false) }
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
     var pointPhoto by remember { mutableStateOf<Uri?>(null) }
     var followReceiver by remember { mutableStateOf(false) }
@@ -288,7 +291,10 @@ fun SurveyScreen(
             ) { Text("N") }
 
             SmallFloatingActionButton(
-                onClick = { lastMessage = "Capas y estilo del mapa se administran desde Capas." }
+                onClick = {
+                    projectLayers = project?.let { layerStore.load(it.id) } ?: emptyList()
+                    showLayersPanel = true
+                }
             ) { Text("▱") }
         }
 
@@ -355,6 +361,75 @@ fun SurveyScreen(
                 onClick = { showConfigPanel = true },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Configurar punto") }
+        }
+    }
+
+    if (showLayersPanel) {
+        ModalBottomSheet(onDismissRequest = { showLayersPanel = false }) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text("Capas visibles", style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Active o desactive las capas cargadas del proyecto sin salir del Levantamiento.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                if (project == null) {
+                    Text("No hay un proyecto activo.")
+                } else if (projectLayers.isEmpty()) {
+                    Text("Este proyecto no tiene capas cargadas.")
+                } else {
+                    projectLayers
+                        .sortedBy { it.order }
+                        .forEach { layer ->
+                            Card(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 5.dp)
+                            ) {
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(layer.name, style = MaterialTheme.typography.titleMedium)
+                                        Text(layer.type.label, style = MaterialTheme.typography.bodySmall)
+                                    }
+
+                                    Switch(
+                                        checked = layer.visible,
+                                        onCheckedChange = { checked ->
+                                            val updated = projectLayers.map {
+                                                if (it.id == layer.id) it.copy(visible = checked) else it
+                                            }
+                                            projectLayers = updated
+                                            project?.let { layerStore.save(it.id, updated) }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = { showLayersPanel = false },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Cerrar")
+                }
+
+                Spacer(Modifier.height(20.dp))
+            }
         }
     }
 
