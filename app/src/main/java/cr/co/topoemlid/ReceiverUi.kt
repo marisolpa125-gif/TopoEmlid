@@ -405,6 +405,35 @@ private fun ReceiverDetailScreen(
 
         Spacer(Modifier.height(10.dp))
 
+        Text("Método de conexión", fontWeight = FontWeight.Bold)
+        ReceiverConnectionMode.entries.forEach { mode ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !connecting) { onModeChanged(mode) }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = receiver.preferredMode == mode,
+                    onClick = { if (!connecting) onModeChanged(mode) }
+                )
+                Column {
+                    Text(mode.label)
+                    Text(
+                        when (mode) {
+                            ReceiverConnectionMode.AUTO -> "Emlid/Reach: intenta BLE primero; si BLE falla, prueba Bluetooth/NMEA."
+                            ReceiverConnectionMode.BLE -> "Bluetooth Low Energy. No requiere salida NMEA para establecer el enlace."
+                            ReceiverConnectionMode.BLUETOOTH_NMEA -> "Bluetooth Classic con datos NMEA. Requiere NMEA activado en el receptor."
+                        },
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
         if (gnss.connected && gnss.receiverName == receiver.name) {
             ReceiverMenuRow("Estado", gnss.solution) { page = ReceiverPage.STATUS }
             ReceiverMenuRow("Entrada de correcciones", "Perfil NTRIP de Topo Emlid") { page = ReceiverPage.CORRECTIONS }
@@ -427,7 +456,8 @@ private fun ReceiverDetailScreen(
                 Column(Modifier.padding(14.dp)) {
                     Text("Receptor seleccionado", fontWeight = FontWeight.Bold)
                     Text(receiver.address)
-                    Text(receiver.transport)
+                    Text("Método: ${receiver.preferredMode.label}")
+                    Text(receiver.transport, style = MaterialTheme.typography.bodySmall)
                 }
             }
 
@@ -505,8 +535,16 @@ private fun ReceiverSubPage(
             ReceiverPage.STATUS -> {
                 Text("Resumen del estado", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))
-                StatusLine("Bluetooth", if (gnss.connected) "Conectado" else "Desconectado")
-                StatusLine("Flujo NMEA", if (gnss.nmeaReceiving) "RECIBIENDO" else "ESPERANDO")
+                StatusLine("Conexión", gnss.connectionTransport ?: if (gnss.connected) "Conectado" else "Desconectado")
+                if (gnss.connectionTransport == "BLE") {
+                    StatusLine("Servicios BLE", gnss.bleServicesDiscovered?.toString() ?: "Detectando…")
+                    Text(
+                        "BLE confirma el enlace con el receptor. Los datos GNSS por BLE dependen del protocolo del fabricante; Topo Emlid no mostrará datos que no haya recibido.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    StatusLine("Flujo NMEA", if (gnss.nmeaReceiving) "RECIBIENDO" else "ESPERANDO")
+                }
                 StatusLine("Relación señal/ruido", gnss.signalNoiseAvgDbHz?.let { "%.1f dB-Hz".format(it) } ?: "—")
                 StatusLine("Satélites a la vista", (gnss.satellitesInView ?: gnss.satellites)?.toString() ?: "—")
                 StatusLine("Satélites usados", gnss.satellites?.toString() ?: "—")
@@ -633,7 +671,10 @@ private fun ReceiverSubPage(
         Spacer(Modifier.height(18.dp))
         Text(
             if (page == ReceiverPage.STATUS)
-                "Estos valores se actualizan únicamente con datos reales recibidos del receptor por NMEA. Si aparece ESPERANDO, Topo Emlid tiene Bluetooth pero todavía no está recibiendo tramas de posición."
+                if (gnss.connectionTransport == "BLE")
+                    "La conexión BLE es real. Los campos GNSS solo se completarán cuando Topo Emlid pueda leer telemetría compatible del receptor; no se mostrarán valores simulados."
+                else
+                    "Estos valores se actualizan únicamente con datos reales recibidos del receptor por NMEA. Si aparece ESPERANDO, Topo Emlid tiene Bluetooth pero todavía no está recibiendo tramas de posición."
             else
                 "Esta pantalla ya forma parte de TopoEmlid. La lectura y modificación real de estos ajustes requiere integrar el canal de administración del Reach; por ahora no se muestran valores inventados.",
             style = MaterialTheme.typography.bodySmall
