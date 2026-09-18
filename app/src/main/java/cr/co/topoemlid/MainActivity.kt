@@ -41,8 +41,11 @@ fun TopoEmlidApp() {
     val store = remember { ProjectStore(context) }
     val ntripStore = remember { NtripStore(context) }
     val receiverStore = remember { ReceiverStore(context) }
+    val receiverStore = remember { ReceiverStore(context) }
     var projects by remember { mutableStateOf(store.loadProjects()) }
     var ntripProfiles by remember { mutableStateOf(ntripStore.loadProfiles()) }
+    var receiverProfiles by remember { mutableStateOf(receiverStore.loadProfiles()) }
+    var activeReceiverId by remember { mutableStateOf(receiverStore.activeReceiverId()) }
     var receiverProfiles by remember { mutableStateOf(receiverStore.loadProfiles()) }
     var activeReceiverId by remember { mutableStateOf<String?>(null) }
     var activeProjectId by remember { mutableStateOf(store.activeProjectId()) }
@@ -129,15 +132,25 @@ fun TopoEmlidApp() {
                         activeReceiverId = receiver.id
                     }
                 )
-                "Replanteo" -> StakeoutScreen(activeProject, gnss)
-                "Capas" -> ProjectLayersScreen(activeProject)
-                "NTRIP" -> NtripProfilesScreen(
-                    profiles = ntripProfiles,
+                "Receptores" -> ReceiverSection(
+                    profiles = receiverProfiles,
                     onProfilesChanged = {
+                        receiverProfiles = it
+                        receiverStore.saveProfiles(it)
+                    },
+                    activeReceiverId = activeReceiverId,
+                    onSelectReceiver = { receiver ->
+                        activeReceiverId = receiver.id
+                        receiverStore.setActiveReceiver(receiver.id)
+                    },
+                    ntripProfiles = ntripProfiles,
+                    onNtripProfilesChanged = {
                         ntripProfiles = it
                         ntripStore.saveProfiles(it)
                     }
                 )
+                "Replanteo" -> StakeoutScreen(activeProject, gnss)
+                "Capas" -> ProjectLayersScreen(activeProject)
                 "Proyecto" -> {
                     val selected = projects.firstOrNull { it.id == selectedProjectId }
                     if (selected == null) {
