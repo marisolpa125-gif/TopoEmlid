@@ -45,6 +45,18 @@ fun ProjectLayersScreen(project: TopoProject?) {
     var menuLayer by remember { mutableStateOf<LayerItem?>(null) }
     var deleteCandidate by remember { mutableStateOf<LayerItem?>(null) }
 
+    LaunchedEffect(project.id) {
+        val existingLibrary = store.loadLibrary()
+        val missing = layers.filter { layer -> existingLibrary.none { it.id == layer.id } }
+        if (missing.isNotEmpty()) {
+            val merged = existingLibrary + missing.mapIndexed { index, layer ->
+                layer.copy(visible = true, order = existingLibrary.size + index)
+            }
+            library = merged
+            store.saveLibrary(merged)
+        }
+    }
+
     fun persist(updated: List<LayerItem>) {
         layers = updated.mapIndexed { index, item -> item.copy(order = index) }
         store.save(project.id, layers)
