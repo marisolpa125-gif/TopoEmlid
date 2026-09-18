@@ -1,7 +1,7 @@
 package cr.co.topoemlid
 
 data class GnssStatus(
-    val receiverName: String = "Emlid Reach RS2+",
+    val receiverName: String = "Receptor GNSS",
     val connected: Boolean = false,
     val solution: String = "SIN SEÑAL",
     val horizontalAccuracyM: Double? = null,
