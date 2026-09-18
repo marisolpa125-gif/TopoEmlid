@@ -273,6 +273,21 @@ fun SurveyScreen(
             ) { Text(if (followReceiver) "F✓" else "F") }
 
             SmallFloatingActionButton(
+                onClick = {
+                    val current = mapRef?.cameraPosition
+                    if (current != null) {
+                        mapRef?.animateCamera(
+                            CameraUpdateFactory.newCameraPosition(
+                                org.maplibre.android.camera.CameraPosition.Builder(current)
+                                    .bearing(0.0)
+                                    .build()
+                            )
+                        )
+                    }
+                }
+            ) { Text("N") }
+
+            SmallFloatingActionButton(
                 onClick = { lastMessage = "Capas y estilo del mapa se administran desde Capas." }
             ) { Text("▱") }
         }
