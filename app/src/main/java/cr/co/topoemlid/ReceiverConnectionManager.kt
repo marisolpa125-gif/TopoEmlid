@@ -43,12 +43,43 @@ class ReceiverConnectionManager(context: Context) {
         connecting = true
         lastError = null
 
-        worker = thread(name = "reach-nmea") {
+        worker = thread(name = "gnss-nmea") {
             try {
                 val spp = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-                val s = device.createRfcommSocketToServiceRecord(spp)
-                adapter.cancelDiscovery()
-                s.connect()
+                val advertised = device.uuids?.map { it.uuid }.orEmpty()
+                val candidates = (listOf(spp) + advertised).distinct()
+                adapter?.cancelDiscovery()
+
+                var connectedSocket: BluetoothSocket? = null
+                var lastConnectError: Throwable? = null
+
+                for (uuid in candidates) {
+                    if (connectedSocket != null) break
+
+                    val attempts = listOf<(UUID) -> BluetoothSocket>(
+                        { u -> device.createRfcommSocketToServiceRecord(u) },
+                        { u -> device.createInsecureRfcommSocketToServiceRecord(u) }
+                    )
+
+                    for (createSocket in attempts) {
+                        val candidate = runCatching { createSocket(uuid) }.getOrNull() ?: continue
+                        try {
+                            candidate.connect()
+                            connectedSocket = candidate
+                            break
+                        } catch (t: Throwable) {
+                            lastConnectError = t
+                            runCatching { candidate.close() }
+                        }
+                    }
+                }
+
+                val s = connectedSocket
+                    ?: throw IllegalStateException(
+                        "No se pudo abrir un canal Bluetooth de datos con ${profile.name}. " +
+                            "Verifique que el receptor tenga salida NMEA por Bluetooth activada.",
+                        lastConnectError
+                    )
                 socket = s
 
                 postStatus(
@@ -115,7 +146,11 @@ class ReceiverConnectionManager(context: Context) {
             } catch (e: Exception) {
                 mainHandler.post {
                     connecting = false
-                    lastError = e.message ?: "No se pudo conectar con el receptor."
+                    lastError = when {
+                        e.message?.contains("read failed", ignoreCase = true) == true ->
+                            "Bluetooth se abrió, pero el receptor cerró el canal o no entregó datos NMEA. Active la salida NMEA por Bluetooth en el receptor y vuelva a intentar."
+                        else -> e.message ?: "No se pudo conectar con el receptor."
+                    }
                     status = status.copy(connected = false, solution = "SIN SEÑAL")
                 }
             } finally {
