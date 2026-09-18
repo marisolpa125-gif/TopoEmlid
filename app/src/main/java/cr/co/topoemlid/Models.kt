@@ -11,6 +11,7 @@ data class GnssStatus(
 )
 
 data class NtripProfile(
+    val id: String,
     val name: String,
     val host: String,
     val port: Int,
@@ -54,5 +55,6 @@ data class TopoProject(
     val geoidFileName: String? = null,
     val antennaHeightM: Double = 2.0,
     val ntripProfileName: String? = null,
+    val ntripProfileId: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
