@@ -1,5 +1,8 @@
 package cr.co.topoemlid
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -7,13 +10,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SurveyScreen(
     project: TopoProject?,
@@ -28,6 +32,11 @@ fun SurveyScreen(
     var seconds by remember { mutableStateOf("5") }
     var showMeasurePanel by remember { mutableStateOf(false) }
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
+    var pointPhoto by remember { mutableStateOf<Uri?>(null) }
+
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        pointPhoto = uri
+    }
 
     Box(Modifier.fillMaxSize()) {
         AndroidView(
@@ -60,7 +69,7 @@ fun SurveyScreen(
                     if (gnss.connected) {
                         "${gnss.solution} • Sat: ${gnss.satellites ?: "—"} • H: ${gnss.horizontalAccuracyM?.let { "%.3f m".format(it) } ?: "—"} • V: ${gnss.verticalAccuracyM?.let { "%.3f m".format(it) } ?: "—"}"
                     } else {
-                        "No hay ningún receptor conectado"
+                        "NO HAY NINGÚN RECEPTOR CONECTADO"
                     },
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -77,20 +86,38 @@ fun SurveyScreen(
             FloatingActionButton(onClick = { mapRef?.animateCamera(CameraUpdateFactory.zoomOut()) }) { Text("−") }
         }
 
-        Row(
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            ExtendedFloatingActionButton(
-                onClick = { showMeasurePanel = true },
-                text = { Text("Medir punto") }
-            )
-            ExtendedFloatingActionButton(
-                onClick = { },
-                text = { Text("Replanteo") }
-            )
+            Surface(tonalElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(8.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Text("H: ${gnss.horizontalAccuracyM?.let { "%.3f" .format(it) } ?: "—"}")
+                    Text("V: ${gnss.verticalAccuracyM?.let { "%.3f" .format(it) } ?: "—"}")
+                    Text("Sat: ${gnss.satellites ?: "—"}")
+                    Text(if (gnss.connected) gnss.solution else "SIN RECEPTOR")
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = { showMeasurePanel = true },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Medir punto") }
+
+                OutlinedButton(
+                    onClick = { },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Replanteo") }
+            }
         }
     }
 
@@ -102,22 +129,21 @@ fun SurveyScreen(
                     .padding(16.dp)
                     .verticalScroll(rememberScrollState())
             ) {
-                Text("Observación GNSS", style = MaterialTheme.typography.headlineSmall)
+                Text("Guardar punto", style = MaterialTheme.typography.headlineSmall)
+
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = { photoPicker.launch("image/*") }) {
+                    Text(if (pointPhoto == null) "Agregar foto del punto" else "Cambiar foto")
+                }
+                if (pointPhoto != null) {
+                    Text("Foto seleccionada", style = MaterialTheme.typography.bodySmall)
+                }
 
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = pointNumber,
                     onValueChange = { pointNumber = it },
-                    label = { Text("Número de punto") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = code,
-                    onValueChange = { code = it },
-                    label = { Text("Código") },
-                    supportingText = { Text("La biblioteca editable de códigos se añadirá aquí.") },
+                    label = { Text("Nombre / número del punto") },
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -126,6 +152,15 @@ fun SurveyScreen(
                     value = description,
                     onValueChange = { description = it },
                     label = { Text("Descripción") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it },
+                    label = { Text("Código") },
+                    supportingText = { Text("Aquí irá la biblioteca editable de códigos.") },
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -140,7 +175,7 @@ fun SurveyScreen(
                     OutlinedTextField(
                         value = seconds,
                         onValueChange = { seconds = it },
-                        label = { Text("Segundos") },
+                        label = { Text("Tiempo (s)") },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -151,8 +186,8 @@ fun SurveyScreen(
                         Text("Estado GNSS", style = MaterialTheme.typography.titleMedium)
                         Text("Solución: ${if (gnss.connected) gnss.solution else "SIN RECEPTOR"}")
                         Text("Satélites: ${gnss.satellites ?: "—"}")
-                        Text("Precisión H: ${gnss.horizontalAccuracyM?.let { "%.3f m".format(it) } ?: "—"}")
-                        Text("Precisión V: ${gnss.verticalAccuracyM?.let { "%.3f m".format(it) } ?: "—"}")
+                        Text("Precisión horizontal: ${gnss.horizontalAccuracyM?.let { "%.3f m".format(it) } ?: "—"}")
+                        Text("Precisión vertical: ${gnss.verticalAccuracyM?.let { "%.3f m".format(it) } ?: "—"}")
                     }
                 }
 
@@ -162,7 +197,7 @@ fun SurveyScreen(
                     onClick = { },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Iniciar medición")
+                    Text("Guardar")
                 }
 
                 if (!gnss.connected) {
