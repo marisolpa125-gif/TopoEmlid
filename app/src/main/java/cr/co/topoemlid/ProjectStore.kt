@@ -26,6 +26,8 @@ class ProjectStore(context: Context) {
                     antennaHeightM = o.optDouble("antennaHeightM", 2.0),
                     ntripProfileName = o.optString("ntripProfileName", "").ifBlank { null },
                     ntripProfileId = o.optString("ntripProfileId", "").ifBlank { null },
+                    receiverProfileId = o.optString("receiverProfileId", "").ifBlank { null },
+                    receiverProfileName = o.optString("receiverProfileName", "").ifBlank { null },
                     createdAt = o.optLong("createdAt", System.currentTimeMillis())
                 )
             }
@@ -46,6 +48,8 @@ class ProjectStore(context: Context) {
                 put("antennaHeightM", p.antennaHeightM)
                 put("ntripProfileName", p.ntripProfileName ?: "")
                 put("ntripProfileId", p.ntripProfileId ?: "")
+                put("receiverProfileId", p.receiverProfileId ?: "")
+                put("receiverProfileName", p.receiverProfileName ?: "")
                 put("createdAt", p.createdAt)
             })
         }
