@@ -42,3 +42,17 @@ enum class DrawTool(val label: String) {
 }
 
 data class LayerItem(val name: String, val visible: Boolean = true)
+
+
+data class TopoProject(
+    val id: String,
+    val name: String,
+    val location: String = "",
+    val crsName: String = "CRTM05",
+    val geoidModel: GeoidModel = GeoidModel.LOCAL_FILE,
+    val geoidFileUri: String? = null,
+    val geoidFileName: String? = null,
+    val antennaHeightM: Double = 2.0,
+    val ntripProfileName: String? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)
