@@ -111,7 +111,7 @@ fun TopoEmlidApp() {
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (page) {
-                "Capas" -> LayersScreen()
+                "Capas" -> ProjectLayersScreen(activeProject)
                 "NTRIP" -> NtripProfilesScreen(
                     profiles = ntripProfiles,
                     onProfilesChanged = {
@@ -374,33 +374,6 @@ private fun ProjectDetails(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun LayersScreen() {
-    var layers by remember {
-        mutableStateOf(listOf(
-            LayerItem("Puntos GNSS"), LayerItem("Linderos"), LayerItem("Construcciones"),
-            LayerItem("Propuesta división"), LayerItem("Replanteo", false)
-        ))
-    }
-    Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
-        Text("Capas", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("Preparado para DXF, KML/KMZ, GeoJSON, CSV, WMS, WMTS y XYZ.")
-        Spacer(Modifier.height(12.dp))
-        layers.forEachIndexed { index, layer ->
-            Row(
-                Modifier.fillMaxWidth().clickable {
-                    layers = layers.toMutableList().also { it[index] = layer.copy(visible = !layer.visible) }
-                }.padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Checkbox(checked = layer.visible, onCheckedChange = null)
-                Text(layer.name)
-            }
-        }
-        Button(onClick = { layers = layers + LayerItem("Nueva capa") }) { Text("+ Nueva capa") }
     }
 }
 
