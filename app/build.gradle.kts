@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "cr.co.topoemlid"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "cr.co.topoemlid"
         minSdk = 26
-        targetSdk = 37
+        targetSdk = 36
         versionCode = 3
         versionName = "0.3.0"
     }
