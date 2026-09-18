@@ -94,6 +94,17 @@ class ReceiverConnectionManager(context: Context) {
                 val reader = BufferedReader(InputStreamReader(s.inputStream))
                 while (!Thread.currentThread().isInterrupted) {
                     val line = reader.readLine() ?: break
+                    if (line.startsWith("$")) {
+                        postStatus(
+                            status.copy(
+                                connected = true,
+                                receiverName = profile.name,
+                                nmeaReceiving = true,
+                                lastNmeaSentence = line.take(160),
+                                lastNmeaAt = System.currentTimeMillis()
+                            )
+                        )
+                    }
                     NmeaParser.parseGga(line)?.let { gga ->
                         val solution = when (gga.fixQuality) {
                             4 -> "FIX"
@@ -110,7 +121,11 @@ class ReceiverConnectionManager(context: Context) {
                                 satellites = gga.satellites,
                                 latitude = gga.latitude,
                                 longitude = gga.longitude,
-                                ellipsoidalHeightM = gga.ellipsoidalHeightM
+                                ellipsoidalHeightM = gga.ellipsoidalHeightM,
+                                correctionAgeS = gga.correctionAgeS,
+                                nmeaReceiving = true,
+                                lastNmeaSentence = line.take(160),
+                                lastNmeaAt = System.currentTimeMillis()
                             )
                         )
                     }
@@ -138,7 +153,11 @@ class ReceiverConnectionManager(context: Context) {
                         postStatus(
                             status.copy(
                                 satellitesInView = gsv.satellitesInView ?: status.satellitesInView,
-                                signalNoiseAvgDbHz = avg ?: status.signalNoiseAvgDbHz
+                                signalNoiseAvgDbHz = avg ?: status.signalNoiseAvgDbHz,
+                                satelliteSnrValues = if (gsv.snrValues.isNotEmpty()) gsv.snrValues else status.satelliteSnrValues,
+                                nmeaReceiving = true,
+                                lastNmeaSentence = line.take(160),
+                                lastNmeaAt = System.currentTimeMillis()
                             )
                         )
                     }
