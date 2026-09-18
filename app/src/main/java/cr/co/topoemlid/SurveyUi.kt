@@ -44,6 +44,9 @@ fun SurveyScreen(
     val context = LocalContext.current
     val pointStore = remember(project?.id) { SurveyPointStore(context) }
     val layerStore = remember(project?.id) { LayerStore(context) }
+    val basemapStore = remember(project?.id) { BasemapStore(context) }
+    val selectedBasemap = remember(project?.id) { basemapStore.selected(project?.id) }
+    val mapboxToken = remember(project?.id) { basemapStore.mapboxToken() }
     val projectLayers = remember(project?.id) {
         project?.let { layerStore.load(it.id) } ?: emptyList()
     }
@@ -163,6 +166,7 @@ fun SurveyScreen(
                         map.setStyle(
                             Style.Builder().fromUri("https://demotiles.maplibre.org/style.json")
                         ) { style ->
+                            addSelectedBasemap(style, selectedBasemap, mapboxToken)
                             addProjectRasterLayers(style, projectLayers)
                         }
                     }
@@ -401,6 +405,36 @@ private fun incrementPointNumber(current: String): String {
     return current.toIntOrNull()?.plus(1)?.toString() ?: current
 }
 
+
+private fun addSelectedBasemap(
+    style: Style,
+    basemap: BasemapType,
+    mapboxToken: String
+) {
+    if (basemap == BasemapType.BASIC) return
+    if (mapboxToken.isBlank()) return
+
+    val styleId = when (basemap) {
+        BasemapType.MAPBOX_STREETS -> "streets-v12"
+        BasemapType.MAPBOX_SATELLITE -> "satellite-streets-v12"
+        BasemapType.BASIC -> return
+    }
+
+    val tileUrl =
+        "https://api.mapbox.com/styles/v1/mapbox/$styleId/tiles/256/{z}/{x}/{y}?access_token=$mapboxToken"
+
+    runCatching {
+        val sourceId = "basemap-mapbox-source"
+        val layerId = "basemap-mapbox-layer"
+        val tileSet = TileSet("2.2.0", tileUrl)
+        style.addSource(RasterSource(sourceId, tileSet, 256))
+        style.addLayer(
+            RasterLayer(layerId, sourceId).withProperties(
+                PropertyFactory.rasterOpacity(1f)
+            )
+        )
+    }
+}
 
 private fun addProjectRasterLayers(
     style: Style,
