@@ -7,8 +7,16 @@ import org.json.JSONObject
 class LayerStore(context: Context) {
     private val prefs = context.getSharedPreferences("project_layers", Context.MODE_PRIVATE)
 
+    fun loadLibrary(): List<LayerItem> = loadKey("global_library")
+
+    fun saveLibrary(layers: List<LayerItem>) = saveKey("global_library", layers)
+
     fun load(projectId: String): List<LayerItem> {
-        val raw = prefs.getString("layers_$projectId", null) ?: return emptyList()
+        return loadKey("layers_$projectId")
+    }
+
+    private fun loadKey(key: String): List<LayerItem> {
+        val raw = prefs.getString(key, null) ?: return emptyList()
         return runCatching {
             val a = JSONArray(raw)
             (0 until a.length()).map { i ->
@@ -33,6 +41,10 @@ class LayerStore(context: Context) {
     }
 
     fun save(projectId: String, layers: List<LayerItem>) {
+        saveKey("layers_$projectId", layers)
+    }
+
+    private fun saveKey(key: String, layers: List<LayerItem>) {
         val a = JSONArray()
         layers.forEachIndexed { index, l ->
             a.put(JSONObject().apply {
@@ -51,6 +63,6 @@ class LayerStore(context: Context) {
                 put("order", index)
             })
         }
-        prefs.edit().putString("layers_$projectId", a.toString()).apply()
+        prefs.edit().putString(key, a.toString()).apply()
     }
 }
