@@ -57,18 +57,44 @@ fun NtripProfilesScreen(
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column {
-                Text("Perfiles NTRIP", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text("Guarde aquí sus casters RTK y asígnelos luego a cada proyecto.")
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("NTRIP", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text("Perfiles de correcciones RTK", style = MaterialTheme.typography.bodySmall)
             }
-            Button(onClick = { creating = true }) { Text("+ Nuevo") }
+            FilledIconButton(onClick = { creating = true }) {
+                Text("+", style = MaterialTheme.typography.headlineSmall)
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Estos perfiles se utilizan para recibir correcciones NTRIP. Puede crear varios y asignar el que corresponda a cada proyecto.",
+            style = MaterialTheme.typography.bodySmall
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        Button(
+            onClick = { creating = true },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("+ Agregar perfil NTRIP")
         }
 
         Spacer(Modifier.height(12.dp))
 
         if (profiles.isEmpty()) {
-            Text("No hay perfiles guardados.")
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("No hay perfiles guardados", fontWeight = FontWeight.Bold)
+                    Text("Pulse “Agregar perfil NTRIP” para configurar el primero.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
         }
 
         profiles.forEach { p ->
