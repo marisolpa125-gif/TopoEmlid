@@ -35,7 +35,9 @@ class MainActivity : ComponentActivity() {
 fun TopoEmlidApp() {
     val context = LocalContext.current
     val store = remember { ProjectStore(context) }
+    val ntripStore = remember { NtripStore(context) }
     var projects by remember { mutableStateOf(store.loadProjects()) }
+    var ntripProfiles by remember { mutableStateOf(ntripStore.loadProfiles()) }
     var activeProjectId by remember { mutableStateOf(store.activeProjectId()) }
     var selectedProjectId by remember { mutableStateOf<String?>(null) }
     var page by remember { mutableStateOf("Mapa") }
@@ -96,11 +98,11 @@ fun TopoEmlidApp() {
         topBar = { GnssBar(gnss, activeProject?.name) },
         bottomBar = {
             NavigationBar {
-                listOf("Mapa", "Capas", "Proyecto").forEach { item ->
+                listOf("Mapa", "Capas", "NTRIP", "Proyecto").forEach { item ->
                     NavigationBarItem(
                         selected = page == item,
                         onClick = { page = item },
-                        icon = { Text(if (item == "Mapa") "⌖" else if (item == "Capas") "▱" else "⚙") },
+                        icon = { Text(if (item == "Mapa") "⌖" else if (item == "Capas") "▱" else if (item == "NTRIP") "RTK" else "⚙") },
                         label = { Text(item) }
                     )
                 }
@@ -110,6 +112,13 @@ fun TopoEmlidApp() {
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (page) {
                 "Capas" -> LayersScreen()
+                "NTRIP" -> NtripProfilesScreen(
+                    profiles = ntripProfiles,
+                    onProfilesChanged = {
+                        ntripProfiles = it
+                        ntripStore.saveProfiles(it)
+                    }
+                )
                 "Proyecto" -> {
                     val selected = projects.firstOrNull { it.id == selectedProjectId }
                     if (selected == null) {
@@ -138,7 +147,8 @@ fun TopoEmlidApp() {
                             onUpdate = { updated ->
                                 persist(projects.map { if (it.id == updated.id) updated else it })
                             },
-                            onDelete = { deleteCandidate = selected }
+                            onDelete = { deleteCandidate = selected },
+                            ntripProfiles = ntripProfiles
                         )
                     }
                 }
@@ -262,7 +272,8 @@ private fun ProjectDetails(
     onBack: () -> Unit,
     onSetActive: () -> Unit,
     onUpdate: (TopoProject) -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    ntripProfiles: List<NtripProfile>
 ) {
     var name by remember(project.id, project.name) { mutableStateOf(project.name) }
     var location by remember(project.id, project.location) { mutableStateOf(project.location) }
@@ -341,7 +352,28 @@ private fun ProjectDetails(
 
         Spacer(Modifier.height(16.dp))
         SettingsCard("Datos guardados", "CRS: ${crsName}", "Geoide: ${geoidFileName ?: project.geoidModel.label} • Altura antena: ${antennaText} m")
-        SettingsCard("NTRIP", project.ntripProfileName ?: "Sin perfil asignado", "La edición de perfiles NTRIP se añadirá en la siguiente etapa.")
+        Text("Perfil NTRIP", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
+        if (ntripProfiles.isEmpty()) {
+            Text("No hay perfiles NTRIP guardados. Créelos desde la pestaña NTRIP.")
+        } else {
+            ntripProfiles.forEach { profile ->
+                Row(
+                    Modifier.fillMaxWidth().clickable {
+                        onUpdate(project.copy(ntripProfileId = profile.id, ntripProfileName = profile.name))
+                    }.padding(vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = project.ntripProfileId == profile.id,
+                        onClick = { onUpdate(project.copy(ntripProfileId = profile.id, ntripProfileName = profile.name)) }
+                    )
+                    Column {
+                        Text(profile.name)
+                        Text("${profile.host}:${profile.port} • ${profile.mountPoint}", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
     }
 }
 
