@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import org.maplibre.android.MapLibre
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -27,6 +28,7 @@ import java.util.UUID
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        MapLibre.getInstance(this)
         setContent { MaterialTheme { TopoEmlidApp() } }
     }
 }
@@ -40,7 +42,7 @@ fun TopoEmlidApp() {
     var ntripProfiles by remember { mutableStateOf(ntripStore.loadProfiles()) }
     var activeProjectId by remember { mutableStateOf(store.activeProjectId()) }
     var selectedProjectId by remember { mutableStateOf<String?>(null) }
-    var page by remember { mutableStateOf("Mapa") }
+    var page by remember { mutableStateOf("Levantamiento") }
     var selectedTool by remember { mutableStateOf(DrawTool.POINT) }
     var showNewProject by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<TopoProject?>(null) }
@@ -98,11 +100,11 @@ fun TopoEmlidApp() {
         topBar = { GnssBar(gnss, activeProject?.name) },
         bottomBar = {
             NavigationBar {
-                listOf("Mapa", "Capas", "NTRIP", "Proyecto").forEach { item ->
+                listOf("Levantamiento", "Capas", "NTRIP", "Proyecto").forEach { item ->
                     NavigationBarItem(
                         selected = page == item,
                         onClick = { page = item },
-                        icon = { Text(if (item == "Mapa") "⌖" else if (item == "Capas") "▱" else if (item == "NTRIP") "RTK" else "⚙") },
+                        icon = { Text(if (item == "Levantamiento") "⌖" else if (item == "Capas") "▱" else if (item == "NTRIP") "RTK" else "⚙") },
                         label = { Text(item) }
                     )
                 }
@@ -129,7 +131,7 @@ fun TopoEmlidApp() {
                             onOpen = { p ->
                                 activeProjectId = p.id
                                 store.setActiveProject(p.id)
-                                page = "Mapa"
+                                page = "Levantamiento"
                             },
                             onEdit = { p -> selectedProjectId = p.id },
                             onView = { p -> selectedProjectId = p.id },
@@ -152,10 +154,9 @@ fun TopoEmlidApp() {
                         )
                     }
                 }
-                else -> MapWorkspace(
-                    selectedTool = selectedTool,
-                    activeProject = activeProject,
-                    onTool = { selectedTool = it }
+                else -> SurveyScreen(
+                    project = activeProject,
+                    gnss = gnss
                 )
             }
         }
@@ -171,34 +172,6 @@ private fun GnssBar(status: GnssStatus, projectName: String?) {
                 Text(if (status.connected) "${status.receiverName} • ${status.solution}" else "${status.receiverName} • Desconectado")
             }
             Text("H: ${status.horizontalAccuracyM?.let { "%.3f m".format(it) } ?: "—"} • Sat: ${status.satellites ?: "—"}")
-        }
-    }
-}
-
-@Composable
-private fun MapWorkspace(selectedTool: DrawTool, activeProject: TopoProject?, onTool: (DrawTool) -> Unit) {
-    Column(Modifier.fillMaxSize()) {
-        Box(
-            Modifier.weight(1f).fillMaxWidth().background(Color(0xFFE7ECEF)),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(activeProject?.name ?: "Seleccione o cree un proyecto", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("MAPA / CAD", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text("Preparado para MapLibre y WMS/WMTS/XYZ")
-                Spacer(Modifier.height(12.dp))
-                Text("Herramienta activa: ${selectedTool.label}")
-            }
-        }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(6.dp)) {
-            DrawTool.entries.forEach { tool ->
-                FilterChip(
-                    selected = tool == selectedTool,
-                    onClick = { onTool(tool) },
-                    label = { Text(tool.label) },
-                    modifier = Modifier.padding(horizontal = 3.dp)
-                )
-            }
         }
     }
 }
