@@ -21,6 +21,16 @@ data class GstAccuracy(
     val verticalAccuracyM: Double?
 )
 
+data class GsaStatus(
+    val mode: String?,
+    val pdop: Double?
+)
+
+data class GsvStatus(
+    val satellitesInView: Int?,
+    val snrValues: List<Double>
+)
+
 object NmeaParser {
     fun parseGga(sentence: String): GgaFix? {
         if (!sentence.startsWith("\$GPGGA") && !sentence.startsWith("\$GNGGA")) return null
@@ -48,6 +58,34 @@ object NmeaParser {
         val altSigma = p[8].toDoubleOrNull()
         val h = if (latSigma != null && lonSigma != null) hypot(latSigma, lonSigma) else null
         return GstAccuracy(horizontalAccuracyM = h, verticalAccuracyM = altSigma)
+    }
+
+    fun parseGsa(sentence: String): GsaStatus? {
+        if (!sentence.contains("GSA")) return null
+        val p = sentence.substringBefore('*').split(',')
+        if (p.size < 17) return null
+        val fixType = p.getOrNull(2)?.toIntOrNull()
+        val mode = when (fixType) {
+            3 -> "3D"
+            2 -> "2D"
+            1 -> "Sin solución"
+            else -> null
+        }
+        return GsaStatus(mode = mode, pdop = p.getOrNull(15)?.toDoubleOrNull())
+    }
+
+    fun parseGsv(sentence: String): GsvStatus? {
+        if (!sentence.contains("GSV")) return null
+        val p = sentence.substringBefore('*').split(',')
+        if (p.size < 4) return null
+        val inView = p.getOrNull(3)?.toIntOrNull()
+        val snr = mutableListOf<Double>()
+        var i = 7
+        while (i < p.size) {
+            p.getOrNull(i)?.toDoubleOrNull()?.let { snr += it }
+            i += 4
+        }
+        return GsvStatus(inView, snr)
     }
 
     private fun nmeaCoord(value: String, hemisphere: String): Double? {
