@@ -25,6 +25,7 @@ class ProjectStore(context: Context) {
                     geoidFileName = o.optString("geoidFileName", "").ifBlank { null },
                     antennaHeightM = o.optDouble("antennaHeightM", 2.0),
                     ntripProfileName = o.optString("ntripProfileName", "").ifBlank { null },
+                    ntripProfileId = o.optString("ntripProfileId", "").ifBlank { null },
                     createdAt = o.optLong("createdAt", System.currentTimeMillis())
                 )
             }
@@ -44,6 +45,7 @@ class ProjectStore(context: Context) {
                 put("geoidFileName", p.geoidFileName ?: "")
                 put("antennaHeightM", p.antennaHeightM)
                 put("ntripProfileName", p.ntripProfileName ?: "")
+                put("ntripProfileId", p.ntripProfileId ?: "")
                 put("createdAt", p.createdAt)
             })
         }
