@@ -3,6 +3,8 @@ package cr.co.topoemlid
 data class GnssStatus(
     val receiverName: String = "Receptor GNSS",
     val connected: Boolean = false,
+    val connectionTransport: String? = null,
+    val bleServicesDiscovered: Int? = null,
     val solution: String = "SIN SEÑAL",
     val horizontalAccuracyM: Double? = null,
     val verticalAccuracyM: Double? = null,
@@ -95,11 +97,18 @@ data class TopoProject(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+enum class ReceiverConnectionMode(val label: String) {
+    AUTO("Automático"),
+    BLE("BLE"),
+    BLUETOOTH_NMEA("Bluetooth / NMEA")
+}
+
 data class ReceiverProfile(
     val id: String,
     val name: String,
     val address: String,
     val transport: String = "Bluetooth",
+    val preferredMode: ReceiverConnectionMode = ReceiverConnectionMode.AUTO,
     val lastConnectedAt: Long? = null
 )
 
