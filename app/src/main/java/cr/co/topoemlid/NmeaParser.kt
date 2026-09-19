@@ -88,7 +88,7 @@ object NmeaParser {
             1 -> "Sin solución"
             else -> null
         }
-        val talker = sentence.removePrefix("$").take(2)
+        val talker = sentence.removePrefix("\\$").take(2)
         val used = (3..14)
             .mapNotNull { p.getOrNull(it)?.toIntOrNull() }
             .map { satelliteLabel(talker, it) }
@@ -105,7 +105,7 @@ object NmeaParser {
         val p = sentence.substringBefore('*').split(',')
         if (p.size < 4) return null
 
-        val talker = sentence.removePrefix("$").take(2)
+        val talker = sentence.removePrefix("\\$").take(2)
         val totalMessages = p.getOrNull(1)?.toIntOrNull()
         val messageNumber = p.getOrNull(2)?.toIntOrNull()
         val inView = p.getOrNull(3)?.toIntOrNull()
