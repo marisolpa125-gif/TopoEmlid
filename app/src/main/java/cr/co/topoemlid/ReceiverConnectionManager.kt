@@ -28,6 +28,7 @@ class ReceiverConnectionManager(context: Context) {
     private var gatt: BluetoothGatt? = null
     private var worker: Thread? = null
     private var autoFallbackProfile: ReceiverProfile? = null
+    private val usedSatelliteIds = linkedSetOf<String>()
 
     var status by mutableStateOf(GnssStatus())
         private set
@@ -270,21 +271,46 @@ class ReceiverConnectionManager(context: Context) {
                     }
 
                     NmeaParser.parseGsa(line)?.let { gsa ->
+                        usedSatelliteIds += gsa.usedSatelliteIds
+                        val marked = status.satelliteSignals.map { sat ->
+                            sat.copy(usedInFix = sat.id in usedSatelliteIds)
+                        }
                         postStatus(
                             status.copy(
                                 pdop = gsa.pdop,
-                                positioningMode = gsa.mode
+                                positioningMode = gsa.mode,
+                                satelliteSignals = marked
                             )
                         )
                     }
 
                     NmeaParser.parseGsv(line)?.let { gsv ->
-                        val avg = gsv.snrValues.takeIf { it.isNotEmpty() }?.average()
+                        val merged = status.satelliteSignals
+                            .associateBy { it.id }
+                            .toMutableMap()
+
+                        gsv.satellites.forEach { sat ->
+                            merged[sat.id] = SatelliteSignal(
+                                id = sat.id,
+                                constellation = sat.constellation,
+                                snrDbHz = sat.snrDbHz,
+                                elevationDeg = sat.elevationDeg,
+                                azimuthDeg = sat.azimuthDeg,
+                                usedInFix = sat.id in usedSatelliteIds
+                            )
+                        }
+
+                        val satellites = merged.values
+                            .sortedWith(compareBy<SatelliteSignal> { it.constellation }.thenBy { it.id })
+                        val snrValues = satellites.mapNotNull { it.snrDbHz }
+                        val avg = snrValues.takeIf { it.isNotEmpty() }?.average()
+
                         postStatus(
                             status.copy(
                                 satellitesInView = gsv.satellitesInView ?: status.satellitesInView,
                                 signalNoiseAvgDbHz = avg ?: status.signalNoiseAvgDbHz,
-                                satelliteSnrValues = if (gsv.snrValues.isNotEmpty()) gsv.snrValues else status.satelliteSnrValues,
+                                satelliteSnrValues = snrValues,
+                                satelliteSignals = satellites,
                                 nmeaReceiving = true,
                                 lastNmeaSentence = line.take(160),
                                 lastNmeaAt = System.currentTimeMillis()
@@ -311,6 +337,7 @@ class ReceiverConnectionManager(context: Context) {
 
     fun disconnect() {
         autoFallbackProfile = null
+        usedSatelliteIds.clear()
         worker?.interrupt()
         worker = null
         runCatching { socket?.close() }
