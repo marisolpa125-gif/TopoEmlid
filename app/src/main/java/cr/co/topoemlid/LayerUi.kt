@@ -29,7 +29,6 @@ fun ProjectLayersScreen(project: TopoProject?) {
     val basemapStore = remember { BasemapStore(context) }
     val projectId = project?.id
     var selectedBasemap by remember(projectId) { mutableStateOf(basemapStore.selected(projectId)) }
-    var mapboxToken by remember { mutableStateOf(basemapStore.mapboxToken()) }
     var layers by remember(projectId) { mutableStateOf(projectId?.let { store.load(it) } ?: emptyList()) }
     var library by remember { mutableStateOf(store.loadLibrary()) }
     var editing by remember { mutableStateOf<LayerItem?>(null) }
@@ -179,28 +178,6 @@ fun ProjectLayersScreen(project: TopoProject?) {
                     }
                 }
 
-                if (selectedBasemap == BasemapType.MAPBOX_STREETS ||
-                    selectedBasemap == BasemapType.MAPBOX_SATELLITE
-                ) {
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = mapboxToken,
-                        onValueChange = {
-                            mapboxToken = it
-                            basemapStore.setMapboxToken(it)
-                        },
-                        label = { Text("Token público de Mapbox") },
-                        supportingText = {
-                            Text(
-                                if (mapboxToken.isBlank())
-                                    "Sin token: Mapbox no puede cargar y se verá el mapa básico."
-                                else
-                                    "Token guardado. Al volver a Levantamiento debe cambiar el mapa base."
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
             }
         }
 
