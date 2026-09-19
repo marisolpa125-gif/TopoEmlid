@@ -2119,36 +2119,83 @@ private fun clipPlane(poly: List<XY>, nx: Double, ny: Double, c: Double, keepLes
     return out
 }
 
-private fun divideAxis(polygon: List<LatLng>, parts: Int, axisX: Double, axisY: Double, equalArea: Boolean): List<List<LatLng>> {
+private fun divideAxis(
+    polygon: List<LatLng>,
+    parts: Int,
+    axisX: Double,
+    axisY: Double,
+    equalArea: Boolean
+): List<List<LatLng>> {
     val (xy, meanLat) = toXY(polygon)
+    if (xy.size < 3 || parts < 2) return listOf(polygon)
+
     val len = hypot(axisX, axisY).takeIf { it > 1e-9 } ?: return listOf(polygon)
     val nx = axisX / len
     val ny = axisY / len
-    val vals = xy.map { nx * it.x + ny * it.y }
-    val minV = vals.minOrNull() ?: return listOf(polygon)
-    val maxV = vals.maxOrNull() ?: return listOf(polygon)
-    val total = areaXY(xy)
-    val cuts = mutableListOf<Double>()
-    for (k in 1 until parts) {
-        val f = k.toDouble() / parts
-        if (!equalArea) cuts += minV + (maxV - minV) * f
-        else {
+    val totalArea = areaXY(xy)
+    if (totalArea <= 1e-8) return listOf(polygon)
+
+    /*
+     * Important: split the REMAINING polygon sequentially.
+     * The old implementation generated every strip independently from the
+     * original polygon. Small numerical differences at neighbouring cuts
+     * could leave slivers/gaps or mismatched borders. By cutting the remainder
+     * and carrying it forward, each new parcel shares the exact same cut
+     * vertices with the next parcel, so the pieces cover the complete polygon.
+     */
+    val result = mutableListOf<List<XY>>()
+    var remaining = xy
+
+    val originalVals = xy.map { nx * it.x + ny * it.y }
+    val originalMin = originalVals.minOrNull() ?: return listOf(polygon)
+    val originalMax = originalVals.maxOrNull() ?: return listOf(polygon)
+
+    for (partIndex in 0 until parts - 1) {
+        if (remaining.size < 3) break
+
+        val remainingVals = remaining.map { nx * it.x + ny * it.y }
+        val minV = remainingVals.minOrNull() ?: break
+        val maxV = remainingVals.maxOrNull() ?: break
+        if (maxV - minV <= 1e-8) break
+
+        val cut = if (equalArea) {
+            val targetArea = totalArea / parts.toDouble()
+            val remainingArea = areaXY(remaining)
+            val wanted = targetArea.coerceAtMost(remainingArea)
             var lo = minV
             var hi = maxV
-            repeat(40) {
+            repeat(60) {
                 val mid = (lo + hi) / 2.0
-                val a = areaXY(clipPlane(xy, nx, ny, mid, true))
-                if (a / total < f) lo = mid else hi = mid
+                val leftArea = areaXY(clipPlane(remaining, nx, ny, mid, true))
+                if (leftArea < wanted) lo = mid else hi = mid
             }
-            cuts += (lo + hi) / 2.0
+            (lo + hi) / 2.0
+        } else {
+            // Equal-front mode keeps the original frontage spacing.
+            val cutNumber = partIndex + 1
+            originalMin + (originalMax - originalMin) * cutNumber.toDouble() / parts.toDouble()
         }
+
+        val piece = clipPlane(remaining, nx, ny, cut, true)
+        val rest = clipPlane(remaining, nx, ny, cut, false)
+
+        if (piece.size < 3 || rest.size < 3) {
+            // Never throw away any residual area. Keep everything that remains
+            // as the final parcel instead of producing an incomplete division.
+            break
+        }
+
+        result += piece
+        remaining = rest
     }
-    val bounds = listOf(minV - 1.0) + cuts + listOf(maxV + 1.0)
-    return (0 until parts).mapNotNull { i ->
-        var p = clipPlane(xy, nx, ny, bounds[i], false)
-        p = clipPlane(p, nx, ny, bounds[i + 1], true)
-        if (p.size >= 3) fromXY(p, meanLat) else null
-    }
+
+    if (remaining.size >= 3) result += remaining
+
+    // If for any reason the requested count could not be achieved safely,
+    // return the complete polygon rather than an incomplete set with gaps.
+    if (result.size < 2) return listOf(polygon)
+
+    return result.map { fromXY(it, meanLat) }
 }
 
 private fun dividePolygonEqualArea(polygon: List<LatLng>, parts: Int): List<List<LatLng>> {
