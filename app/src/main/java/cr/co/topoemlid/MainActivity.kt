@@ -1,7 +1,10 @@
 package cr.co.topoemlid
 
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTrack
 import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Bundle
@@ -28,6 +31,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.UUID
+import kotlin.math.PI
+import kotlin.math.sin
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,7 +76,7 @@ fun TopoEmlidApp() {
     var deleteCandidate by remember { mutableStateOf<TopoProject?>(null) }
     val gnss = receiverConnection.status
     val ntripStatus = ntripConnection.status
-    val toneGenerator = remember { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 75) }
+    val toneGenerator = remember { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100) }
     var previousGnssConnected by remember { mutableStateOf<Boolean?>(null) }
     var previousSolution by remember { mutableStateOf<String?>(null) }
 
@@ -87,7 +92,7 @@ fun TopoEmlidApp() {
             if (currentConnected) {
                 toneGenerator.startTone(ToneGenerator.TONE_PROP_ACK, 180)
             } else {
-                toneGenerator.startTone(ToneGenerator.TONE_PROP_NACK, 420)
+                playLongDisconnectAlarm()
             }
         }
 
@@ -97,7 +102,7 @@ fun TopoEmlidApp() {
             when (normalized) {
                 "FIX" -> toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP2, 220)
                 "FLOAT" -> toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 180)
-                "SINGLE", "DGPS", "SIN FIX" -> toneGenerator.startTone(ToneGenerator.TONE_SUP_ERROR, 280)
+                "SINGLE", "DGPS", "SIN FIX" -> toneGenerator.startTone(ToneGenerator.TONE_PROP_NACK, 420)
             }
         }
 
@@ -250,6 +255,60 @@ fun TopoEmlidApp() {
             }
         }
     }
+}
+
+
+private fun playLongDisconnectAlarm() {
+    Thread {
+        runCatching {
+            val sampleRate = 16000
+            val durationSeconds = 2.2
+            val sampleCount = (sampleRate * durationSeconds).toInt()
+            val audio = ShortArray(sampleCount)
+            var phase = 0.0
+
+            for (i in 0 until sampleCount) {
+                val t = i.toDouble() / sampleRate
+                val modulation = 0.5 * (1.0 + sin(2.0 * PI * 2.1 * t))
+                val frequency = 780.0 + 520.0 * modulation
+                phase += 2.0 * PI * frequency / sampleRate
+                val pulse = 0.70 + 0.30 * (0.5 * (1.0 + sin(2.0 * PI * 3.0 * t)))
+                val sample = (sin(phase) * pulse * 0.92)
+                audio[i] = (sample.coerceIn(-1.0, 1.0) * Short.MAX_VALUE).toInt().toShort()
+            }
+
+            val minBuffer = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            ).coerceAtLeast(audio.size * 2)
+
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(minBuffer)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .build()
+
+            track.write(audio, 0, audio.size)
+            track.setVolume(1.0f)
+            track.play()
+            Thread.sleep((durationSeconds * 1000).toLong() + 150L)
+            track.stop()
+            track.release()
+        }
+    }.start()
 }
 
 @Composable
