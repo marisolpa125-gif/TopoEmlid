@@ -48,6 +48,12 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.RasterLayer
+import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.SymbolLayer
+import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.geojson.Feature
+import org.maplibre.geojson.FeatureCollection
+import org.maplibre.geojson.Point
 import org.maplibre.android.style.sources.ImageSource
 import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
@@ -81,7 +87,6 @@ fun SurveyScreen(
     val layerStore = remember(project?.id) { LayerStore(context) }
     val basemapStore = remember(project?.id) { BasemapStore(context) }
     var selectedBasemap by remember(project?.id) { mutableStateOf(basemapStore.selected(project?.id)) }
-    val mapboxToken = basemapStore.mapboxToken()
     fun loadEffectiveLayers(): List<LayerItem> {
         val saved = project?.let { layerStore.load(it.id) }.orEmpty()
         val global = layerStore.loadLibrary()
@@ -192,6 +197,7 @@ fun SurveyScreen(
         }
         drawSavedSurveyPoints(m, savedPoints, context)
         drawLiveReceiverPosition(m, gnss, context)
+        ensureSurveyPointOverlayOnTop(m, savedPoints, gnss)
     }
 
     fun showGeometrySelection(index: Int?) {
@@ -328,7 +334,6 @@ fun SurveyScreen(
         key(
             project?.id,
             selectedBasemap,
-            mapboxToken,
             projectLayers.hashCode()
         ) {
             AndroidView(
@@ -372,7 +377,7 @@ fun SurveyScreen(
                                 )
 
                             map.setStyle(baseStyle) { style ->
-                                addSelectedBasemap(style, selectedBasemap, mapboxToken)
+                                addSelectedBasemap(style, selectedBasemap)
                                 addProjectRasterLayers(style, projectLayers)
                                 refreshViewportWmsLayers(map, projectLayers) {
                                     map.clear()
@@ -1695,8 +1700,7 @@ fun SurveyScreen(
 
                 listOf(
                     BasemapType.BASIC,
-                    BasemapType.MAPBOX_STREETS,
-                    BasemapType.MAPBOX_SATELLITE
+                    BasemapType.SATELLITE
                 ).forEach { type ->
                     Row(
                         Modifier
@@ -1994,6 +1998,93 @@ fun SurveyScreen(
 }
 
 
+private fun ensureSurveyPointOverlayOnTop(
+    map: MapLibreMap,
+    points: List<SurveyPoint>,
+    gnss: GnssStatus
+) {
+    val style = map.style ?: return
+
+    val savedFeatures = points.mapNotNull { p ->
+        val lat = p.latitude ?: return@mapNotNull null
+        val lon = p.longitude ?: return@mapNotNull null
+        Feature.fromGeometry(Point.fromLngLat(lon, lat)).apply {
+            addStringProperty("label", p.pointNumber)
+        }
+    }
+
+    val savedSourceId = "survey-points-top-source"
+    val savedLayerId = "survey-points-top-layer"
+    val savedSource = style.getSourceAs<GeoJsonSource>(savedSourceId)
+    if (savedSource == null) {
+        style.addSource(GeoJsonSource(savedSourceId, FeatureCollection.fromFeatures(savedFeatures)))
+        style.addLayer(
+            CircleLayer(savedLayerId, savedSourceId).withProperties(
+                PropertyFactory.circleColor(android.graphics.Color.WHITE),
+                PropertyFactory.circleStrokeColor(android.graphics.Color.rgb(30, 30, 30)),
+                PropertyFactory.circleStrokeWidth(3f),
+                PropertyFactory.circleRadius(7f)
+            )
+        )
+    } else {
+        savedSource.setGeoJson(FeatureCollection.fromFeatures(savedFeatures))
+        style.getLayer(savedLayerId)?.let {
+            style.removeLayer(savedLayerId)
+            style.addLayer(
+                CircleLayer(savedLayerId, savedSourceId).withProperties(
+                    PropertyFactory.circleColor(android.graphics.Color.WHITE),
+                    PropertyFactory.circleStrokeColor(android.graphics.Color.rgb(30, 30, 30)),
+                    PropertyFactory.circleStrokeWidth(3f),
+                    PropertyFactory.circleRadius(7f)
+                )
+            )
+        }
+    }
+
+    val liveSourceId = "gnss-live-top-source"
+    val liveLayerId = "gnss-live-top-layer"
+    val liveFeatures = if (
+        gnss.connected && gnss.latitude != null && gnss.longitude != null
+    ) {
+        listOf(Feature.fromGeometry(Point.fromLngLat(gnss.longitude!!, gnss.latitude!!)))
+    } else {
+        emptyList()
+    }
+
+    val liveSource = style.getSourceAs<GeoJsonSource>(liveSourceId)
+    val liveColor = when {
+        gnss.solution.equals("FIX", true) -> android.graphics.Color.rgb(46, 125, 50)
+        gnss.solution.equals("FLOAT", true) -> android.graphics.Color.rgb(249, 168, 37)
+        else -> android.graphics.Color.rgb(198, 40, 40)
+    }
+
+    if (liveSource == null) {
+        style.addSource(GeoJsonSource(liveSourceId, FeatureCollection.fromFeatures(liveFeatures)))
+        style.addLayer(
+            CircleLayer(liveLayerId, liveSourceId).withProperties(
+                PropertyFactory.circleColor(liveColor),
+                PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
+                PropertyFactory.circleStrokeWidth(4f),
+                PropertyFactory.circleRadius(10f)
+            )
+        )
+    } else {
+        liveSource.setGeoJson(FeatureCollection.fromFeatures(liveFeatures))
+        style.getLayer(liveLayerId)?.let {
+            style.removeLayer(liveLayerId)
+            style.addLayer(
+                CircleLayer(liveLayerId, liveSourceId).withProperties(
+                    PropertyFactory.circleColor(liveColor),
+                    PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
+                    PropertyFactory.circleStrokeWidth(4f),
+                    PropertyFactory.circleRadius(10f)
+                )
+            )
+        }
+    }
+}
+
+
 private fun drawLiveReceiverPosition(
     map: MapLibreMap,
     gnss: GnssStatus,
@@ -2122,50 +2213,23 @@ private fun probeWmsUrl(url: String): String {
 
 fun addSelectedBasemap(
     style: Style,
-    basemap: BasemapType,
-    mapboxToken: String
+    basemap: BasemapType
 ) {
     if (basemap == BasemapType.NONE) return
 
-    if (basemap == BasemapType.BASIC) {
-        runCatching {
-            val sourceId = "basemap-basic-source"
-            val layerId = "basemap-basic-layer"
-            val tiles = TileSet("2.2.0", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
-            style.addSource(RasterSource(sourceId, tiles, 256))
-            style.addLayer(
-                RasterLayer(layerId, sourceId).withProperties(
-                    PropertyFactory.rasterOpacity(1f)
-                )
-            )
-        }
-        return
-    }
-
-    if (mapboxToken.isBlank()) return
-
-    val cleanToken = mapboxToken.trim()
+    val sourceId = "basemap-source"
+    val layerId = "basemap-layer"
     val tileUrl = when (basemap) {
-        // Request an explicit raster format. MapLibre's RasterSource is much
-        // more predictable with a real raster tile endpoint than with a style
-        // URL whose response format is inferred.
-        BasemapType.MAPBOX_STREETS ->
-            "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/{z}/{x}/{y}.png?access_token=$cleanToken"
-
-        // Satellite is already a native raster tileset, so use the Raster
-        // Tiles API directly instead of rasterizing a Mapbox style.
-        BasemapType.MAPBOX_SATELLITE ->
-            "https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg90?access_token=$cleanToken"
-
-        BasemapType.BASIC, BasemapType.NONE -> return
+        BasemapType.BASIC ->
+            "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+        BasemapType.SATELLITE ->
+            "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        BasemapType.NONE -> return
     }
 
     runCatching {
-        val sourceId = "basemap-mapbox-source"
-        val layerId = "basemap-mapbox-layer"
         val tileSet = TileSet("2.2.0", tileUrl)
-        val tileSize = if (basemap == BasemapType.MAPBOX_STREETS) 512 else 256
-        style.addSource(RasterSource(sourceId, tileSet, tileSize))
+        style.addSource(RasterSource(sourceId, tileSet, 256))
         style.addLayer(
             RasterLayer(layerId, sourceId).withProperties(
                 PropertyFactory.rasterOpacity(1f)
