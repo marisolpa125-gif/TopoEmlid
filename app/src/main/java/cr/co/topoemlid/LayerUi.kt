@@ -57,7 +57,7 @@ fun ProjectLayersScreen(project: TopoProject?) {
     }
 
     fun persistLibrary(updated: List<LayerItem>) {
-        library = updated.mapIndexed { index, item -> item.copy(order = index, visible = true) }
+        library = updated.mapIndexed { index, item -> item.copy(order = index) }
         store.saveLibrary(library)
     }
 
@@ -70,7 +70,9 @@ fun ProjectLayersScreen(project: TopoProject?) {
             },
             onSave = { saved ->
                 val libraryUpdated = if (library.any { it.id == saved.id }) {
-                    library.map { if (it.id == saved.id) saved.copy(visible = true) else it }
+                    library.map { existing ->
+                        if (existing.id == saved.id) saved.copy(visible = existing.visible) else existing
+                    }
                 } else {
                     library + saved.copy(visible = true, order = library.size)
                 }
@@ -232,9 +234,28 @@ fun ProjectLayersScreen(project: TopoProject?) {
                         Column(Modifier.weight(1f)) {
                             Text(lib.name, fontWeight = FontWeight.Bold)
                             Text(lib.type.label, style = MaterialTheme.typography.bodySmall)
+                            if (projectId == null) {
+                                Text(
+                                    if (lib.visible) "Visible" else "Oculta",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
                         }
                         if (projectId == null) {
-                            OutlinedButton(onClick = { editing = lib }) { Text("Editar") }
+                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                Switch(
+                                    checked = lib.visible,
+                                    onCheckedChange = { checked ->
+                                        persistLibrary(
+                                            library.map {
+                                                if (it.id == lib.id) it.copy(visible = checked) else it
+                                            }
+                                        )
+                                    }
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                OutlinedButton(onClick = { editing = lib }) { Text("Editar") }
+                            }
                         } else {
                             Button(onClick = {
                                 persist(layers + lib.copy(visible = true, order = layers.size))
@@ -286,6 +307,11 @@ fun ProjectLayersScreen(project: TopoProject?) {
                     if (!layer.layerName.isNullOrBlank()) Text("Capa: ${layer.layerName}", style = MaterialTheme.typography.bodySmall)
                     if (!layer.localUri.isNullOrBlank()) Text("Archivo local seleccionado", style = MaterialTheme.typography.bodySmall)
                     Text("Opacidad: ${(layer.opacity * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        if (layer.visible) "Estado: Visible" else "Estado: Oculta",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold
+                    )
 
                     Spacer(Modifier.height(6.dp))
                     Text("Mantenga presionado para editar, mover o eliminar.", style = MaterialTheme.typography.bodySmall)
