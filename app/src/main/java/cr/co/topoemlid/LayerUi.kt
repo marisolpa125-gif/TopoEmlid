@@ -28,7 +28,7 @@ fun ProjectLayersScreen(project: TopoProject?) {
     val store = remember { LayerStore(context) }
     val basemapStore = remember { BasemapStore(context) }
     val projectId = project?.id
-    var selectedBasemap by remember(projectId) { mutableStateOf(projectId?.let { basemapStore.selected(it) } ?: BasemapType.OSM) }
+    var selectedBasemap by remember(projectId) { mutableStateOf(projectId?.let { basemapStore.selected(it) } ?: BasemapType.BASIC) }
     var mapboxToken by remember { mutableStateOf(basemapStore.mapboxToken()) }
     var layers by remember(projectId) { mutableStateOf(projectId?.let { store.load(it) } ?: emptyList()) }
     var library by remember { mutableStateOf(store.loadLibrary()) }
