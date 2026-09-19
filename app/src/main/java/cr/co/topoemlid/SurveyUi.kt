@@ -348,7 +348,7 @@ fun SurveyScreen(
                                         toolResult = "Línea base seleccionada. Indique separación y lado."
                                         true
                                     } else {
-                                        toolResult = "No se encontró una línea guardada cerca. Toque directamente sobre la línea."
+                                        toolResult = "No se encontró una línea o polilínea guardada cerca. Toque directamente sobre uno de sus segmentos."
                                         false
                                     }
                                 } else if (
@@ -950,7 +950,7 @@ fun SurveyScreen(
                                             toolResult = "Línea base seleccionada. Indique la separación."
                                         } else {
                                             toolPoints = emptyList()
-                                            toolResult = "Toque directamente la línea guardada. Al seleccionarla se resaltará y podrá indicar distancia, izquierda o derecha."
+                                            toolResult = "Toque directamente una línea o polilínea guardada. Se resaltará completa y podrá indicar distancia, izquierda o derecha."
                                             mapRef?.clear()
                                             redrawCommitted(mapRef)
                                             showToolsPanel = false
@@ -1089,10 +1089,10 @@ fun SurveyScreen(
     if (showParallelPanel) {
         ModalBottomSheet(onDismissRequest = { showParallelPanel = false }) {
             Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                Text("Crear línea paralela", style = MaterialTheme.typography.headlineSmall)
+                Text("Crear paralela a línea / polilínea", style = MaterialTheme.typography.headlineSmall)
                 Text(
                     if (toolPoints.size >= 2)
-                        "Línea base seleccionada • %.2f m".format(polylineDistanceMeters(toolPoints))
+                        "Línea/polilínea base seleccionada • %.2f m • %d vértices".format(polylineDistanceMeters(toolPoints), toolPoints.size)
                     else
                         "Seleccione primero una línea en el mapa.",
                     style = MaterialTheme.typography.bodySmall
@@ -1133,7 +1133,7 @@ fun SurveyScreen(
                             activeMapTool = MapFieldTool.NONE
                             toolPoints = emptyList()
                             selectedGeometryIndex = null
-                            toolResult = "Línea paralela guardada a %.2f m a la %s.".format(
+                            toolResult = "Paralela guardada con la misma forma de la polilínea • %.2f m a la %s.".format(
                                 abs(rawDistance),
                                 if (parallelLeft) "izquierda" else "derecha"
                             )
@@ -1878,7 +1878,8 @@ private fun drawSelectionOverlay(map: MapLibreMap, geometry: CommittedGeometry) 
 }
 
 private fun geometrySupportsParallel(geometry: CommittedGeometry): Boolean =
-    geometry.tool == MapFieldTool.LINE || geometry.tool == MapFieldTool.DISTANCE
+    geometry.tool == MapFieldTool.LINE ||
+    geometry.tool == MapFieldTool.DISTANCE
 
 private fun destinationPoint(start: LatLng, distanceM: Double, bearingDeg: Double): LatLng {
     val r = 6371008.8
@@ -1896,10 +1897,12 @@ private fun destinationPoint(start: LatLng, distanceM: Double, bearingDeg: Doubl
 
 private fun offsetPolyline(points: List<LatLng>, offsetM: Double): List<LatLng> {
     if (points.size < 2) return points
+
     val meanLat = Math.toRadians(points.map { it.latitude }.average())
     val r = 6371008.8
     val originLat = points.first().latitude
     val originLon = points.first().longitude
+
     fun toLocal(p: LatLng): XY = XY(
         r * Math.toRadians(p.longitude - originLon) * cos(meanLat),
         r * Math.toRadians(p.latitude - originLat)
@@ -1908,18 +1911,60 @@ private fun offsetPolyline(points: List<LatLng>, offsetM: Double): List<LatLng> 
         originLat + Math.toDegrees(p.y / r),
         originLon + Math.toDegrees(p.x / (r * cos(meanLat)))
     )
-    val xy = points.map(::toLocal)
-    val out = mutableListOf<XY>()
-    for (i in xy.indices) {
-        val prev = xy[(i - 1).coerceAtLeast(0)]
-        val next = xy[(i + 1).coerceAtMost(xy.lastIndex)]
-        val dx = next.x - prev.x
-        val dy = next.y - prev.y
+    fun shiftedSegment(a: XY, b: XY): Pair<XY, XY> {
+        val dx = b.x - a.x
+        val dy = b.y - a.y
         val len = hypot(dx, dy).takeIf { it > 1e-9 } ?: 1.0
         val nx = -dy / len
         val ny = dx / len
-        out += XY(xy[i].x + nx * offsetM, xy[i].y + ny * offsetM)
+        val off = XY(nx * offsetM, ny * offsetM)
+        return XY(a.x + off.x, a.y + off.y) to XY(b.x + off.x, b.y + off.y)
     }
+    fun lineIntersection(a1: XY, a2: XY, b1: XY, b2: XY): XY? {
+        val dax = a2.x - a1.x
+        val day = a2.y - a1.y
+        val dbx = b2.x - b1.x
+        val dby = b2.y - b1.y
+        val det = dax * dby - day * dbx
+        if (abs(det) < 1e-9) return null
+        val rx = b1.x - a1.x
+        val ry = b1.y - a1.y
+        val t = (rx * dby - ry * dbx) / det
+        return XY(a1.x + t * dax, a1.y + t * day)
+    }
+
+    val xy = points.map(::toLocal)
+    val shifted = (0 until xy.lastIndex).map { i -> shiftedSegment(xy[i], xy[i + 1]) }
+    val out = mutableListOf<XY>()
+
+    // First endpoint stays perpendicular to the first segment.
+    out += shifted.first().first
+
+    // Interior vertices are intersections of adjacent offset segments.
+    for (i in 1 until xy.lastIndex) {
+        val prev = shifted[i - 1]
+        val next = shifted[i]
+        val intersection = lineIntersection(prev.first, prev.second, next.first, next.second)
+
+        // Very sharp or nearly parallel corners can create an extreme miter.
+        // Fall back to the midpoint between the two shifted vertex positions.
+        val candidate = intersection ?: XY(
+            (prev.second.x + next.first.x) / 2.0,
+            (prev.second.y + next.first.y) / 2.0
+        )
+        val original = xy[i]
+        val miterLength = hypot(candidate.x - original.x, candidate.y - original.y)
+        val safe = if (miterLength > abs(offsetM) * 12.0 + 0.01) {
+            XY(
+                (prev.second.x + next.first.x) / 2.0,
+                (prev.second.y + next.first.y) / 2.0
+            )
+        } else candidate
+        out += safe
+    }
+
+    // Last endpoint stays perpendicular to the last segment.
+    out += shifted.last().second
     return out.map(::toLatLng)
 }
 
@@ -2506,7 +2551,7 @@ private enum class MapFieldTool(
     NONE("", "", ""),
     SELECT("Seleccionar", "Toque una figura guardada para seleccionarla.", "☝"),
     POINT("Crear punto", "Toque el mapa para crear un punto.", "●"),
-    LINE("Crear línea", "Toque varios puntos para crear la línea.", "╱"),
+    LINE("Línea / polilínea", "Marque dos o más puntos. Puede crear una línea quebrada abierta con varios vértices.", "╱"),
     DISTANCE("Medir distancia", "Toque dos o más puntos. Se mostrará la distancia acumulada.", "↔ m"),
     AREA("Medir área", "Toque tres o más puntos para formar el área.", "A²"),
     PERIMETER("Medir perímetro", "Seleccione una figura cerrada existente o marque tres o más vértices.", "▱"),
@@ -2515,7 +2560,7 @@ private enum class MapFieldTool(
     DIVIDE_LINE("Línea de división", "Toque dos puntos para definir la línea de corte.", "┆"),
     RECTANGLE("Rectángulo / cuadrado", "Marque dos puntos para el ancho y un tercer punto para definir el largo.", "▭"),
     CIRCLE("Círculo", "Toque el centro; luego indique radio o diámetro.", "○"),
-    PARALLEL("Línea paralela", "Seleccione una línea guardada y luego indique la separación.", "∥")
+    PARALLEL("Línea paralela", "Seleccione una línea o polilínea guardada; la paralela conservará su misma forma y quiebres.", "∥")
 }
 
 private fun renderFieldTool(
