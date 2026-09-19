@@ -38,6 +38,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     implementation("org.maplibre.gl:android-sdk:13.1.0")
+    implementation("org.locationtech.jts:jts-core:1.20.0")
 }
 
 
