@@ -1763,6 +1763,53 @@ fun SurveyScreen(
                                 }
 
                                 if (layer.type == LayerType.WMS) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        "Transparencia WMS: ${(layer.opacity * 100).toInt()}%",
+                                        modifier = Modifier.padding(horizontal = 12.dp),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Slider(
+                                        value = layer.opacity,
+                                        onValueChange = { value ->
+                                            persistVisibleLayers(
+                                                projectLayers.map {
+                                                    if (it.id == layer.id) it.copy(opacity = value) else it
+                                                }
+                                            )
+                                        },
+                                        valueRange = 0.15f..1.0f,
+                                        steps = 16,
+                                        modifier = Modifier.padding(horizontal = 12.dp)
+                                    )
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        listOf(
+                                            0.30f to "Suave",
+                                            0.50f to "Medio",
+                                            0.75f to "Fuerte"
+                                        ).forEach { (value, label) ->
+                                            OutlinedButton(
+                                                onClick = {
+                                                    persistVisibleLayers(
+                                                        projectLayers.map {
+                                                            if (it.id == layer.id) it.copy(opacity = value) else it
+                                                        }
+                                                    )
+                                                },
+                                                modifier = Modifier.weight(1f),
+                                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(label)
+                                            }
+                                        }
+                                    }
+
                                     Spacer(Modifier.height(6.dp))
                                     OutlinedButton(
                                         onClick = {
