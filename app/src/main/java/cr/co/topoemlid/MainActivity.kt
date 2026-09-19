@@ -42,6 +42,11 @@ fun TopoEmlidApp() {
     val ntripStore = remember { NtripStore(context) }
     val receiverStore = remember { ReceiverStore(context) }
     val receiverConnection = remember { ReceiverConnectionManager(context) }
+    val ntripConnection = remember {
+        NtripConnectionManager { data, length ->
+            receiverConnection.sendCorrections(data, length)
+        }
+    }
     val initialProjects = remember { store.loadProjects() }
     var projects by remember { mutableStateOf(initialProjects) }
     var ntripProfiles by remember { mutableStateOf(ntripStore.loadProfiles()) }
@@ -63,6 +68,7 @@ fun TopoEmlidApp() {
     var showNewProject by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<TopoProject?>(null) }
     val gnss = receiverConnection.status
+    val ntripStatus = ntripConnection.status
 
     fun persist(list: List<TopoProject>) {
         projects = list
@@ -154,6 +160,9 @@ fun TopoEmlidApp() {
                         ntripProfiles = it
                         ntripStore.saveProfiles(it)
                     },
+                    ntripStatus = ntripStatus,
+                    onConnectNtrip = { profile -> ntripConnection.connect(profile) },
+                    onDisconnectNtrip = { ntripConnection.disconnect() },
                     gnss = gnss,
                     connecting = receiverConnection.connecting,
                     lastError = receiverConnection.lastError,
