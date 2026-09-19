@@ -240,6 +240,7 @@ private fun ReceiversScreen(
     }
 
     fun startScan() {
+        if (gnss.connected) return
         if (!permissionGranted || scanner == null || adapter?.isEnabled != true) return
         nearby = emptyList()
         scanning = true
@@ -267,6 +268,7 @@ private fun ReceiversScreen(
         ) {
             Text("Receptores", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             TextButton(
+                enabled = !gnss.connected,
                 onClick = {
                     if (!permissionGranted) {
                         permissionLauncher.launch(
@@ -278,7 +280,15 @@ private fun ReceiversScreen(
                         )
                     } else startScan()
                 }
-            ) { Text(if (scanning) "Buscando…" else "↻ Actualizar") }
+            ) {
+                Text(
+                    when {
+                        gnss.connected -> "Conectado"
+                        scanning -> "Buscando…"
+                        else -> "↻ Actualizar"
+                    }
+                )
+            }
         }
 
         Text("Receptores detectados cerca", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
@@ -294,6 +304,28 @@ private fun ReceiversScreen(
         }
 
         if (scanning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 10.dp))
+
+        if (gnss.connected) {
+            Card(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp)
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Text(gnss.receiverName, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Conectado por ${gnss.connectionTransport ?: "Bluetooth / NMEA"} • ${gnss.solution}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = rtkStatusColor(gnss),
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "Mientras este receptor esté conectado, Topo Emlid no inicia un nuevo escaneo Bluetooth.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
 
         nearby.forEach { r ->
             val paired = pairedGnss.firstOrNull { it.address == r.address }
@@ -325,7 +357,7 @@ private fun ReceiversScreen(
             }
         }
 
-        if (!scanning && nearby.isEmpty()) {
+        if (!gnss.connected && !scanning && nearby.isEmpty()) {
             InfoCard("No se detectó ningún receptor GNSS cercano en la última búsqueda. Si la antena está apagada, este es el comportamiento esperado.")
         }
 
@@ -392,7 +424,7 @@ private fun ReceiverDetailScreen(
                     Text(mode.label)
                     Text(
                         when (mode) {
-                            ReceiverConnectionMode.AUTO -> "Emlid/Reach: intenta BLE primero; si BLE falla, prueba Bluetooth/NMEA."
+                            ReceiverConnectionMode.AUTO -> "Prioriza Bluetooth/NMEA para mantener telemetría GNSS real; BLE queda como alternativa."
                             ReceiverConnectionMode.BLE -> "Bluetooth Low Energy. No requiere salida NMEA para establecer el enlace."
                             ReceiverConnectionMode.BLUETOOTH_NMEA -> "Bluetooth Classic con datos NMEA. Requiere NMEA activado en el receptor."
                         },
