@@ -862,9 +862,17 @@ fun SurveyScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        val compactRtkColor = when {
+                            !gnss.connected -> Color(0xFF757575)
+                            gnss.solution.equals("FIX", ignoreCase = true) -> Color(0xFF2E7D32)
+                            gnss.solution.equals("FLOAT", ignoreCase = true) -> Color(0xFFF9A825)
+                            else -> Color(0xFFC62828)
+                        }
                         Text(
                             "H ${gnss.horizontalAccuracyM?.let { "%.3f".format(it) } ?: "—"} • V ${gnss.verticalAccuracyM?.let { "%.3f".format(it) } ?: "—"} • ${if (gnss.connected) gnss.solution else "SIN RECEPTOR"}",
-                            style = MaterialTheme.typography.labelSmall
+                            style = MaterialTheme.typography.labelSmall,
+                            color = compactRtkColor,
+                            fontWeight = FontWeight.Bold
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                             TextButton(
