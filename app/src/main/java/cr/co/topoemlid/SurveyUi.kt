@@ -320,6 +320,17 @@ fun SurveyScreen(
                         getMapAsync { map ->
                             mapRef = map
 
+                            // If there is no live GNSS yet, start over Costa Rica instead of
+                            // the whole world. This also keeps viewport WMS requests local.
+                            if (gnss.latitude == null || gnss.longitude == null) {
+                                map.moveCamera(
+                                    CameraUpdateFactory.newLatLngZoom(
+                                        LatLng(9.93, -84.08),
+                                        8.2
+                                    )
+                                )
+                            }
+
                             // Always start from a local style so the MapView can render
                             // immediately even if an external style server is slow or unavailable.
                             val baseStyle = Style.Builder()
@@ -2017,8 +2028,39 @@ private fun buildViewportWmsUrl(
     val encodedStyle = java.net.URLEncoder.encode(layer.styleName.orEmpty(), "UTF-8")
     val encodedFormat = java.net.URLEncoder.encode(layer.imageFormat, "UTF-8")
 
-    // WMS 1.1.1 avoids the EPSG:4326 axis-order reversal introduced in 1.3.0:
-    // BBOX order is west,south,east,north.
+    // For map display we support the two CRS that MapLibre can request directly:
+    // EPSG:4326 (geographic) and EPSG:3857 (Web Mercator). If an old saved
+    // institutional layer contains another CRS (for example CRTM05), request
+    // EPSG:4326 instead; the layer editor now prefers a supported display CRS.
+    val requestedCrs = when (layer.crs.trim().uppercase()) {
+        "EPSG:3857" -> "EPSG:3857"
+        else -> "EPSG:4326"
+    }
+
+    fun mercatorX(lon: Double): Double =
+        6378137.0 * Math.toRadians(lon.coerceIn(-180.0, 180.0))
+
+    fun mercatorY(lat: Double): Double {
+        val clipped = lat.coerceIn(-85.05112878, 85.05112878)
+        return 6378137.0 * ln(tan(Math.PI / 4.0 + Math.toRadians(clipped) / 2.0))
+    }
+
+    val bbox = if (requestedCrs == "EPSG:3857") {
+        "%.3f,%.3f,%.3f,%.3f".format(
+            java.util.Locale.US,
+            mercatorX(west),
+            mercatorY(south),
+            mercatorX(east),
+            mercatorY(north)
+        )
+    } else {
+        // WMS 1.1.1 + EPSG:4326 uses lon,lat order: west,south,east,north.
+        "%.8f,%.8f,%.8f,%.8f".format(
+            java.util.Locale.US,
+            west, south, east, north
+        )
+    }
+
     return buildString {
         append(base)
         append(separator)
@@ -2033,9 +2075,10 @@ private fun buildViewportWmsUrl(
         append(encodedFormat)
         append("&transparent=")
         append(layer.transparent)
-        append("&srs=EPSG:4326")
+        append("&srs=")
+        append(requestedCrs)
         append("&bbox=")
-        append("%.8f,%.8f,%.8f,%.8f".format(java.util.Locale.US, west, south, east, north))
+        append(bbox)
         append("&width=1024")
         append("&height=1024")
     }
