@@ -513,7 +513,7 @@ fun SurveyScreen(
         Box(
             modifier = Modifier
                 .offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }
-                .size(86.dp)
+                .size(62.dp)
                 .onGloballyPositioned { buttonSize = it.size }
                 .pointerInput(parentSize, buttonSize, measuring) {
                     detectDragGesturesAfterLongPress(
@@ -539,8 +539,10 @@ fun SurveyScreen(
                 Text(
                     when {
                         measuring -> secondsRemaining.toString()
-                        else -> "MEDIR"
-                    }
+                        else -> "📡"
+                    },
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
@@ -1617,7 +1619,11 @@ fun SurveyScreen(
                 ) {
                     defaultCodes.forEach { item ->
                         AssistChip(
-                            onClick = { code = item },
+                            onClick = {
+                                code = item
+                                showConfigPanel = false
+                                startMeasurement()
+                            },
                             label = { Text(item) }
                         )
                     }
@@ -1770,14 +1776,23 @@ private fun buildWmsTileUrl(layer: LayerItem): String? {
     val encodedStyle = java.net.URLEncoder.encode(layer.styleName.orEmpty(), "UTF-8")
     val encodedFormat = java.net.URLEncoder.encode(layer.imageFormat, "UTF-8")
 
-    // MapLibre supplies tile bounds in Web Mercator. WMS services used as
-    // raster tiles therefore need an EPSG:3857-compatible request.
+    // MapLibre supplies tile bounds in Web Mercator. SNIT / Registro
+    // services publish WMS 1.3.0, which uses CRS instead of SRS. Keep 1.1.1
+    // compatibility for other WMS endpoints.
+    val institutional = base.contains("snitcr.go.cr", ignoreCase = true) ||
+        base.contains("rnp.go.cr", ignoreCase = true) ||
+        base.contains("registro", ignoreCase = true)
+
+    val version = if (institutional) "1.3.0" else "1.1.1"
+    val crsParameter = if (institutional) "crs" else "srs"
+
     return buildString {
         append(base)
         append(separator)
         append("service=WMS")
         append("&request=GetMap")
-        append("&version=1.1.1")
+        append("&version=")
+        append(version)
         append("&layers=")
         append(encodedLayer)
         append("&styles=")
@@ -1786,7 +1801,9 @@ private fun buildWmsTileUrl(layer: LayerItem): String? {
         append(encodedFormat)
         append("&transparent=")
         append(layer.transparent)
-        append("&srs=EPSG:3857")
+        append("&")
+        append(crsParameter)
+        append("=EPSG:3857")
         append("&bbox={bbox-epsg-3857}")
         append("&width=256")
         append("&height=256")
