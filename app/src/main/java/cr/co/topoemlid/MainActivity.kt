@@ -63,7 +63,7 @@ fun TopoEmlidApp() {
         )
     }
     var selectedProjectId by remember { mutableStateOf<String?>(null) }
-    var page by remember { mutableStateOf("Levantamiento") }
+    var page by remember { mutableStateOf("Receptores") }
     var selectedTool by remember { mutableStateOf(DrawTool.POINT) }
     var showNewProject by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<TopoProject?>(null) }
@@ -131,11 +131,11 @@ fun TopoEmlidApp() {
         topBar = { GnssBar(gnss, activeProject?.name) },
         bottomBar = {
             NavigationBar {
-                listOf("Receptores", "Levantamiento", "Replanteo", "Capas", "Proyecto").forEach { item ->
+                listOf("Receptores", "Proyecto", "Capas", "Levantamiento", "Replanteo").forEach { item ->
                     NavigationBarItem(
                         selected = page == item,
                         onClick = { page = item },
-                        icon = { Text(if (item == "Receptores") "◉" else if (item == "Levantamiento") "⌖" else if (item == "Replanteo") "⇢" else if (item == "Capas") "▱" else "⚙") },
+                        icon = { Text(if (item == "Receptores") "◉" else if (item == "Proyecto") "▣" else if (item == "Capas") "▱" else if (item == "Levantamiento") "⌖" else "⇢") },
                         label = { Text(item) }
                     )
                 }
