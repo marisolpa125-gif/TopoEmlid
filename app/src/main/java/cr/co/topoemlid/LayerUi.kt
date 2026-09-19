@@ -25,41 +25,40 @@ import kotlinx.coroutines.withContext
 fun ProjectLayersScreen(project: TopoProject?) {
     val context = LocalContext.current
 
-    if (project == null) {
-        Column(Modifier.fillMaxSize().padding(16.dp)) {
-            Text("Capas", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-            Text("Primero cree o abra un proyecto. Las capas se guardan por proyecto.")
-        }
-        return
-    }
-
-    val store = remember(project.id) { LayerStore(context) }
-    val basemapStore = remember(project.id) { BasemapStore(context) }
-    var selectedBasemap by remember(project.id) { mutableStateOf(basemapStore.selected(project.id)) }
+    val store = remember { LayerStore(context) }
+    val basemapStore = remember { BasemapStore(context) }
+    val projectId = project?.id
+    var selectedBasemap by remember(projectId) { mutableStateOf(projectId?.let { basemapStore.selected(it) } ?: BasemapType.OSM) }
     var mapboxToken by remember { mutableStateOf(basemapStore.mapboxToken()) }
-    var layers by remember(project.id) { mutableStateOf(store.load(project.id)) }
+    var layers by remember(projectId) { mutableStateOf(projectId?.let { store.load(it) } ?: emptyList()) }
     var library by remember { mutableStateOf(store.loadLibrary()) }
     var editing by remember { mutableStateOf<LayerItem?>(null) }
     var creating by remember { mutableStateOf(false) }
     var menuLayer by remember { mutableStateOf<LayerItem?>(null) }
     var deleteCandidate by remember { mutableStateOf<LayerItem?>(null) }
 
-    LaunchedEffect(project.id) {
-        val existingLibrary = store.loadLibrary()
-        val missing = layers.filter { layer -> existingLibrary.none { it.id == layer.id } }
-        if (missing.isNotEmpty()) {
-            val merged = existingLibrary + missing.mapIndexed { index, layer ->
-                layer.copy(visible = true, order = existingLibrary.size + index)
+    LaunchedEffect(projectId) {
+        if (projectId != null) {
+            val existingLibrary = store.loadLibrary()
+            val missing = layers.filter { layer -> existingLibrary.none { it.id == layer.id } }
+            if (missing.isNotEmpty()) {
+                val merged = existingLibrary + missing.mapIndexed { index, layer ->
+                    layer.copy(visible = true, order = existingLibrary.size + index)
+                }
+                library = merged
+                store.saveLibrary(merged)
             }
-            library = merged
-            store.saveLibrary(merged)
         }
     }
 
     fun persist(updated: List<LayerItem>) {
         layers = updated.mapIndexed { index, item -> item.copy(order = index) }
-        store.save(project.id, layers)
+        projectId?.let { store.save(it, layers) }
+    }
+
+    fun persistLibrary(updated: List<LayerItem>) {
+        library = updated.mapIndexed { index, item -> item.copy(order = index, visible = true) }
+        store.saveLibrary(library)
     }
 
     if (creating || editing != null) {
@@ -70,20 +69,23 @@ fun ProjectLayersScreen(project: TopoProject?) {
                 editing = null
             },
             onSave = { saved ->
-                val updated = if (editing == null) {
-                    layers + saved
-                } else {
-                    layers.map { if (it.id == saved.id) saved else it }
-                }
-                persist(updated)
-
                 val libraryUpdated = if (library.any { it.id == saved.id }) {
                     library.map { if (it.id == saved.id) saved.copy(visible = true) else it }
                 } else {
                     library + saved.copy(visible = true, order = library.size)
                 }
-                library = libraryUpdated
-                store.saveLibrary(libraryUpdated)
+                persistLibrary(libraryUpdated)
+
+                if (projectId != null) {
+                    val updated = if (editing == null) {
+                        layers + saved
+                    } else if (layers.any { it.id == saved.id }) {
+                        layers.map { if (it.id == saved.id) saved else it }
+                    } else {
+                        layers
+                    }
+                    persist(updated)
+                }
 
                 creating = false
                 editing = null
@@ -145,8 +147,11 @@ fun ProjectLayersScreen(project: TopoProject?) {
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column {
-                Text("Capas", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text(project.name, style = MaterialTheme.typography.bodySmall)
+                Text("Biblioteca de capas", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    project?.let { "Proyecto activo: ${it.name}" } ?: "Biblioteca global • disponible sin abrir un proyecto",
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
             Button(onClick = { creating = true }) { Text("+ Nueva capa") }
         }
@@ -165,7 +170,7 @@ fun ProjectLayersScreen(project: TopoProject?) {
                             selected = selectedBasemap == type,
                             onClick = {
                                 selectedBasemap = type
-                                basemapStore.setSelected(project.id, type)
+                                projectId?.let { basemapStore.setSelected(it, type) }
                             }
                         )
                         Text(type.label)
@@ -201,14 +206,14 @@ fun ProjectLayersScreen(project: TopoProject?) {
 
         Text("Biblioteca global de capas", fontWeight = FontWeight.Bold)
         Text(
-            "Estas capas quedan disponibles para todos los proyectos.",
+            "Estas capas quedan guardadas en la raíz de Topo Emlid y disponibles para todos los proyectos.",
             style = MaterialTheme.typography.bodySmall
         )
 
-        val availableLibraryLayers = library.filter { lib -> layers.none { it.id == lib.id } }
+        val availableLibraryLayers = if (projectId == null) library else library.filter { lib -> layers.none { it.id == lib.id } }
         if (library.isEmpty()) {
             Text(
-                "Aún no hay capas globales. Las capas nuevas que cree se guardarán aquí automáticamente.",
+                "Aún no hay capas globales. Puede crear una ahora, aunque no haya abierto ningún proyecto.",
                 style = MaterialTheme.typography.bodySmall
             )
         } else if (availableLibraryLayers.isEmpty()) {
@@ -218,15 +223,9 @@ fun ProjectLayersScreen(project: TopoProject?) {
             )
         } else {
             availableLibraryLayers.forEach { lib ->
-                Card(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 5.dp)
-                ) {
+                Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
                     Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
+                        Modifier.fillMaxWidth().padding(12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                     ) {
@@ -234,17 +233,12 @@ fun ProjectLayersScreen(project: TopoProject?) {
                             Text(lib.name, fontWeight = FontWeight.Bold)
                             Text(lib.type.label, style = MaterialTheme.typography.bodySmall)
                         }
-                        Button(
-                            onClick = {
-                                persist(
-                                    layers + lib.copy(
-                                        visible = true,
-                                        order = layers.size
-                                    )
-                                )
-                            }
-                        ) {
-                            Text("Agregar")
+                        if (projectId == null) {
+                            OutlinedButton(onClick = { editing = lib }) { Text("Editar") }
+                        } else {
+                            Button(onClick = {
+                                persist(layers + lib.copy(visible = true, order = layers.size))
+                            }) { Text("Agregar") }
                         }
                     }
                 }
@@ -253,13 +247,14 @@ fun ProjectLayersScreen(project: TopoProject?) {
 
         Spacer(Modifier.height(14.dp))
 
-        Text("Capas del proyecto", fontWeight = FontWeight.Bold)
+        if (projectId != null) {
+            Text("Capas del proyecto", fontWeight = FontWeight.Bold)
 
-        if (layers.isEmpty()) {
-            Text("No hay capas superpuestas en este proyecto. Puede agregarlas desde la biblioteca global o crear una nueva.")
-        }
+            if (layers.isEmpty()) {
+                Text("No hay capas superpuestas en este proyecto. Puede agregarlas desde la biblioteca global o crear una nueva.")
+            }
 
-        layers.forEach { layer ->
+            layers.forEach { layer ->
             Card(
                 Modifier
                     .fillMaxWidth()
@@ -295,6 +290,7 @@ fun ProjectLayersScreen(project: TopoProject?) {
                     Spacer(Modifier.height(6.dp))
                     Text("Mantenga presionado para editar, mover o eliminar.", style = MaterialTheme.typography.bodySmall)
                 }
+            }
             }
         }
     }
