@@ -310,9 +310,6 @@ private fun ReceiversScreen(
                 Column(Modifier.padding(14.dp)) {
                     Text(r.name, fontWeight = FontWeight.Bold)
                     Text("Detectado ahora • señal ${r.rssi} dBm", style = MaterialTheme.typography.bodySmall)
-                    if (paired != null) {
-                        Text("Emparejado en Android", style = MaterialTheme.typography.bodySmall)
-                    }
                     Text("Toque para seleccionar y conectar.", style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -322,70 +319,6 @@ private fun ReceiversScreen(
             InfoCard("No se detectó ningún receptor GNSS cercano en la última búsqueda. Si la antena está apagada, este es el comportamiento esperado.")
         }
 
-        if (pairedGnss.isNotEmpty()) {
-            Spacer(Modifier.height(14.dp))
-            Text("Emparejados en Android", fontWeight = FontWeight.Bold)
-            Text(
-                "Estos equipos pueden aparecer aunque estén apagados, porque Android conserva el emparejamiento. Esto no significa que estén cerca ni conectados.",
-                style = MaterialTheme.typography.bodySmall
-            )
-            pairedGnss.forEach { p ->
-                val stored = profiles.firstOrNull { it.address == p.address } ?: p
-                val detectedNow = nearby.any { it.address == p.address }
-                ReceiverCard(
-                    profile = stored,
-                    subtitle = if (detectedNow)
-                        "${receiverBrand(stored.name)} • detectado cerca"
-                    else
-                        "${receiverBrand(stored.name)} • emparejado • no detectado",
-                    selected = stored.id == activeReceiverId,
-                    onClick = {
-                        if (profiles.none { it.address == stored.address }) onProfilesChanged(profiles + stored)
-                        onSelectReceiver(stored)
-                        onOpenReceiver(stored)
-                    }
-                )
-            }
-        }
-
-        if (pairedOther.isNotEmpty()) {
-            Spacer(Modifier.height(14.dp))
-            Text("Otros dispositivos Bluetooth emparejados", fontWeight = FontWeight.Bold)
-            Text(
-                "Si su receptor aparece con un nombre genérico, selecciónelo aquí y Topo Emlid intentará usarlo como GNSS/NMEA.",
-                style = MaterialTheme.typography.bodySmall
-            )
-            pairedOther.forEach { p ->
-                val stored = profiles.firstOrNull { it.address == p.address } ?: p
-                ReceiverCard(
-                    profile = stored,
-                    subtitle = "Bluetooth emparejado • probar como GNSS",
-                    selected = stored.id == activeReceiverId,
-                    onClick = {
-                        if (profiles.none { it.address == stored.address }) onProfilesChanged(profiles + stored)
-                        onSelectReceiver(stored)
-                        onOpenReceiver(stored)
-                    }
-                )
-            }
-        }
-
-
-        if (profiles.isNotEmpty()) {
-            Spacer(Modifier.height(18.dp))
-            Text("Guardados", fontWeight = FontWeight.Bold)
-            profiles.forEach { p ->
-                ReceiverCard(
-                    profile = p,
-                    subtitle = if (nearby.any { it.address == p.address }) "${p.transport} • detectado cerca" else "${p.transport} • guardado • no detectado",
-                    selected = p.id == activeReceiverId,
-                    onClick = {
-                        onSelectReceiver(p)
-                        onOpenReceiver(p)
-                    }
-                )
-            }
-        }
     }
 }
 
