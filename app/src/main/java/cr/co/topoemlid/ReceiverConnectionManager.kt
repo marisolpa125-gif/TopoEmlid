@@ -44,20 +44,33 @@ class ReceiverConnectionManager(context: Context) {
 
     @SuppressLint("MissingPermission")
     fun connect(profile: ReceiverProfile) {
-        disconnect()
-        requestedProfileId = profile.id
-        connecting = true
-        lastError = null
+        // Ignore a second tap while the same connection is already starting.
+        if (connecting && requestedProfileId == profile.id) return
+        if (status.connected && status.receiverName == profile.name) return
 
-        when (profile.preferredMode) {
-            ReceiverConnectionMode.AUTO -> {
-                // For field work we need actual GNSS telemetry (GGA/GST/GSA/GSV),
-                // so AUTO prioritizes the paired Bluetooth/NMEA channel. BLE is
-                // useful for discovery/admin but does not guarantee position data.
-                connectNmea(profile)
+        try {
+            disconnect()
+            requestedProfileId = profile.id
+            connecting = true
+            lastError = null
+
+            when (profile.preferredMode) {
+                ReceiverConnectionMode.AUTO -> {
+                    connectNmea(profile)
+                }
+                ReceiverConnectionMode.BLE -> connectBle(profile, allowFallback = false)
+                ReceiverConnectionMode.BLUETOOTH_NMEA -> connectNmea(profile)
             }
-            ReceiverConnectionMode.BLE -> connectBle(profile, allowFallback = false)
-            ReceiverConnectionMode.BLUETOOTH_NMEA -> connectNmea(profile)
+        } catch (t: Throwable) {
+            requestedProfileId = null
+            connecting = false
+            lastError = "No se pudo iniciar la conexión Bluetooth: " +
+                (t.message ?: t.javaClass.simpleName)
+            status = GnssStatus(
+                receiverName = profile.name,
+                connectionTransport = "Bluetooth / NMEA",
+                solution = "SIN SEÑAL"
+            )
         }
     }
 
