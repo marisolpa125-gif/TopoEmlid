@@ -325,9 +325,6 @@ fun SurveyScreen(
                 }
             ) { Text("N") }
 
-            SmallFloatingActionButton(
-                onClick = { showToolsPanel = true }
-            ) { Text("✣") }
 
             SmallFloatingActionButton(
                 onClick = {
@@ -336,6 +333,22 @@ fun SurveyScreen(
                 }
             ) { Text("▱") }
         }
+
+        ExtendedFloatingActionButton(
+            onClick = { showToolsPanel = true },
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = 12.dp),
+            text = {
+                Text(
+                    if (activeMapTool == MapFieldTool.NONE)
+                        "HERRAMIENTAS"
+                    else
+                        activeMapTool.label.uppercase()
+                )
+            },
+            icon = { Text("✣") }
+        )
 
         Box(
             modifier = Modifier
@@ -380,7 +393,15 @@ fun SurveyScreen(
         ) {
             toolResult?.let { result ->
                 Surface(tonalElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
-                    Text(result, modifier = Modifier.padding(10.dp))
+                    Column(Modifier.padding(10.dp)) {
+                        if (activeMapTool != MapFieldTool.NONE) {
+                            Text(
+                                "Herramienta activa: ${activeMapTool.label}",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                        }
+                        Text(result, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
 
@@ -449,10 +470,10 @@ fun SurveyScreen(
                     .padding(16.dp)
                     .verticalScroll(rememberScrollState())
             ) {
-                Text("Herramientas del mapa", style = MaterialTheme.typography.headlineSmall)
+                Text("Herramientas", style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Seleccione una herramienta y luego toque el mapa para marcar los puntos.",
+                    "Seleccione una herramienta. Esta ventana se cerrará automáticamente y podrá trabajar directamente sobre el mapa.",
                     style = MaterialTheme.typography.bodySmall
                 )
 
