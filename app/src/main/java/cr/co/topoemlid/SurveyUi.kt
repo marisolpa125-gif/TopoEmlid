@@ -83,6 +83,15 @@ fun SurveyScreen(
     var seconds by remember { mutableStateOf("5") }
     var showConfigPanel by remember { mutableStateOf(false) }
     var showLayersPanel by remember { mutableStateOf(false) }
+    var showPointsPanel by remember { mutableStateOf(false) }
+    var showPointEditor by remember { mutableStateOf(false) }
+    var editingPointId by remember { mutableStateOf<String?>(null) }
+    var editPointNumber by remember { mutableStateOf("") }
+    var editPointDescription by remember { mutableStateOf("") }
+    var editPointCode by remember { mutableStateOf("") }
+    var editPointLat by remember { mutableStateOf("") }
+    var editPointLon by remember { mutableStateOf("") }
+    var editPointHeight by remember { mutableStateOf("") }
     var showToolsPanel by remember { mutableStateOf(false) }
     var showDividePanel by remember { mutableStateOf(false) }
     var showCirclePanel by remember { mutableStateOf(false) }
@@ -117,6 +126,17 @@ fun SurveyScreen(
 
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         pointPhoto = uri
+    }
+
+    fun openPointEditor(point: SurveyPoint? = null) {
+        editingPointId = point?.id
+        editPointNumber = point?.pointNumber ?: nextPointNumber(savedPoints)
+        editPointDescription = point?.description.orEmpty()
+        editPointCode = point?.code.orEmpty()
+        editPointLat = point?.latitude?.let { "%.8f".format(it) }.orEmpty()
+        editPointLon = point?.longitude?.let { "%.8f".format(it) }.orEmpty()
+        editPointHeight = point?.ellipsoidalHeightM?.let { "%.3f".format(it) }.orEmpty()
+        showPointEditor = true
     }
 
     fun persistGeometries(items: List<CommittedGeometry>) {
@@ -838,10 +858,16 @@ fun SurveyScreen(
                             "H ${gnss.horizontalAccuracyM?.let { "%.3f".format(it) } ?: "—"} • V ${gnss.verticalAccuracyM?.let { "%.3f".format(it) } ?: "—"} • ${if (gnss.connected) gnss.solution else "SIN RECEPTOR"}",
                             style = MaterialTheme.typography.labelSmall
                         )
-                        TextButton(
-                            onClick = { showConfigPanel = true },
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
-                        ) { Text("Más", style = MaterialTheme.typography.labelSmall) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            TextButton(
+                                onClick = { showPointsPanel = true },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                            ) { Text("Puntos", style = MaterialTheme.typography.labelSmall) }
+                            TextButton(
+                                onClick = { showConfigPanel = true },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                            ) { Text("Más", style = MaterialTheme.typography.labelSmall) }
+                        }
                     }
                 }
             }
@@ -1178,6 +1204,250 @@ fun SurveyScreen(
                 OutlinedButton(onClick = { showDividePanel = false }, modifier = Modifier.fillMaxWidth()) {
                     Text("Cancelar")
                 }
+                Spacer(Modifier.height(20.dp))
+            }
+        }
+    }
+
+    if (showPointsPanel) {
+        ModalBottomSheet(onDismissRequest = { showPointsPanel = false }) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Puntos del proyecto", style = MaterialTheme.typography.headlineSmall)
+                        Text(
+                            "${savedPoints.size} puntos guardados",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            if (project == null) {
+                                toolResult = "Abra o cree un proyecto para crear puntos."
+                            } else {
+                                openPointEditor(null)
+                            }
+                        }
+                    ) { Text("+ Punto") }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                if (project == null) {
+                    Text("No hay un proyecto activo.")
+                } else if (savedPoints.isEmpty()) {
+                    Text("Todavía no hay puntos guardados en este proyecto.")
+                } else {
+                    savedPoints
+                        .sortedWith(compareBy<SurveyPoint> { it.pointNumber.toIntOrNull() ?: Int.MAX_VALUE }.thenBy { it.pointNumber })
+                        .forEach { p ->
+                            OutlinedCard(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                            ) {
+                                Column(Modifier.fillMaxWidth().padding(10.dp)) {
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text("Punto ${p.pointNumber}", style = MaterialTheme.typography.titleMedium)
+                                            Text(
+                                                "${p.code.ifBlank { "SIN CÓDIGO" }} • ${p.solution}",
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                            if (p.description.isNotBlank()) {
+                                                Text(p.description, style = MaterialTheme.typography.bodySmall)
+                                            }
+                                            Text(
+                                                "Lat: ${p.latitude?.let { "%.8f".format(it) } ?: "—"}  Lon: ${p.longitude?.let { "%.8f".format(it) } ?: "—"}",
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                            p.ellipsoidalHeightM?.let {
+                                                Text("H elipsoidal: %.3f m".format(it), style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                if (p.latitude != null && p.longitude != null) {
+                                                    mapRef?.animateCamera(
+                                                        CameraUpdateFactory.newLatLngZoom(
+                                                            LatLng(p.latitude, p.longitude),
+                                                            19.0
+                                                        )
+                                                    )
+                                                    showPointsPanel = false
+                                                } else {
+                                                    toolResult = "Este punto no tiene coordenadas."
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("Ver") }
+                                        OutlinedButton(
+                                            onClick = { openPointEditor(p) },
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("Editar") }
+                                        Button(
+                                            onClick = {
+                                                val updated = savedPoints.filterNot { it.id == p.id }
+                                                savedPoints = updated
+                                                pointStore.save(project.id, updated)
+                                                pointNumber = nextPointNumber(updated)
+                                                toolResult = "Punto ${p.pointNumber} eliminado."
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("Borrar") }
+                                    }
+                                }
+                            }
+                        }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = { showPointsPanel = false },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Cerrar") }
+                Spacer(Modifier.height(20.dp))
+            }
+        }
+    }
+
+    if (showPointEditor) {
+        ModalBottomSheet(onDismissRequest = { showPointEditor = false }) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    if (editingPointId == null) "Crear punto por coordenadas" else "Editar punto",
+                    style = MaterialTheme.typography.headlineSmall
+                )
+                Text(
+                    "Los puntos creados o modificados aquí se identifican como EDITADO.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = editPointNumber,
+                    onValueChange = { editPointNumber = it },
+                    label = { Text("Número / nombre") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = editPointDescription,
+                    onValueChange = { editPointDescription = it },
+                    label = { Text("Descripción") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = editPointCode,
+                    onValueChange = { editPointCode = it.uppercase() },
+                    label = { Text("Código") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedTextField(
+                        value = editPointLat,
+                        onValueChange = { editPointLat = it },
+                        label = { Text("Latitud") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = editPointLon,
+                        onValueChange = { editPointLon = it },
+                        label = { Text("Longitud") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = editPointHeight,
+                    onValueChange = { editPointHeight = it },
+                    label = { Text("Altura elipsoidal (m), opcional") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        val p = project
+                        val lat = editPointLat.replace(',', '.').toDoubleOrNull()
+                        val lon = editPointLon.replace(',', '.').toDoubleOrNull()
+                        val h = editPointHeight.replace(',', '.').toDoubleOrNull()
+                        if (p == null) {
+                            toolResult = "Abra o cree un proyecto primero."
+                        } else if (editPointNumber.isBlank()) {
+                            toolResult = "Indique el número o nombre del punto."
+                        } else if (lat == null || lon == null || lat !in -90.0..90.0 || lon !in -180.0..180.0) {
+                            toolResult = "Revise latitud y longitud."
+                        } else {
+                            val existing = editingPointId?.let { id -> savedPoints.firstOrNull { it.id == id } }
+                            val edited = SurveyPoint(
+                                id = existing?.id ?: UUID.randomUUID().toString(),
+                                projectId = p.id,
+                                pointNumber = editPointNumber.trim(),
+                                description = editPointDescription.trim(),
+                                code = editPointCode.trim(),
+                                antennaHeightM = existing?.antennaHeightM ?: 0.0,
+                                occupationSeconds = existing?.occupationSeconds ?: 0,
+                                latitude = lat,
+                                longitude = lon,
+                                ellipsoidalHeightM = h,
+                                horizontalAccuracyM = existing?.horizontalAccuracyM,
+                                verticalAccuracyM = existing?.verticalAccuracyM,
+                                solution = "EDITADO",
+                                satellites = existing?.satellites,
+                                createdAt = existing?.createdAt ?: System.currentTimeMillis()
+                            )
+                            val updated = if (existing == null) {
+                                savedPoints + edited
+                            } else {
+                                savedPoints.map { if (it.id == existing.id) edited else it }
+                            }
+                            savedPoints = updated
+                            pointStore.save(p.id, updated)
+                            pointNumber = nextPointNumber(updated)
+                            showPointEditor = false
+                            toolResult = "Punto ${edited.pointNumber} guardado como EDITADO."
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Guardar punto") }
+
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { showPointEditor = false },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Cancelar") }
                 Spacer(Modifier.height(20.dp))
             }
         }
