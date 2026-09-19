@@ -335,6 +335,17 @@ class ReceiverConnectionManager(context: Context) {
         }
     }
 
+    @Synchronized
+    fun sendCorrections(data: ByteArray, length: Int = data.size): Boolean {
+        val s = socket ?: return false
+        if (!s.isConnected || length <= 0) return false
+        return runCatching {
+            s.outputStream.write(data, 0, length)
+            s.outputStream.flush()
+            true
+        }.getOrDefault(false)
+    }
+
     fun disconnect() {
         autoFallbackProfile = null
         usedSatelliteIds.clear()
