@@ -1,6 +1,8 @@
 package cr.co.topoemlid
 
 import android.content.Intent
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -69,6 +71,39 @@ fun TopoEmlidApp() {
     var deleteCandidate by remember { mutableStateOf<TopoProject?>(null) }
     val gnss = receiverConnection.status
     val ntripStatus = ntripConnection.status
+    val toneGenerator = remember { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 75) }
+    var previousGnssConnected by remember { mutableStateOf<Boolean?>(null) }
+    var previousSolution by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose { toneGenerator.release() }
+    }
+
+    LaunchedEffect(gnss.connected, gnss.solution, gnss.nmeaReceiving) {
+        val currentConnected = gnss.connected && gnss.nmeaReceiving
+        val oldConnected = previousGnssConnected
+
+        if (oldConnected != null && oldConnected != currentConnected) {
+            if (currentConnected) {
+                toneGenerator.startTone(ToneGenerator.TONE_PROP_ACK, 180)
+            } else {
+                toneGenerator.startTone(ToneGenerator.TONE_PROP_NACK, 420)
+            }
+        }
+
+        val normalized = gnss.solution.uppercase()
+        val oldSolution = previousSolution?.uppercase()
+        if (currentConnected && oldSolution != null && oldSolution != normalized) {
+            when (normalized) {
+                "FIX" -> toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP2, 220)
+                "FLOAT" -> toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 180)
+                "SINGLE", "DGPS", "SIN FIX" -> toneGenerator.startTone(ToneGenerator.TONE_SUP_ERROR, 280)
+            }
+        }
+
+        previousGnssConnected = currentConnected
+        previousSolution = gnss.solution
+    }
 
     fun persist(list: List<TopoProject>) {
         projects = list
