@@ -296,7 +296,6 @@ private fun StakeoutMapPreview(
 
     val layers = remember(project?.id) { loadEffectiveLayers() }
     val basemap = remember(project?.id) { basemapStore.selected(project?.id) }
-    val mapboxToken = basemapStore.mapboxToken()
 
     fun redrawGuidance(map: MapLibreMap) {
         map.clear()
@@ -389,7 +388,7 @@ private fun StakeoutMapPreview(
                         )
 
                         map.setStyle(baseStyle) { style ->
-                            addSelectedBasemap(style, basemap, mapboxToken)
+                            addSelectedBasemap(style, basemap)
                             addProjectRasterLayers(style, layers)
 
                             refreshViewportWmsLayers(map, layers) {
