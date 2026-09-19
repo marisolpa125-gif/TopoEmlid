@@ -437,13 +437,16 @@ private fun ReceiverDetailScreen(
         Spacer(Modifier.height(10.dp))
 
         if (gnss.connected && gnss.receiverName == receiver.name) {
-            ReceiverMenuRow("Estado", gnss.solution) { page = ReceiverPage.STATUS }
-            ReceiverMenuRow("Entrada de correcciones", "Perfil NTRIP de Topo Emlid") { page = ReceiverPage.CORRECTIONS }
-            ReceiverMenuRow("Salida de la base 1", "Administración del receptor: pendiente") { page = ReceiverPage.BASE_OUTPUT }
-            ReceiverMenuRow("Configuración de la base", "Administración del receptor: pendiente") { page = ReceiverPage.BASE_CONFIG }
-            ReceiverMenuRow("Registro", "Administración del receptor: pendiente") { page = ReceiverPage.LOGGING }
-            ReceiverMenuRow("Wi‑Fi", "Administración del receptor: pendiente") { page = ReceiverPage.WIFI }
-            ReceiverMenuRow("Configuración", "Administración del receptor: pendiente") { page = ReceiverPage.SETTINGS }
+            Text("Datos en vivo", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+            ReceiverMenuRow("Estado GNSS", gnss.solution) { page = ReceiverPage.STATUS }
+
+            Spacer(Modifier.height(10.dp))
+            Text("Correcciones RTK", fontWeight = FontWeight.Bold)
+            ReceiverMenuRow("NTRIP / RTK", "Perfiles, caster y mountpoint") { onOpenNtrip() }
+
+            Spacer(Modifier.height(10.dp))
+            Text("Configuración avanzada del receptor", fontWeight = FontWeight.Bold)
+            ReceiverMenuRow("Entradas y salidas", "LoRa, NTRIP, Bluetooth, TCP, RS-232, RTCM3") { page = ReceiverPage.ADVANCED }
 
             Spacer(Modifier.height(12.dp))
             Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) {
@@ -688,13 +691,8 @@ private fun ReceiverAdvancedPlaceholder() {
 }
 
 private fun pageTitle(page: ReceiverPage): String = when (page) {
-    ReceiverPage.STATUS -> "Estado"
-    ReceiverPage.CORRECTIONS -> "Entrada de correcciones"
-    ReceiverPage.BASE_OUTPUT -> "Salida de la base 1"
-    ReceiverPage.BASE_CONFIG -> "Configuración de la base"
-    ReceiverPage.LOGGING -> "Registro"
-    ReceiverPage.WIFI -> "Wi‑Fi"
-    ReceiverPage.SETTINGS -> "Configuración"
+    ReceiverPage.STATUS -> "Estado GNSS"
+    ReceiverPage.ADVANCED -> "Configuración avanzada"
     ReceiverPage.HOME -> "Receptor"
 }
 
