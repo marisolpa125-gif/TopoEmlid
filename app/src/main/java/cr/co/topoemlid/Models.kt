@@ -1,5 +1,14 @@
 package cr.co.topoemlid
 
+data class SatelliteSignal(
+    val id: String,
+    val constellation: String,
+    val snrDbHz: Double?,
+    val elevationDeg: Int? = null,
+    val azimuthDeg: Int? = null,
+    val usedInFix: Boolean = false
+)
+
 data class GnssStatus(
     val receiverName: String = "Receptor GNSS",
     val connected: Boolean = false,
@@ -13,6 +22,7 @@ data class GnssStatus(
     val pdop: Double? = null,
     val signalNoiseAvgDbHz: Double? = null,
     val satelliteSnrValues: List<Double> = emptyList(),
+    val satelliteSignals: List<SatelliteSignal> = emptyList(),
     val positioningMode: String? = null,
     val nmeaReceiving: Boolean = false,
     val lastNmeaSentence: String? = null,
