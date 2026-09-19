@@ -2034,14 +2034,10 @@ private fun buildViewportWmsUrl(
     val encodedStyle = java.net.URLEncoder.encode(layer.styleName.orEmpty(), "UTF-8")
     val encodedFormat = java.net.URLEncoder.encode(layer.imageFormat, "UTF-8")
 
-    // For map display we support the two CRS that MapLibre can request directly:
-    // EPSG:4326 (geographic) and EPSG:3857 (Web Mercator). If an old saved
-    // institutional layer contains another CRS (for example CRTM05), request
-    // EPSG:4326 instead; the layer editor now prefers a supported display CRS.
-    val requestedCrs = when (layer.crs.trim().uppercase()) {
-        "EPSG:3857" -> "EPSG:3857"
-        else -> "EPSG:4326"
-    }
+    val institutional = base.contains("snitcr.go.cr", ignoreCase = true) ||
+        base.contains("rnpdigital.com", ignoreCase = true) ||
+        base.contains("rnp.go.cr", ignoreCase = true) ||
+        base.contains("registro", ignoreCase = true)
 
     fun mercatorX(lon: Double): Double =
         6378137.0 * Math.toRadians(lon.coerceIn(-180.0, 180.0))
@@ -2051,6 +2047,38 @@ private fun buildViewportWmsUrl(
         return 6378137.0 * ln(tan(Math.PI / 4.0 + Math.toRadians(clipped) / 2.0))
     }
 
+    val configured = layer.crs.trim().uppercase()
+
+    // The Registro/SNIT services are published as WMS 1.3.0 and support
+    // WGS84 (EPSG:4326). In WMS 1.3.0 EPSG:4326 uses latitude,longitude
+    // axis order, so BBOX must be south,west,north,east.
+    if (institutional) {
+        return buildString {
+            append(base)
+            append(separator)
+            append("service=WMS")
+            append("&request=GetMap")
+            append("&version=1.3.0")
+            append("&layers=")
+            append(encodedLayer)
+            append("&styles=")
+            append(encodedStyle)
+            append("&format=")
+            append(encodedFormat)
+            append("&transparent=")
+            append(layer.transparent)
+            append("&crs=EPSG:4326")
+            append("&bbox=")
+            append("%.8f,%.8f,%.8f,%.8f".format(
+                java.util.Locale.US,
+                south, west, north, east
+            ))
+            append("&width=1024")
+            append("&height=1024")
+        }
+    }
+
+    val requestedCrs = if (configured == "EPSG:3857") "EPSG:3857" else "EPSG:4326"
     val bbox = if (requestedCrs == "EPSG:3857") {
         "%.3f,%.3f,%.3f,%.3f".format(
             java.util.Locale.US,
@@ -2060,7 +2088,6 @@ private fun buildViewportWmsUrl(
             mercatorY(north)
         )
     } else {
-        // WMS 1.1.1 + EPSG:4326 uses lon,lat order: west,south,east,north.
         "%.8f,%.8f,%.8f,%.8f".format(
             java.util.Locale.US,
             west, south, east, north
