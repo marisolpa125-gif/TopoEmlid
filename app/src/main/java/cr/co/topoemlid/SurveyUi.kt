@@ -36,11 +36,13 @@ import org.maplibre.android.annotations.MarkerOptions
 import org.maplibre.android.annotations.PolylineOptions
 import org.maplibre.android.annotations.PolygonOptions
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngQuad
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.RasterLayer
+import org.maplibre.android.style.sources.ImageSource
 import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
 import org.json.JSONArray
@@ -50,6 +52,7 @@ import org.locationtech.jts.geom.Geometry
 import org.locationtech.jts.geom.GeometryFactory
 import org.locationtech.jts.geom.Polygon
 import org.locationtech.jts.geom.TopologyException
+import java.net.URI
 import java.util.UUID
 import kotlin.math.roundToInt
 import kotlin.math.*
@@ -334,7 +337,12 @@ fun SurveyScreen(
                             map.setStyle(baseStyle) { style ->
                                 addSelectedBasemap(style, selectedBasemap, mapboxToken)
                                 addProjectRasterLayers(style, projectLayers)
+                                refreshViewportWmsLayers(map, projectLayers)
                                 redrawCommitted(map)
+                            }
+
+                            map.addOnCameraIdleListener {
+                                refreshViewportWmsLayers(map, projectLayers)
                             }
 
                             map.addOnMapClickListener { latLng ->
@@ -1911,8 +1919,8 @@ private fun addProjectRasterLayers(
         .sortedBy { it.order }
         .forEach { layer ->
             val tileUrl = when (layer.type) {
-                LayerType.WMS -> buildWmsTileUrl(layer)
                 LayerType.XYZ, LayerType.WMTS -> layer.url
+                LayerType.WMS -> null
                 else -> null
             } ?: return@forEach
 
@@ -1929,6 +1937,103 @@ private fun addProjectRasterLayers(
                 )
             }
         }
+}
+
+
+private fun refreshViewportWmsLayers(
+    map: MapLibreMap,
+    layers: List<LayerItem>
+) {
+    val style = map.style ?: return
+    val bounds = runCatching { map.projection.visibleRegion.latLngBounds }.getOrNull() ?: return
+
+    val north = bounds.latitudeNorth.coerceIn(-89.0, 89.0)
+    val south = bounds.latitudeSouth.coerceIn(-89.0, 89.0)
+    val east = bounds.longitudeEast
+    val west = bounds.longitudeWest
+
+    if (north <= south || east <= west) return
+
+    val quad = LatLngQuad(
+        LatLng(north, west),
+        LatLng(north, east),
+        LatLng(south, east),
+        LatLng(south, west)
+    )
+
+    layers
+        .filter { it.visible && it.type == LayerType.WMS }
+        .sortedBy { it.order }
+        .forEach { layer ->
+            val uri = buildViewportWmsUrl(layer, north, east, south, west) ?: return@forEach
+            val sourceId = "project-wms-image-source-${layer.id}"
+            val layerId = "project-wms-image-layer-${layer.id}"
+
+            val existing = runCatching {
+                style.getSourceAs<ImageSource>(sourceId)
+            }.getOrNull()
+
+            if (existing != null) {
+                runCatching {
+                    existing.setCoordinates(quad)
+                    existing.setUri(uri)
+                }
+            } else {
+                runCatching {
+                    style.addSource(ImageSource(sourceId, quad, URI.create(uri)))
+                    style.addLayer(
+                        RasterLayer(layerId, sourceId).withProperties(
+                            PropertyFactory.rasterOpacity(layer.opacity)
+                        )
+                    )
+                }
+            }
+        }
+}
+
+private fun buildViewportWmsUrl(
+    layer: LayerItem,
+    north: Double,
+    east: Double,
+    south: Double,
+    west: Double
+): String? {
+    val raw = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val layerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val base = sanitizeWmsBaseUrl(raw)
+
+    val separator = if (base.contains("?")) {
+        if (base.endsWith("?") || base.endsWith("&")) "" else "&"
+    } else {
+        "?"
+    }
+
+    val encodedLayer = java.net.URLEncoder.encode(layerName, "UTF-8")
+    val encodedStyle = java.net.URLEncoder.encode(layer.styleName.orEmpty(), "UTF-8")
+    val encodedFormat = java.net.URLEncoder.encode(layer.imageFormat, "UTF-8")
+
+    // WMS 1.1.1 avoids the EPSG:4326 axis-order reversal introduced in 1.3.0:
+    // BBOX order is west,south,east,north.
+    return buildString {
+        append(base)
+        append(separator)
+        append("service=WMS")
+        append("&request=GetMap")
+        append("&version=1.1.1")
+        append("&layers=")
+        append(encodedLayer)
+        append("&styles=")
+        append(encodedStyle)
+        append("&format=")
+        append(encodedFormat)
+        append("&transparent=")
+        append(layer.transparent)
+        append("&srs=EPSG:4326")
+        append("&bbox=")
+        append("%.8f,%.8f,%.8f,%.8f".format(java.util.Locale.US, west, south, east, north))
+        append("&width=1024")
+        append("&height=1024")
+    }
 }
 
 private fun buildWmsTileUrl(layer: LayerItem): String? {
