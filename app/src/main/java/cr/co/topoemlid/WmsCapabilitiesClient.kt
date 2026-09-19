@@ -14,27 +14,28 @@ data class WmsLayerOption(
 object WmsCapabilitiesClient {
     fun load(serviceUrl: String, timeoutMs: Int = 10000): Result<List<WmsLayerOption>> = runCatching {
         val capabilitiesUrl = buildCapabilitiesUrl(serviceUrl)
-        var lastError: Throwable? = null
-        var parsed: List<WmsLayerOption>? = null
+        val conn = (URL(capabilitiesUrl).openConnection() as HttpURLConnection).apply {
+            connectTimeout = timeoutMs
+            readTimeout = timeoutMs
+            requestMethod = "GET"
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "TopoEmlid/0.3")
+            setRequestProperty("Accept", "application/xml,text/xml,*/*")
+        }
 
-        repeat(if (serviceUrl.contains("siri.snitcr.go.cr", true)) 4 else 1) { attempt ->
-            try {
-                val conn = (URL(capabilitiesUrl).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = timeoutMs
-                    readTimeout = timeoutMs
-                    requestMethod = "GET"
-                    instanceFollowRedirects = true
-                    setRequestProperty("User-Agent", "TopoEmlid/0.3")
-                    setRequestProperty("Accept", "application/xml,text/xml,*/*")
-                }
+        val code = conn.responseCode
+        if (code !in 200..299) {
+            conn.disconnect()
+            error("El servicio WMS respondió HTTP " + code + ".")
+        }
 
-                val finalUrl = conn.url.toString()
-                if (finalUrl.contains("/Geoservicios/error", true)) {
-                    conn.disconnect()
-                    error("El SIRI redirigió temporalmente a su página de error.")
-                }
+        val finalUrl = conn.url.toString()
+        if (finalUrl.contains("/error", ignoreCase = true)) {
+            conn.disconnect()
+            error("El servidor WMS redirigió a una página de error.")
+        }
 
-                conn.inputStream.use { input ->
+        conn.inputStream.use { input ->
             val parser = Xml.newPullParser()
             parser.setInput(input, null)
 
@@ -86,20 +87,9 @@ object WmsCapabilitiesClient {
                 event = parser.next()
             }
 
-                    if (result.isEmpty()) error("El servicio respondió, pero no publicó capas WMS.")
-                    parsed = result.distinctBy { it.name }
-                }
-                conn.disconnect()
-                return@repeat
-            } catch (e: Throwable) {
-                lastError = e
-                if (attempt < 3 && serviceUrl.contains("siri.snitcr.go.cr", true)) {
-                    Thread.sleep(1500)
-                }
-            }
+            if (result.isEmpty()) error("El servicio respondió, pero no publicó capas WMS.")
+            result.distinctBy { it.name }
         }
-
-        parsed ?: throw (lastError ?: IllegalStateException("No se pudo leer GetCapabilities."))
     }
 
     private data class MutableLayer(
@@ -122,8 +112,7 @@ object WmsCapabilitiesClient {
                 key == "request" || key == "service" || key == "version"
             }
 
-        val prefix = if (kept.isEmpty()) "$base?" else "$base?${kept.joinToString("&")}&"
-        val siri = trimmed.contains("siri.snitcr.go.cr", ignoreCase = true)
-        return prefix + "service=WMS&request=GetCapabilities" + if (siri) "&version=1.1.1" else ""
+        val prefix = if (kept.isEmpty()) base + "?" else base + "?" + kept.joinToString("&") + "&"
+        return prefix + "service=WMS&request=GetCapabilities"
     }
 }
