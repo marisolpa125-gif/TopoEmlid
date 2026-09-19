@@ -191,9 +191,9 @@ fun ProjectLayersScreen(project: TopoProject?) {
                         supportingText = {
                             Text(
                                 if (mapboxToken.isBlank())
-                                    "Necesario para cargar Mapbox."
+                                    "Sin token: Mapbox no puede cargar y se verá el mapa básico."
                                 else
-                                    "Token guardado."
+                                    "Token guardado. Al volver a Levantamiento debe cambiar el mapa base."
                             )
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -428,8 +428,10 @@ private fun LayerEditorDialog(
                                             onClick = {
                                                 layerName = option.name
                                                 if (name.isBlank()) name = option.title
-                                                if (option.crs.any { it.equals("EPSG:3857", true) }) {
-                                                    crs = "EPSG:3857"
+                                                crs = when {
+                                                    option.crs.any { it.equals("EPSG:4326", true) } -> "EPSG:4326"
+                                                    option.crs.any { it.equals("EPSG:3857", true) } -> "EPSG:3857"
+                                                    else -> "EPSG:4326"
                                                 }
                                                 wmsMenuOpen = false
                                             }
