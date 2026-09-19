@@ -219,6 +219,14 @@ fun TopoEmlidApp() {
 
 @Composable
 private fun GnssBar(status: GnssStatus, ntrip: NtripLiveStatus, projectName: String?) {
+    val rtkColor = when {
+        !status.connected -> Color(0xFF757575)
+        status.solution.equals("FIX", ignoreCase = true) -> Color(0xFF2E7D32)
+        status.solution.equals("FLOAT", ignoreCase = true) -> Color(0xFFF9A825)
+        else -> Color(0xFFC62828)
+    }
+    val ntripColor = if (ntrip.connected || ntrip.connecting) Color(0xFF00ACC1) else Color(0xFF757575)
+
     Surface(shadowElevation = 4.dp) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -226,7 +234,9 @@ private fun GnssBar(status: GnssStatus, ntrip: NtripLiveStatus, projectName: Str
                     Text(projectName ?: "Sin proyecto activo", fontWeight = FontWeight.Bold)
                     Text(
                         "GNSS: ${if (status.connected) "Conectado" else "Desconectado"} • RTK: ${status.solution}",
-                        style = MaterialTheme.typography.bodySmall
+                        style = MaterialTheme.typography.bodySmall,
+                        color = rtkColor,
+                        fontWeight = FontWeight.Bold
                     )
                 }
                 Text(
@@ -237,7 +247,9 @@ private fun GnssBar(status: GnssStatus, ntrip: NtripLiveStatus, projectName: Str
             Text(
                 "NTRIP: ${if (ntrip.connected) "Conectado" else if (ntrip.connecting) "Conectando" else "Desconectado"} • " +
                     "H: ${status.horizontalAccuracyM?.let { "%.3f m".format(it) } ?: "—"}",
-                style = MaterialTheme.typography.labelSmall
+                style = MaterialTheme.typography.labelSmall,
+                color = ntripColor,
+                fontWeight = FontWeight.Bold
             )
         }
     }
