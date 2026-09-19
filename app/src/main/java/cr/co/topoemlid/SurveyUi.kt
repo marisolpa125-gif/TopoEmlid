@@ -70,6 +70,10 @@ fun SurveyScreen(
     var showConfigPanel by remember { mutableStateOf(false) }
     var showLayersPanel by remember { mutableStateOf(false) }
     var showToolsPanel by remember { mutableStateOf(false) }
+    var showDividePanel by remember { mutableStateOf(false) }
+    var divideMode by remember { mutableStateOf(DivideMode.EQUAL_AREA) }
+    var dividePartsText by remember { mutableStateOf("2") }
+    var divideFrontEdge by remember { mutableIntStateOf(0) }
     var activeMapTool by remember { mutableStateOf(MapFieldTool.NONE) }
     var toolPoints by remember { mutableStateOf<List<LatLng>>(emptyList()) }
     var toolResult by remember { mutableStateOf<String?>(null) }
@@ -486,6 +490,7 @@ fun SurveyScreen(
                     MapFieldTool.AREA,
                     MapFieldTool.PERIMETER,
                     MapFieldTool.POLYGON,
+                    MapFieldTool.DIVIDE,
                     MapFieldTool.RECTANGLE,
                     MapFieldTool.CIRCLE,
                     MapFieldTool.PARALLEL
@@ -504,11 +509,16 @@ fun SurveyScreen(
                 tools.forEach { tool ->
                     Button(
                         onClick = {
-                            activeMapTool = tool
-                            toolPoints = emptyList()
-                            toolResult = tool.instructions
-                            mapRef?.clear()
-                            showToolsPanel = false
+                            if (tool == MapFieldTool.DIVIDE) {
+                                showToolsPanel = false
+                                showDividePanel = true
+                            } else {
+                                activeMapTool = tool
+                                toolPoints = emptyList()
+                                toolResult = tool.instructions
+                                mapRef?.clear()
+                                showToolsPanel = false
+                            }
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -553,6 +563,92 @@ fun SurveyScreen(
                     }
                 }
 
+                Spacer(Modifier.height(20.dp))
+            }
+        }
+    }
+
+    if (showDividePanel) {
+        ModalBottomSheet(onDismissRequest = { showDividePanel = false }) {
+            Column(
+                Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState())
+            ) {
+                Text("Dividir polígono", style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    if (toolPoints.size >= 3)
+                        "Polígono actual: " + "%.2f".format(polygonAreaMeters2(toolPoints)) + " m²"
+                    else
+                        "Primero dibuje un polígono con al menos 3 vértices.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(12.dp))
+                DivideMode.entries.forEach { mode ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = divideMode == mode, onClick = { divideMode = mode })
+                        Column {
+                            Text(mode.label)
+                            Text(mode.help, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                if (divideMode == DivideMode.EQUAL_AREA || divideMode == DivideMode.EQUAL_FRONT) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = dividePartsText,
+                        onValueChange = { dividePartsText = it.filter { ch -> ch.isDigit() } },
+                        label = { Text("Cantidad de lotes") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                if (divideMode == DivideMode.EQUAL_FRONT && toolPoints.size >= 3) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Seleccione el lado que será el frente", fontWeight = FontWeight.Bold)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        toolPoints.indices.forEach { i ->
+                            val j = (i + 1) % toolPoints.size
+                            AssistChip(
+                                onClick = { divideFrontEdge = i },
+                                label = { Text("Lado " + (i + 1) + ": " + "%.1f".format(haversineMeters(toolPoints[i], toolPoints[j])) + " m") }
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        val map = mapRef
+                        if (toolPoints.size < 3 || map == null) {
+                            toolResult = "Primero cree un polígono y luego vuelva a Dividir."
+                        } else {
+                            val parts = dividePartsText.toIntOrNull()?.coerceIn(2, 20) ?: 2
+                            val result = when (divideMode) {
+                                DivideMode.EQUAL_AREA -> dividePolygonEqualArea(toolPoints, parts)
+                                DivideMode.EQUAL_FRONT -> dividePolygonEqualFront(toolPoints, parts, divideFrontEdge)
+                                DivideMode.BY_LINE -> emptyList()
+                            }
+                            if (divideMode == DivideMode.BY_LINE) {
+                                activeMapTool = MapFieldTool.DIVIDE_LINE
+                                toolResult = "Trace dos puntos sobre el mapa para definir la línea de corte."
+                            } else {
+                                renderDivisionPolygons(map, result)
+                                toolResult = divisionSummary(divideMode.label, result)
+                            }
+                        }
+                        showDividePanel = false
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (divideMode == DivideMode.BY_LINE) "Trazar línea de división" else "Vista previa de división")
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = { showDividePanel = false }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Cancelar")
+                }
                 Spacer(Modifier.height(20.dp))
             }
         }
@@ -871,6 +967,129 @@ private fun sanitizeWmsBaseUrl(raw: String): String {
 }
 
 
+private enum class DivideMode(val label: String, val help: String) {
+    EQUAL_AREA("Áreas iguales", "Divide en 2 o más lotes con áreas aproximadamente iguales."),
+    EQUAL_FRONT("Frentes iguales", "Seleccione el frente y divídalo en distancias iguales."),
+    BY_LINE("Por línea de corte", "Trace una línea de corte manual sobre el polígono.")
+}
+
+private data class XY(val x: Double, val y: Double)
+
+private fun toXY(points: List<LatLng>): Pair<List<XY>, Double> {
+    val meanLat = Math.toRadians(points.map { it.latitude }.average())
+    val r = 6371008.8
+    return points.map {
+        XY(r * Math.toRadians(it.longitude) * cos(meanLat), r * Math.toRadians(it.latitude))
+    } to meanLat
+}
+
+private fun fromXY(points: List<XY>, meanLat: Double): List<LatLng> {
+    val r = 6371008.8
+    return points.map { LatLng(Math.toDegrees(it.y / r), Math.toDegrees(it.x / (r * cos(meanLat)))) }
+}
+
+private fun areaXY(poly: List<XY>): Double {
+    if (poly.size < 3) return 0.0
+    var s = 0.0
+    for (i in poly.indices) {
+        val j = (i + 1) % poly.size
+        s += poly[i].x * poly[j].y - poly[j].x * poly[i].y
+    }
+    return abs(s) / 2.0
+}
+
+private fun clipPlane(poly: List<XY>, nx: Double, ny: Double, c: Double, keepLess: Boolean): List<XY> {
+    if (poly.isEmpty()) return emptyList()
+    fun inside(p: XY): Boolean {
+        val v = nx * p.x + ny * p.y - c
+        return if (keepLess) v <= 1e-8 else v >= -1e-8
+    }
+    fun cross(a: XY, b: XY): XY {
+        val da = nx * a.x + ny * a.y - c
+        val db = nx * b.x + ny * b.y - c
+        val t = da / (da - db)
+        return XY(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+    }
+    val out = mutableListOf<XY>()
+    for (i in poly.indices) {
+        val a = poly[i]
+        val b = poly[(i + 1) % poly.size]
+        val ia = inside(a)
+        val ib = inside(b)
+        when {
+            ia && ib -> out += b
+            ia && !ib -> out += cross(a, b)
+            !ia && ib -> { out += cross(a, b); out += b }
+        }
+    }
+    return out
+}
+
+private fun divideAxis(polygon: List<LatLng>, parts: Int, axisX: Double, axisY: Double, equalArea: Boolean): List<List<LatLng>> {
+    val (xy, meanLat) = toXY(polygon)
+    val len = hypot(axisX, axisY).takeIf { it > 1e-9 } ?: return listOf(polygon)
+    val nx = axisX / len
+    val ny = axisY / len
+    val vals = xy.map { nx * it.x + ny * it.y }
+    val minV = vals.minOrNull() ?: return listOf(polygon)
+    val maxV = vals.maxOrNull() ?: return listOf(polygon)
+    val total = areaXY(xy)
+    val cuts = mutableListOf<Double>()
+    for (k in 1 until parts) {
+        val f = k.toDouble() / parts
+        if (!equalArea) cuts += minV + (maxV - minV) * f
+        else {
+            var lo = minV
+            var hi = maxV
+            repeat(40) {
+                val mid = (lo + hi) / 2.0
+                val a = areaXY(clipPlane(xy, nx, ny, mid, true))
+                if (a / total < f) lo = mid else hi = mid
+            }
+            cuts += (lo + hi) / 2.0
+        }
+    }
+    val bounds = listOf(minV - 1.0) + cuts + listOf(maxV + 1.0)
+    return (0 until parts).mapNotNull { i ->
+        var p = clipPlane(xy, nx, ny, bounds[i], false)
+        p = clipPlane(p, nx, ny, bounds[i + 1], true)
+        if (p.size >= 3) fromXY(p, meanLat) else null
+    }
+}
+
+private fun dividePolygonEqualArea(polygon: List<LatLng>, parts: Int): List<List<LatLng>> {
+    val (xy, _) = toXY(polygon)
+    val dx = (xy.maxOfOrNull { it.x } ?: 0.0) - (xy.minOfOrNull { it.x } ?: 0.0)
+    val dy = (xy.maxOfOrNull { it.y } ?: 0.0) - (xy.minOfOrNull { it.y } ?: 0.0)
+    return if (dx >= dy) divideAxis(polygon, parts, 1.0, 0.0, true) else divideAxis(polygon, parts, 0.0, 1.0, true)
+}
+
+private fun dividePolygonEqualFront(polygon: List<LatLng>, parts: Int, edge: Int): List<List<LatLng>> {
+    val i = edge.coerceIn(0, polygon.lastIndex)
+    val j = (i + 1) % polygon.size
+    val (xy, _) = toXY(polygon)
+    val a = xy[i]
+    val b = xy[j]
+    return divideAxis(polygon, parts, b.x - a.x, b.y - a.y, false)
+}
+
+private fun renderDivisionPolygons(map: MapLibreMap, pieces: List<List<LatLng>>) {
+    map.clear()
+    pieces.forEach { p ->
+        if (p.size >= 3) {
+            map.addPolygon(PolygonOptions().addAll(p))
+            map.addPolyline(PolylineOptions().addAll(p + p.first()).width(4f))
+        }
+    }
+}
+
+private fun divisionSummary(title: String, pieces: List<List<LatLng>>): String {
+    if (pieces.isEmpty()) return title + ": no se pudo generar la división."
+    return title + " • " + pieces.mapIndexed { index, p ->
+        "Lote " + (index + 1) + ": " + "%.2f".format(polygonAreaMeters2(p)) + " m²"
+    }.joinToString(" • ")
+}
+
 private enum class MapFieldTool(
     val label: String,
     val instructions: String
@@ -882,6 +1101,8 @@ private enum class MapFieldTool(
     AREA("Medir área", "Toque tres o más puntos para formar el área."),
     PERIMETER("Medir perímetro", "Toque tres o más vértices del polígono."),
     POLYGON("Crear polígono", "Toque tres o más vértices para dibujar el polígono."),
+    DIVIDE("Dividir polígono", "Divida por área igual, frente igual o por una línea de corte."),
+    DIVIDE_LINE("Línea de división", "Toque dos puntos para definir la línea de corte."),
     RECTANGLE("Rectángulo / cuadrado", "Toque dos esquinas opuestas."),
     CIRCLE("Círculo", "Toque el centro y luego un punto del borde."),
     PARALLEL("Línea paralela", "Toque dos puntos de la línea base. Se creará una paralela con la separación indicada.")
@@ -964,6 +1185,17 @@ private fun renderFieldTool(
                 map.addPolyline(PolylineOptions().addAll(points).width(4f))
             }
             return "Marque al menos 3 vértices."
+        }
+
+        MapFieldTool.DIVIDE -> return "Abra Dividir polígono para elegir el método."
+
+        MapFieldTool.DIVIDE_LINE -> {
+            points.forEach { map.addMarker(MarkerOptions().position(it)) }
+            if (points.size >= 2) {
+                map.addPolyline(PolylineOptions().addAll(points.take(2)).width(4f))
+                return "Línea de división trazada. La vista muestra el corte manual."
+            }
+            return "Marque el segundo punto de la línea de división."
         }
 
         MapFieldTool.RECTANGLE -> {
