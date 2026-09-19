@@ -1,5 +1,10 @@
 package cr.co.topoemlid
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
 import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.annotations.IconFactory
 import org.maplibre.android.annotations.MarkerOptions
 import org.maplibre.android.annotations.PolylineOptions
 import org.maplibre.android.annotations.PolygonOptions
@@ -156,6 +162,8 @@ fun SurveyScreen(
         committedGeometries.forEach { g ->
             drawCommittedGeometry(m, g)
         }
+        drawSavedSurveyPoints(m, savedPoints, context)
+        drawLiveReceiverPosition(m, gnss, context)
     }
 
     fun showGeometrySelection(index: Int?) {
@@ -170,7 +178,7 @@ fun SurveyScreen(
     fun redrawActiveAndCommitted() {
         val map = mapRef ?: return
         map.clear()
-        committedGeometries.forEach { drawCommittedGeometry(map, it) }
+        redrawCommitted(map)
         if (activeMapTool != MapFieldTool.NONE && toolPoints.isNotEmpty()) {
             drawActiveGeometry(map, activeMapTool, toolPoints, parallelOffsetText.toDoubleOrNull() ?: 1.0)
         }
@@ -215,6 +223,12 @@ fun SurveyScreen(
                 )
                 initialAutoZoomDone = true
             }
+        }
+    }
+
+    LaunchedEffect(gnss.latitude, gnss.longitude, gnss.solution, gnss.connected) {
+        if (mapRef != null) {
+            redrawActiveAndCommitted()
         }
     }
 
@@ -263,6 +277,10 @@ fun SurveyScreen(
             val updated = savedPoints + saved
             savedPoints = updated
             pointStore.save(p.id, updated)
+            mapRef?.let {
+                it.clear()
+                redrawCommitted(it)
+            }
             pointNumber = incrementPointNumber(saved.pointNumber)
             description = ""
             pointPhoto = null
@@ -815,6 +833,10 @@ fun SurveyScreen(
                                         val updated = savedPoints + newPoints
                                         savedPoints = updated
                                         pointStore.save(p.id, updated)
+                                        mapRef?.let {
+                                            it.clear()
+                                            redrawCommitted(it)
+                                        }
                                         pointNumber = nextPointNumber(updated)
                                         toolResult = "${newPoints.size} puntos de vértice creados y guardados en el proyecto."
                                     }
@@ -1683,6 +1705,84 @@ fun SurveyScreen(
                 Spacer(Modifier.height(24.dp))
             }
         }
+    }
+}
+
+
+private fun drawLiveReceiverPosition(
+    map: MapLibreMap,
+    gnss: GnssStatus,
+    context: Context
+) {
+    val lat = gnss.latitude ?: return
+    val lon = gnss.longitude ?: return
+    if (!gnss.connected) return
+
+    val fillColor = when {
+        gnss.solution.equals("FIX", true) -> android.graphics.Color.rgb(46, 125, 50)
+        gnss.solution.equals("FLOAT", true) -> android.graphics.Color.rgb(249, 168, 37)
+        else -> android.graphics.Color.rgb(198, 40, 40)
+    }
+
+    val size = 42
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = fillColor
+    }
+    canvas.drawCircle(size / 2f, size / 2f, 13f, paint)
+    paint.style = Paint.Style.STROKE
+    paint.strokeWidth = 5f
+    paint.color = android.graphics.Color.WHITE
+    canvas.drawCircle(size / 2f, size / 2f, 14f, paint)
+
+    val icon = IconFactory.getInstance(context).fromBitmap(bitmap)
+    map.addMarker(
+        MarkerOptions()
+            .position(LatLng(lat, lon))
+            .icon(icon)
+            .anchor(0.5f, 0.5f)
+            .title("Posición GNSS • ${gnss.solution}")
+    )
+}
+
+private fun drawSavedSurveyPoints(
+    map: MapLibreMap,
+    points: List<SurveyPoint>,
+    context: Context
+) {
+    val iconFactory = IconFactory.getInstance(context)
+    points.forEach { point ->
+        val lat = point.latitude ?: return@forEach
+        val lon = point.longitude ?: return@forEach
+        val detail = point.description.ifBlank { point.code.ifBlank { "Punto" } }
+        val label = "✕ ${point.pointNumber}  $detail"
+
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.rgb(35, 35, 35)
+            textSize = 25f
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        val width = (textPaint.measureText(label) + 24f).toInt().coerceAtLeast(90)
+        val height = 42
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.argb(205, 255, 255, 255)
+            style = Paint.Style.FILL
+        }
+        canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), 9f, 9f, bg)
+        canvas.drawText(label, 10f, 29f, textPaint)
+
+        map.addMarker(
+            MarkerOptions()
+                .position(LatLng(lat, lon))
+                .icon(iconFactory.fromBitmap(bitmap))
+                .anchor(0.08f, 0.5f)
+                .title("Punto ${point.pointNumber}")
+                .snippet(detail)
+        )
     }
 }
 
