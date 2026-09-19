@@ -5,8 +5,7 @@ import android.content.Context
 enum class BasemapType(val label: String) {
     NONE("Sin mapa base"),
     BASIC("Mapa básico"),
-    MAPBOX_STREETS("Mapbox calles"),
-    MAPBOX_SATELLITE("Mapbox satélite")
+    SATELLITE("Satélite")
 }
 
 class BasemapStore(context: Context) {
@@ -18,7 +17,12 @@ class BasemapStore(context: Context) {
             projectKey != null && prefs.contains(projectKey) -> prefs.getString(projectKey, null)
             else -> prefs.getString("selected_global", BasemapType.BASIC.name)
         }
-        return runCatching { BasemapType.valueOf(raw ?: BasemapType.BASIC.name) }
+        val migrated = when (raw) {
+            "MAPBOX_STREETS" -> BasemapType.BASIC.name
+            "MAPBOX_SATELLITE" -> BasemapType.SATELLITE.name
+            else -> raw
+        }
+        return runCatching { BasemapType.valueOf(migrated ?: BasemapType.BASIC.name) }
             .getOrDefault(BasemapType.BASIC)
     }
 
