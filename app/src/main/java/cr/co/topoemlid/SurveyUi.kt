@@ -543,7 +543,7 @@ fun SurveyScreen(
         Box(
             modifier = Modifier
                 .offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }
-                .size(54.dp)
+                .size(46.dp)
                 .onGloballyPositioned { buttonSize = it.size }
                 .pointerInput(parentSize, buttonSize, measuring) {
                     detectDragGesturesAfterLongPress(
@@ -566,14 +566,51 @@ fun SurveyScreen(
                 shape = CircleShape,
                 containerColor = if (measuring) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
             ) {
-                Text(
-                    when {
-                        measuring -> secondsRemaining.toString()
-                        else -> "📡"
-                    },
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
+                if (measuring) {
+                    Text(
+                        secondsRemaining.toString(),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                } else {
+                    androidx.compose.foundation.Canvas(
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        val stroke = 2.4.dp.toPx()
+                        val centerX = size.width / 2f
+                        val domeY = size.height * 0.34f
+                        val domeR = size.width * 0.23f
+                        drawCircle(
+                            color = Color.White,
+                            radius = domeR,
+                            center = Offset(centerX, domeY)
+                        )
+                        drawLine(
+                            color = Color.White,
+                            start = Offset(centerX, domeY + domeR),
+                            end = Offset(centerX, size.height * 0.76f),
+                            strokeWidth = stroke
+                        )
+                        drawLine(
+                            color = Color.White,
+                            start = Offset(size.width * 0.28f, size.height * 0.78f),
+                            end = Offset(size.width * 0.72f, size.height * 0.78f),
+                            strokeWidth = stroke
+                        )
+                        drawLine(
+                            color = Color.White,
+                            start = Offset(size.width * 0.38f, size.height * 0.90f),
+                            end = Offset(centerX, size.height * 0.78f),
+                            strokeWidth = stroke
+                        )
+                        drawLine(
+                            color = Color.White,
+                            start = Offset(size.width * 0.62f, size.height * 0.90f),
+                            end = Offset(centerX, size.height * 0.78f),
+                            strokeWidth = stroke
+                        )
+                    }
+                }
             }
         }
 
@@ -1547,6 +1584,20 @@ fun SurveyScreen(
 
                 Spacer(Modifier.height(12.dp))
 
+                if (project != null && projectLayers.isNotEmpty()) {
+                    OutlinedButton(
+                        onClick = {
+                            val updated = projectLayers.map { it.copy(visible = false) }
+                            projectLayers = updated
+                            layerStore.save(project.id, updated)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Apagar todas las capas")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+
                 if (project == null) {
                     Text("No hay un proyecto activo.")
                 } else if (projectLayers.isEmpty()) {
@@ -1724,16 +1775,29 @@ private fun drawLiveReceiverPosition(
         else -> android.graphics.Color.rgb(198, 40, 40)
     }
 
-    val size = 42
+    val size = 68
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
+
+    val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = android.graphics.Color.argb(
+            72,
+            android.graphics.Color.red(fillColor),
+            android.graphics.Color.green(fillColor),
+            android.graphics.Color.blue(fillColor)
+        )
+    }
+    canvas.drawCircle(size / 2f, size / 2f, 27f, haloPaint)
+
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
         color = fillColor
     }
     canvas.drawCircle(size / 2f, size / 2f, 13f, paint)
+
     paint.style = Paint.Style.STROKE
-    paint.strokeWidth = 5f
+    paint.strokeWidth = 4f
     paint.color = android.graphics.Color.WHITE
     canvas.drawCircle(size / 2f, size / 2f, 14f, paint)
 
