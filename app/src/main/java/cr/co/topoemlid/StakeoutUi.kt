@@ -13,6 +13,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import org.maplibre.android.annotations.MarkerOptions
+import org.maplibre.android.annotations.PolylineOptions
+import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.maps.MapView
+import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.maps.Style
 import kotlin.math.*
 
 enum class StakeoutMode(val label: String, val description: String) {
@@ -154,7 +162,19 @@ fun StakeoutScreen(
 
         if (showGuidance && mode == StakeoutMode.POINT) {
             val target = points.firstOrNull { it.id == selectedPointId }
+
+            StakeoutMapPreview(
+                project = project,
+                target = target,
+                gnss = gnss
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            // Este recuadro se mantiene compacto; la navegación principal
+            // ocurre sobre el mapa y la guía siempre se dibuja por encima.
             StakeoutGuidancePanel(target = target, gnss = gnss)
+
             Spacer(Modifier.height(12.dp))
         }
 
@@ -248,6 +268,177 @@ private fun PointPairSelector(
         ) {
             RadioButton(selected = endPointId == p.id, onClick = { onEnd(p.id) })
             Text("Punto ${p.pointNumber}")
+        }
+    }
+}
+
+
+@Composable
+private fun StakeoutMapPreview(
+    project: TopoProject?,
+    target: SurveyPoint?,
+    gnss: GnssStatus
+) {
+    val context = LocalContext.current
+    val layerStore = remember(project?.id) { LayerStore(context) }
+    val basemapStore = remember(project?.id) { BasemapStore(context) }
+
+    fun loadEffectiveLayers(): List<LayerItem> {
+        val saved = project?.let { layerStore.load(it.id) }.orEmpty()
+        val global = layerStore.loadLibrary()
+        if (project == null) return global
+        val fromLibrary = global.map { lib ->
+            saved.firstOrNull { it.id == lib.id } ?: lib.copy(visible = false)
+        }
+        val projectOnly = saved.filter { s -> global.none { it.id == s.id } }
+        return (fromLibrary + projectOnly).mapIndexed { index, item -> item.copy(order = index) }
+    }
+
+    val layers = remember(project?.id) { loadEffectiveLayers() }
+    val basemap = remember(project?.id) { basemapStore.selected(project?.id) }
+    val mapboxToken = basemapStore.mapboxToken()
+
+    fun redrawGuidance(map: MapLibreMap) {
+        map.clear()
+
+        val lat = gnss.latitude
+        val lon = gnss.longitude
+        val tLat = target?.latitude
+        val tLon = target?.longitude
+
+        if (lat != null && lon != null) {
+            map.addMarker(
+                MarkerOptions()
+                    .position(LatLng(lat, lon))
+                    .title("Posición GNSS")
+            )
+        }
+
+        if (tLat != null && tLon != null) {
+            map.addMarker(
+                MarkerOptions()
+                    .position(LatLng(tLat, tLon))
+                    .title("OBJETIVO • Punto ${target.pointNumber}")
+            )
+        }
+
+        if (lat != null && lon != null && tLat != null && tLon != null) {
+            map.addPolyline(
+                PolylineOptions()
+                    .add(LatLng(lat, lon))
+                    .add(LatLng(tLat, tLon))
+                    .width(6f)
+            )
+        }
+    }
+
+    val lat = gnss.latitude
+    val lon = gnss.longitude
+    val tLat = target?.latitude
+    val tLon = target?.longitude
+
+    val distanceM = if (lat != null && lon != null && tLat != null && tLon != null) {
+        val north = (tLat - lat) * 111132.0
+        val east = (tLon - lon) * (111320.0 * cos(Math.toRadians(tLat)))
+        hypot(north, east)
+    } else null
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(280.dp)
+    ) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { mapContext ->
+                MapView(mapContext).apply {
+                    onCreate(null)
+                    onStart()
+                    onResume()
+                    getMapAsync { map ->
+                        val center = when {
+                            lat != null && lon != null -> LatLng(lat, lon)
+                            tLat != null && tLon != null -> LatLng(tLat, tLon)
+                            else -> LatLng(9.93, -84.08)
+                        }
+
+                        val zoom = when {
+                            distanceM == null -> 8.0
+                            distanceM > 500.0 -> 14.0
+                            distanceM > 100.0 -> 16.0
+                            distanceM > 20.0 -> 17.5
+                            else -> 19.0
+                        }
+
+                        map.moveCamera(CameraUpdateFactory.newLatLngZoom(center, zoom))
+
+                        val baseStyle = Style.Builder().fromJson(
+                            """
+                            {
+                              "version": 8,
+                              "sources": {},
+                              "layers": [
+                                {
+                                  "id": "background",
+                                  "type": "background",
+                                  "paint": {"background-color": "#d9dde1"}
+                                }
+                              ]
+                            }
+                            """.trimIndent()
+                        )
+
+                        map.setStyle(baseStyle) { style ->
+                            addSelectedBasemap(style, basemap, mapboxToken)
+                            addProjectRasterLayers(style, layers)
+
+                            refreshViewportWmsLayers(map, layers) {
+                                // La WMS puede terminar de cargar después:
+                                // se vuelven a dibujar GNSS, objetivo y línea al final.
+                                redrawGuidance(map)
+                            }
+
+                            redrawGuidance(map)
+                        }
+
+                        map.addOnCameraIdleListener {
+                            refreshViewportWmsLayers(map, layers) {
+                                redrawGuidance(map)
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+        if (lat != null && lon != null && tLat != null && tLon != null) {
+            val north = (tLat - lat) * 111132.0
+            val east = (tLon - lon) * (111320.0 * cos(Math.toRadians(tLat)))
+            val distance = hypot(north, east)
+
+            val direction = buildString {
+                if (north > 0.05) append("N ")
+                if (north < -0.05) append("S ")
+                if (east > 0.05) append("E")
+                if (east < -0.05) append("O")
+                if (isBlank()) append("CENTRO")
+            }.trim()
+
+            Surface(
+                modifier = Modifier
+                    .align(androidx.compose.ui.Alignment.TopCenter)
+                    .padding(8.dp),
+                tonalElevation = 6.dp
+            ) {
+                Text(
+                    if (distance <= 0.05)
+                        "OBJETIVO ALCANZADO"
+                    else
+                        "Muévase: $direction • %.2f m".format(distance),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
