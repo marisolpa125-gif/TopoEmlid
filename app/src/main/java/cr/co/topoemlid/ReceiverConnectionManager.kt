@@ -27,6 +27,7 @@ class ReceiverConnectionManager(context: Context) {
     private var socket: BluetoothSocket? = null
     private var gatt: BluetoothGatt? = null
     private var worker: Thread? = null
+    private var watchdog: Thread? = null
     private var autoFallbackProfile: ReceiverProfile? = null
     private var requestedProfileId: String? = null
     private var floatStreak = 0
@@ -240,6 +241,31 @@ class ReceiverConnectionManager(context: Context) {
                 mainHandler.post { connecting = false }
 
                 val reader = BufferedReader(InputStreamReader(s.inputStream))
+
+                // Watch actual NMEA traffic, not just the Bluetooth socket state.
+                // If no sentence arrives for several seconds, force the socket closed
+                // so the reader exits and the normal reconnect path can take over.
+                watchdog?.interrupt()
+                watchdog = thread(name = "gnss-nmea-watchdog") {
+                    while (!Thread.currentThread().isInterrupted && requestedProfileId == profile.id) {
+                        Thread.sleep(2000L)
+                        val last = status.lastNmeaAt
+                        if (status.connected && last != null && System.currentTimeMillis() - last > 8000L) {
+                            mainHandler.post {
+                                connecting = true
+                                status = status.copy(
+                                    connected = false,
+                                    nmeaReceiving = false,
+                                    solution = "SIN DATOS • RECONECTANDO"
+                                )
+                                lastError = "Se perdió el flujo NMEA del receptor. Intentando reconectar."
+                            }
+                            runCatching { s.close() }
+                            break
+                        }
+                    }
+                }
+
                 while (!Thread.currentThread().isInterrupted) {
                     val line = reader.readLine() ?: break
                     if (line.startsWith("$")) {
@@ -366,6 +392,9 @@ class ReceiverConnectionManager(context: Context) {
                     status = status.copy(connected = false, solution = "SIN SEÑAL")
                 }
             } finally {
+                watchdog?.interrupt()
+                watchdog = null
+
                 val mine = ownedSocket
                 if (mine != null) {
                     runCatching { mine.close() }
@@ -415,14 +444,17 @@ class ReceiverConnectionManager(context: Context) {
         usedSatelliteIds.clear()
 
         val oldWorker = worker
+        val oldWatchdog = watchdog
         val oldSocket = socket
         val oldGatt = gatt
 
         worker = null
+        watchdog = null
         socket = null
         gatt = null
 
         oldWorker?.interrupt()
+        oldWatchdog?.interrupt()
         runCatching { oldSocket?.close() }
         runCatching { oldGatt?.disconnect() }
         runCatching { oldGatt?.close() }
