@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -64,6 +66,10 @@ fun SurveyScreen(
     gnss: GnssStatus
 ) {
     val context = LocalContext.current
+    val saveTone = remember { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 80) }
+    DisposableEffect(Unit) {
+        onDispose { saveTone.release() }
+    }
     val pointStore = remember(project?.id) { SurveyPointStore(context) }
     val layerStore = remember(project?.id) { LayerStore(context) }
     val basemapStore = remember(project?.id) { BasemapStore(context) }
@@ -280,6 +286,7 @@ fun SurveyScreen(
             val updated = savedPoints + saved
             savedPoints = updated
             pointStore.save(p.id, updated)
+            saveTone.startTone(ToneGenerator.TONE_PROP_ACK, 180)
             mapRef?.let {
                 it.clear()
                 redrawCommitted(it)
