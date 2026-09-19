@@ -171,7 +171,12 @@ class ReceiverConnectionManager(context: Context) {
         )
 
         worker = thread(name = "gnss-nmea") {
+            var ownedSocket: BluetoothSocket? = null
             try {
+                // Give Android's Bluetooth stack a short moment to release any
+                // previous RFCOMM session before opening a new one.
+                Thread.sleep(450)
+
                 val spp = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
                 val advertised = device.uuids?.map { it.uuid }.orEmpty()
                 val candidates = (listOf(spp) + advertised).distinct()
@@ -180,33 +185,47 @@ class ReceiverConnectionManager(context: Context) {
                 var connectedSocket: BluetoothSocket? = null
                 var lastConnectError: Throwable? = null
 
-                for (uuid in candidates) {
-                    if (connectedSocket != null) break
+                // Some rugged Android devices keep the RFCOMM channel busy for
+                // a fraction of a second after disconnecting. Retry the complete
+                // SPP sequence instead of failing after the first pass.
+                repeat(3) { round ->
+                    if (connectedSocket != null || Thread.currentThread().isInterrupted) return@repeat
 
-                    val attempts = listOf<(UUID) -> BluetoothSocket>(
-                        { u -> device.createRfcommSocketToServiceRecord(u) },
-                        { u -> device.createInsecureRfcommSocketToServiceRecord(u) }
-                    )
+                    for (uuid in candidates) {
+                        if (connectedSocket != null) break
 
-                    for (createSocket in attempts) {
-                        val candidate = runCatching { createSocket(uuid) }.getOrNull() ?: continue
-                        try {
-                            candidate.connect()
-                            connectedSocket = candidate
-                            break
-                        } catch (t: Throwable) {
-                            lastConnectError = t
-                            runCatching { candidate.close() }
+                        val attempts = listOf<(UUID) -> BluetoothSocket>(
+                            { u -> device.createRfcommSocketToServiceRecord(u) },
+                            { u -> device.createInsecureRfcommSocketToServiceRecord(u) }
+                        )
+
+                        for (createSocket in attempts) {
+                            if (connectedSocket != null || Thread.currentThread().isInterrupted) break
+                            val candidate = runCatching { createSocket(uuid) }.getOrNull() ?: continue
+                            try {
+                                adapter?.cancelDiscovery()
+                                candidate.connect()
+                                connectedSocket = candidate
+                                break
+                            } catch (t: Throwable) {
+                                lastConnectError = t
+                                runCatching { candidate.close() }
+                            }
                         }
+                    }
+
+                    if (connectedSocket == null && round < 2) {
+                        Thread.sleep(700L * (round + 1))
                     }
                 }
 
                 val s = connectedSocket
                     ?: throw IllegalStateException(
-                        "No se pudo abrir un canal Bluetooth/NMEA con ${profile.name}. " +
-                            "Verifique que el receptor tenga salida NMEA por Bluetooth activada.",
+                        "No se pudo abrir el canal Bluetooth/NMEA con ${profile.name} después de varios intentos. " +
+                            "Compruebe que el receptor siga emparejado, que ninguna otra app esté usando su Bluetooth y que NMEA por Bluetooth esté activo.",
                         lastConnectError
                     )
+                ownedSocket = s
                 socket = s
 
                 postStatus(
@@ -329,8 +348,11 @@ class ReceiverConnectionManager(context: Context) {
                     status = status.copy(connected = false, solution = "SIN SEÑAL")
                 }
             } finally {
-                runCatching { socket?.close() }
-                socket = null
+                val mine = ownedSocket
+                if (mine != null) {
+                    runCatching { mine.close() }
+                    if (socket === mine) socket = null
+                }
             }
         }
     }
@@ -349,13 +371,20 @@ class ReceiverConnectionManager(context: Context) {
     fun disconnect() {
         autoFallbackProfile = null
         usedSatelliteIds.clear()
-        worker?.interrupt()
+
+        val oldWorker = worker
+        val oldSocket = socket
+        val oldGatt = gatt
+
         worker = null
-        runCatching { socket?.close() }
         socket = null
-        runCatching { gatt?.disconnect() }
-        runCatching { gatt?.close() }
         gatt = null
+
+        oldWorker?.interrupt()
+        runCatching { oldSocket?.close() }
+        runCatching { oldGatt?.disconnect() }
+        runCatching { oldGatt?.close() }
+
         connecting = false
         status = GnssStatus(receiverName = status.receiverName)
     }
