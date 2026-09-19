@@ -111,6 +111,7 @@ fun SurveyScreen(
     var editingOriginalGeometry by remember(project?.id) { mutableStateOf<CommittedGeometry?>(null) }
     var toolResult by remember { mutableStateOf<String?>(null) }
     var parallelOffsetText by remember { mutableStateOf("1.00") }
+    var parallelLeft by remember { mutableStateOf(true) }
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
     var pointPhoto by remember { mutableStateOf<Uri?>(null) }
     var followReceiver by remember { mutableStateOf(false) }
@@ -325,20 +326,24 @@ fun SurveyScreen(
                                 } else if (activeMapTool == MapFieldTool.CIRCLE) {
                                     selectedGeometryIndex = null
                                     toolPoints = listOf(latLng)
+                                    map.clear()
+                                    redrawCommitted(map)
+                                    map.addMarker(MarkerOptions().position(latLng))
                                     showCirclePanel = true
-                                    toolResult = "Centro del círculo seleccionado. Indique radio o diámetro."
+                                    toolResult = "Centro del círculo marcado en el mapa. Indique radio o diámetro."
                                     true
-                                } else if (activeMapTool == MapFieldTool.PARALLEL && hitIndex != null) {
-                                    val geometry = committedGeometries[hitIndex]
-                                    if (geometrySupportsParallel(geometry)) {
-                                        selectedGeometryIndex = hitIndex
+                                } else if (activeMapTool == MapFieldTool.PARALLEL) {
+                                    val lineIndex = findLineGeometryAt(latLng, committedGeometries)
+                                    if (lineIndex != null) {
+                                        val geometry = committedGeometries[lineIndex]
+                                        selectedGeometryIndex = lineIndex
                                         toolPoints = geometryPath(geometry)
-                                        showGeometrySelection(hitIndex)
+                                        showGeometrySelection(lineIndex)
                                         showParallelPanel = true
-                                        toolResult = "Línea base seleccionada. Indique la separación de la paralela."
+                                        toolResult = "Línea base seleccionada. Indique separación y lado."
                                         true
                                     } else {
-                                        toolResult = "Para crear una paralela seleccione una línea."
+                                        toolResult = "No se encontró una línea guardada cerca. Toque directamente sobre la línea."
                                         false
                                     }
                                 } else if (
@@ -383,7 +388,7 @@ fun SurveyScreen(
                                     val updated = when (activeMapTool) {
                                         MapFieldTool.POINT -> listOf(latLng)
                                         MapFieldTool.RECTANGLE ->
-                                            if (toolPoints.size >= 2) listOf(latLng) else toolPoints + latLng
+                                            if (toolPoints.size >= 3) toolPoints else toolPoints + latLng
                                         else -> toolPoints + latLng
                                     }
 
@@ -697,6 +702,8 @@ fun SurveyScreen(
                                                 } else {
                                                     toolResult = "Para dividir se necesita un polígono con al menos 3 vértices."
                                                 }
+                                            } else if (activeMapTool == MapFieldTool.RECTANGLE && toolPoints.size < 3) {
+                                                toolResult = "Marque 3 puntos: dos para el ancho y uno para el largo."
                                             } else if (toolPoints.isNotEmpty()) {
                                                 val savedGeometry = CommittedGeometry(
                                                     id = editingOriginalGeometry?.id ?: UUID.randomUUID().toString(),
@@ -1013,6 +1020,12 @@ fun SurveyScreen(
             Column(Modifier.fillMaxWidth().padding(16.dp)) {
                 Text("Crear círculo", style = MaterialTheme.typography.headlineSmall)
                 Text("Centro marcado. Indique el tamaño exacto.", style = MaterialTheme.typography.bodySmall)
+                toolPoints.firstOrNull()?.let { center ->
+                    Text(
+                        "Centro: %.8f, %.8f".format(center.latitude, center.longitude),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = !circleUseDiameter, onClick = { circleUseDiameter = false })
@@ -1073,7 +1086,16 @@ fun SurveyScreen(
             Column(Modifier.fillMaxWidth().padding(16.dp)) {
                 Text("Crear línea paralela", style = MaterialTheme.typography.headlineSmall)
                 Text("La línea base ya está seleccionada.", style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
+                Text("Lado de la paralela", style = MaterialTheme.typography.titleSmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = parallelLeft, onClick = { parallelLeft = true })
+                    Text("Izquierda")
+                    Spacer(Modifier.width(12.dp))
+                    RadioButton(selected = !parallelLeft, onClick = { parallelLeft = false })
+                    Text("Derecha")
+                }
+                Spacer(Modifier.height(6.dp))
                 OutlinedTextField(
                     value = parallelOffsetText,
                     onValueChange = { parallelOffsetText = it },
@@ -1084,22 +1106,26 @@ fun SurveyScreen(
                 Spacer(Modifier.height(12.dp))
                 Button(
                     onClick = {
-                        val distance = parallelOffsetText.replace(',', '.').toDoubleOrNull()
-                        if (toolPoints.size < 2 || distance == null || distance == 0.0) {
+                        val rawDistance = parallelOffsetText.replace(',', '.').toDoubleOrNull()
+                        if (toolPoints.size < 2 || rawDistance == null || rawDistance == 0.0) {
                             toolResult = "Seleccione una línea y escriba una separación válida."
                         } else {
-                            val parallel = offsetPolyline(toolPoints, distance)
+                            val signedDistance = abs(rawDistance) * if (parallelLeft) 1.0 else -1.0
+                            val parallel = offsetPolyline(toolPoints, signedDistance)
                             val geometry = CommittedGeometry(
                                 tool = MapFieldTool.LINE,
                                 points = parallel,
-                                parallelOffsetM = distance
+                                parallelOffsetM = signedDistance
                             )
                             persistGeometries(committedGeometries + geometry)
                             showParallelPanel = false
                             activeMapTool = MapFieldTool.NONE
                             toolPoints = emptyList()
                             selectedGeometryIndex = null
-                            toolResult = "Línea paralela guardada a %.2f m.".format(abs(distance))
+                            toolResult = "Línea paralela guardada a %.2f m a la %s.".format(
+                                abs(rawDistance),
+                                if (parallelLeft) "izquierda" else "derecha"
+                            )
                             mapRef?.clear()
                             redrawCommitted(mapRef)
                         }
@@ -1790,17 +1816,11 @@ private fun drawActiveGeometry(
             if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points).width(4f))
             if (points.size >= 3 && tool != MapFieldTool.LINE) drawTransparentPolygon(map, points)
         }
-        MapFieldTool.RECTANGLE -> if (points.size >= 2) {
-            val a = points[0]; val b = points[1]
-            val rect = listOf(
-                LatLng(a.latitude, a.longitude),
-                LatLng(a.latitude, b.longitude),
-                LatLng(b.latitude, b.longitude),
-                LatLng(b.latitude, a.longitude)
-            )
-            drawTransparentPolygon(map, rect)
+        MapFieldTool.RECTANGLE -> if (points.size >= 3) {
+            drawTransparentPolygon(map, rectangleFromControlPoints(points))
         }
         MapFieldTool.CIRCLE -> if (points.size >= 2) {
+            map.addMarker(MarkerOptions().position(points[0]))
             val circle = circlePolygon(points[0], haversineMeters(points[0], points[1]), 64)
             drawTransparentPolygon(map, circle)
         }
@@ -1892,16 +1912,73 @@ private fun offsetPolyline(points: List<LatLng>, offsetM: Double): List<LatLng> 
     return out.map(::toLatLng)
 }
 
+private fun rectangleFromControlPoints(points: List<LatLng>): List<LatLng> {
+    if (points.size < 3) return points
+    val a = points[0]
+    val b = points[1]
+    val c = points[2]
+    val meanLat = Math.toRadians((a.latitude + b.latitude + c.latitude) / 3.0)
+    val r = 6371008.8
+
+    fun local(p: LatLng): XY = XY(
+        r * Math.toRadians(p.longitude - a.longitude) * cos(meanLat),
+        r * Math.toRadians(p.latitude - a.latitude)
+    )
+    fun geo(p: XY): LatLng = LatLng(
+        a.latitude + Math.toDegrees(p.y / r),
+        a.longitude + Math.toDegrees(p.x / (r * cos(meanLat)))
+    )
+
+    val aa = XY(0.0, 0.0)
+    val bb = local(b)
+    val cc = local(c)
+    val width = hypot(bb.x, bb.y)
+    if (width <= 1e-9) return points
+
+    val ux = bb.x / width
+    val uy = bb.y / width
+    val nx = -uy
+    val ny = ux
+    val signedLength = cc.x * nx + cc.y * ny
+    val offset = XY(nx * signedLength, ny * signedLength)
+
+    return listOf(
+        geo(aa),
+        geo(bb),
+        geo(XY(bb.x + offset.x, bb.y + offset.y)),
+        geo(offset)
+    )
+}
+
+private fun rectangleLengthMeters(points: List<LatLng>): Double {
+    if (points.size < 3) return 0.0
+    val rect = rectangleFromControlPoints(points)
+    return if (rect.size >= 4) haversineMeters(rect[0], rect[3]) else 0.0
+}
+
+private fun findLineGeometryAt(
+    point: LatLng,
+    geometries: List<CommittedGeometry>,
+    toleranceM: Double = 25.0
+): Int? {
+    var bestIndex: Int? = null
+    var bestDistance = Double.POSITIVE_INFINITY
+    geometries.forEachIndexed { index, geometry ->
+        if (!geometrySupportsParallel(geometry)) return@forEachIndexed
+        val path = geometryPath(geometry)
+        if (path.size < 2) return@forEachIndexed
+        val distance = distanceToPathMeters(point, path)
+        if (distance <= toleranceM && distance < bestDistance) {
+            bestDistance = distance
+            bestIndex = index
+        }
+    }
+    return bestIndex
+}
+
 private fun geometryPath(geometry: CommittedGeometry): List<LatLng> = when (geometry.tool) {
-    MapFieldTool.RECTANGLE -> if (geometry.points.size >= 2) {
-        val a = geometry.points[0]
-        val b = geometry.points[1]
-        listOf(
-            LatLng(a.latitude, a.longitude),
-            LatLng(a.latitude, b.longitude),
-            LatLng(b.latitude, b.longitude),
-            LatLng(b.latitude, a.longitude)
-        )
+    MapFieldTool.RECTANGLE -> if (geometry.points.size >= 3) {
+        rectangleFromControlPoints(geometry.points)
     } else geometry.points
     MapFieldTool.CIRCLE -> if (geometry.points.size >= 2) {
         circlePolygon(
@@ -1948,15 +2025,29 @@ private fun distanceText(geometry: CommittedGeometry): String {
 }
 
 private fun findGeometryAt(point: LatLng, geometries: List<CommittedGeometry>): Int? {
+    var nearestIndex: Int? = null
+    var nearestDistance = Double.POSITIVE_INFINITY
+
+    // Prioritize what the user actually taps: a visible border or line.
+    geometries.forEachIndexed { index, geometry ->
+        val path = geometryPath(geometry)
+        if (path.isEmpty()) return@forEachIndexed
+        val testPath = if (geometrySupportsArea(geometry) && path.size >= 3) path + path.first() else path
+        val distance = distanceToPathMeters(point, testPath)
+        if (distance <= 20.0 && distance < nearestDistance) {
+            nearestDistance = distance
+            nearestIndex = index
+        }
+    }
+    if (nearestIndex != null) return nearestIndex
+
+    // If no border was touched, allow selecting a closed figure by tapping inside it.
     for (index in geometries.indices.reversed()) {
         val geometry = geometries[index]
         val path = geometryPath(geometry)
-        if (path.isEmpty()) continue
         if (geometrySupportsArea(geometry) && path.size >= 3 && pointInPolygon(point, path)) {
             return index
         }
-        val closed = if (geometrySupportsArea(geometry) && path.size >= 3) path + path.first() else path
-        if (distanceToPathMeters(point, closed) <= 10.0) return index
     }
     return null
 }
@@ -2245,7 +2336,7 @@ private enum class MapFieldTool(
     POLYGON("Crear polígono", "Toque tres o más vértices para dibujar el polígono.", "⬡"),
     DIVIDE("Dividir polígono", "Seleccione un polígono existente o márquelo por puntos; la división requiere un polígono cerrado.", "▭┆"),
     DIVIDE_LINE("Línea de división", "Toque dos puntos para definir la línea de corte.", "┆"),
-    RECTANGLE("Rectángulo / cuadrado", "Toque dos esquinas opuestas.", "▭"),
+    RECTANGLE("Rectángulo / cuadrado", "Marque dos puntos para el ancho y un tercer punto para definir el largo.", "▭"),
     CIRCLE("Círculo", "Toque el centro; luego indique radio o diámetro.", "○"),
     PARALLEL("Línea paralela", "Seleccione una línea guardada y luego indique la separación.", "∥")
 }
@@ -2292,7 +2383,7 @@ private fun renderFieldTool(
                 map.addPolyline(PolylineOptions().addAll(points).width(4f))
             }
             if (points.size >= 3) {
-                map.addPolygon(PolygonOptions().addAll(points))
+                drawTransparentPolygon(map, points)
                 val area = polygonAreaMeters2(points)
                 return if (area >= 10000.0) {
                     "Área: %.2f m² (%.4f ha)".format(area, area / 10000.0)
@@ -2320,7 +2411,7 @@ private fun renderFieldTool(
         MapFieldTool.POLYGON -> {
             points.forEach { map.addMarker(MarkerOptions().position(it)) }
             if (points.size >= 3) {
-                map.addPolygon(PolygonOptions().addAll(points))
+                drawTransparentPolygon(map, points)
                 val perimeter = polylineDistanceMeters(points + points.first())
                 val area = polygonAreaMeters2(points)
                 return "Polígono: área %.2f m² • perímetro %.2f m".format(area, perimeter)
@@ -2355,33 +2446,36 @@ private fun renderFieldTool(
         MapFieldTool.RECTANGLE -> {
             points.forEach { map.addMarker(MarkerOptions().position(it)) }
             if (points.size >= 2) {
-                val a = points[0]
-                val b = points[1]
-                val rect = listOf(
-                    LatLng(a.latitude, a.longitude),
-                    LatLng(a.latitude, b.longitude),
-                    LatLng(b.latitude, b.longitude),
-                    LatLng(b.latitude, a.longitude)
+                map.addPolyline(PolylineOptions().addAll(points.take(2)).width(4f))
+                val width = haversineMeters(points[0], points[1])
+                if (points.size == 2) {
+                    return "Ancho: %.2f m • Marque el tercer punto para definir el largo.".format(width)
+                }
+                val rect = rectangleFromControlPoints(points)
+                drawTransparentPolygon(map, rect)
+                val length = rectangleLengthMeters(points)
+                return "Rectángulo: ancho %.2f m • largo %.2f m • área %.2f m²".format(
+                    width,
+                    length,
+                    polygonAreaMeters2(rect)
                 )
-                map.addPolygon(PolygonOptions().addAll(rect))
-                return "Rectángulo: %.2f m²".format(polygonAreaMeters2(rect))
             }
-            return "Marque la esquina opuesta."
+            return "Marque el segundo punto para definir el ancho."
         }
 
         MapFieldTool.CIRCLE -> {
-            points.forEach { map.addMarker(MarkerOptions().position(it)) }
+            points.firstOrNull()?.let { map.addMarker(MarkerOptions().position(it)) }
             if (points.size >= 2) {
                 val center = points[0]
                 val radius = haversineMeters(center, points[1])
                 val circle = circlePolygon(center, radius, 64)
-                map.addPolygon(PolygonOptions().addAll(circle))
+                drawTransparentPolygon(map, circle)
                 return "Círculo: radio %.2f m • área %.2f m²".format(
                     radius,
                     PI * radius * radius
                 )
             }
-            return "Marque un punto sobre el borde."
+            return "Centro marcado. Indique radio o diámetro."
         }
 
         MapFieldTool.PARALLEL -> {
