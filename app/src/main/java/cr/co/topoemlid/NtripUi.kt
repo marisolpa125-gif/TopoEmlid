@@ -16,7 +16,10 @@ import kotlinx.coroutines.withContext
 @Composable
 fun NtripProfilesScreen(
     profiles: List<NtripProfile>,
-    onProfilesChanged: (List<NtripProfile>) -> Unit
+    onProfilesChanged: (List<NtripProfile>) -> Unit,
+    liveStatus: NtripLiveStatus,
+    onConnect: (NtripProfile) -> Unit,
+    onDisconnect: () -> Unit
 ) {
     var editing by remember { mutableStateOf<NtripProfile?>(null) }
     var creating by remember { mutableStateOf(false) }
@@ -91,6 +94,30 @@ fun NtripProfilesScreen(
 
         Spacer(Modifier.height(12.dp))
 
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Estado NTRIP en vivo", fontWeight = FontWeight.Bold)
+                Text(
+                    when {
+                        liveStatus.connecting -> "Conectando al caster…"
+                        liveStatus.connected -> "Conectado • recibiendo RTCM"
+                        else -> "Desconectado"
+                    }
+                )
+                if (liveStatus.profileName != null) Text("Perfil: ${liveStatus.profileName}", style = MaterialTheme.typography.bodySmall)
+                if (liveStatus.mountPoint != null) Text("Mountpoint: ${liveStatus.mountPoint}", style = MaterialTheme.typography.bodySmall)
+                if (liveStatus.bytesReceived > 0L) Text("RTCM recibido: ${liveStatus.bytesReceived} bytes", style = MaterialTheme.typography.bodySmall)
+                if (liveStatus.bytesForwarded > 0L) Text("RTCM enviado al receptor: ${liveStatus.bytesForwarded} bytes", style = MaterialTheme.typography.bodySmall)
+                liveStatus.lastError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                if (liveStatus.connected || liveStatus.connecting) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = onDisconnect) { Text("Desconectar NTRIP") }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
         if (profiles.isEmpty()) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp)) {
@@ -110,6 +137,10 @@ fun NtripProfilesScreen(
 
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { onConnect(p) },
+                            enabled = !liveStatus.connecting && !(liveStatus.connected && liveStatus.profileName == p.name)
+                        ) { Text(if (liveStatus.connected && liveStatus.profileName == p.name) "Conectado" else "Conectar") }
                         OutlinedButton(onClick = { editing = p }) { Text("Editar") }
                         OutlinedButton(onClick = { deleteCandidate = p }) { Text("Eliminar") }
                     }
