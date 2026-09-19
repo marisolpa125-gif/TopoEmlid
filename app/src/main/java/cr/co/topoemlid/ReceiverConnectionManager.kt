@@ -28,6 +28,8 @@ class ReceiverConnectionManager(context: Context) {
     private var gatt: BluetoothGatt? = null
     private var worker: Thread? = null
     private var autoFallbackProfile: ReceiverProfile? = null
+    private var requestedProfileId: String? = null
+    private var floatStreak = 0
     private val usedSatelliteIds = linkedSetOf<String>()
 
     var status by mutableStateOf(GnssStatus())
@@ -42,6 +44,7 @@ class ReceiverConnectionManager(context: Context) {
     @SuppressLint("MissingPermission")
     fun connect(profile: ReceiverProfile) {
         disconnect()
+        requestedProfileId = profile.id
         connecting = true
         lastError = null
 
@@ -256,11 +259,28 @@ class ReceiverConnectionManager(context: Context) {
 
                     NmeaParser.parseGga(line)?.let { gga ->
                         val solution = when (gga.fixQuality) {
-                            4 -> "FIX"
-                            5 -> "FLOAT"
-                            2 -> "DGPS"
-                            1 -> "SINGLE"
-                            else -> "SIN FIX"
+                            4 -> {
+                                floatStreak = 0
+                                "FIX"
+                            }
+                            5 -> {
+                                floatStreak += 1
+                                // Avoid a visible FIX/FLOAT flicker caused by one or two
+                                // transient GGA samples. A sustained FLOAT still appears.
+                                if (status.solution == "FIX" && floatStreak < 4) "FIX" else "FLOAT"
+                            }
+                            2 -> {
+                                floatStreak = 0
+                                "DGPS"
+                            }
+                            1 -> {
+                                floatStreak = 0
+                                "SINGLE"
+                            }
+                            else -> {
+                                floatStreak = 0
+                                "SIN FIX"
+                            }
                         }
                         postStatus(
                             status.copy(
@@ -353,6 +373,27 @@ class ReceiverConnectionManager(context: Context) {
                     runCatching { mine.close() }
                     if (socket === mine) socket = null
                 }
+
+                val shouldReconnect =
+                    requestedProfileId == profile.id &&
+                    !Thread.currentThread().isInterrupted
+
+                if (shouldReconnect) {
+                    mainHandler.post {
+                        connecting = true
+                        status = status.copy(
+                            connected = false,
+                            receiverName = profile.name,
+                            connectionTransport = "Bluetooth / NMEA",
+                            solution = "RECONECTANDO"
+                        )
+                    }
+                    mainHandler.postDelayed({
+                        if (requestedProfileId == profile.id && socket == null) {
+                            connectNmea(profile)
+                        }
+                    }, 1200L)
+                }
             }
         }
     }
@@ -369,7 +410,9 @@ class ReceiverConnectionManager(context: Context) {
     }
 
     fun disconnect() {
+        requestedProfileId = null
         autoFallbackProfile = null
+        floatStreak = 0
         usedSatelliteIds.clear()
 
         val oldWorker = worker
