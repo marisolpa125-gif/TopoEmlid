@@ -391,21 +391,53 @@ fun SurveyScreen(
             }
 
             Surface(tonalElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    Modifier.fillMaxWidth().padding(8.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    Text("P: $pointNumber")
-                    Text("H: ${gnss.horizontalAccuracyM?.let { "%.3f".format(it) } ?: "—"}")
-                    Text("V: ${gnss.verticalAccuracyM?.let { "%.3f".format(it) } ?: "—"}")
-                    Text(if (gnss.connected) gnss.solution else "SIN RECEPTOR")
+                Column(Modifier.fillMaxWidth().padding(10.dp)) {
+                    Text("Datos rápidos de levantamiento", style = MaterialTheme.typography.titleSmall)
+
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = pointNumber,
+                            onValueChange = { pointNumber = it },
+                            label = { Text("Punto") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = antennaHeight,
+                            onValueChange = { antennaHeight = it },
+                            label = { Text("Altura (m)") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { code = it.uppercase() },
+                        label = { Text("Código") },
+                        placeholder = { Text("Ej. ASFALTO, CAÑO, EJE, POSTE") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("H: ${gnss.horizontalAccuracyM?.let { "%.3f".format(it) } ?: "—"}")
+                        Text("V: ${gnss.verticalAccuracyM?.let { "%.3f".format(it) } ?: "—"}")
+                        Text(if (gnss.connected) gnss.solution else "SIN RECEPTOR")
+                    }
                 }
             }
 
             Button(
                 onClick = { showConfigPanel = true },
                 modifier = Modifier.fillMaxWidth()
-            ) { Text("Configurar punto") }
+            ) { Text("Más opciones del punto") }
         }
     }
 
