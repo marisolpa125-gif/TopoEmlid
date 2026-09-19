@@ -1675,19 +1675,30 @@ private fun addSelectedBasemap(
     basemap: BasemapType,
     mapboxToken: String
 ) {
+    // Keep a reliable base underneath every external source. If Mapbox or a
+    // project WMS fails, the user must never be left with a blank map.
+    runCatching {
+        val fallbackSourceId = "basemap-fallback-source"
+        val fallbackLayerId = "basemap-fallback-layer"
+        val fallbackTiles = TileSet("2.2.0", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
+        style.addSource(RasterSource(fallbackSourceId, fallbackTiles, 256))
+        style.addLayer(
+            RasterLayer(fallbackLayerId, fallbackSourceId).withProperties(
+                PropertyFactory.rasterOpacity(1f)
+            )
+        )
+    }
+
+    if (basemap == BasemapType.BASIC || mapboxToken.isBlank()) return
+
     val tileUrl = when (basemap) {
-        BasemapType.BASIC ->
-            "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-
-        BasemapType.MAPBOX_STREETS -> {
-            if (mapboxToken.isBlank()) return
+        BasemapType.MAPBOX_STREETS ->
             "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}?access_token=$mapboxToken"
-        }
 
-        BasemapType.MAPBOX_SATELLITE -> {
-            if (mapboxToken.isBlank()) return
-            "https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg90?access_token=$mapboxToken"
-        }
+        BasemapType.MAPBOX_SATELLITE ->
+            "https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/256/{z}/{x}/{y}?access_token=$mapboxToken"
+
+        BasemapType.BASIC -> return
     }
 
     runCatching {
@@ -1751,6 +1762,8 @@ private fun buildWmsTileUrl(layer: LayerItem): String? {
     val encodedStyle = java.net.URLEncoder.encode(layer.styleName.orEmpty(), "UTF-8")
     val encodedFormat = java.net.URLEncoder.encode(layer.imageFormat, "UTF-8")
 
+    // MapLibre supplies tile bounds in Web Mercator. WMS services used as
+    // raster tiles therefore need an EPSG:3857-compatible request.
     return buildString {
         append(base)
         append(separator)
@@ -1769,6 +1782,7 @@ private fun buildWmsTileUrl(layer: LayerItem): String? {
         append("&bbox={bbox-epsg-3857}")
         append("&width=256")
         append("&height=256")
+        append("&tiled=true")
     }
 }
 
