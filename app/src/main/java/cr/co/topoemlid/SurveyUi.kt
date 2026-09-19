@@ -37,6 +37,8 @@ import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.RasterLayer
 import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.UUID
 import kotlin.math.roundToInt
 import kotlin.math.*
@@ -88,7 +90,11 @@ fun SurveyScreen(
     var divideFrontEdge by remember { mutableIntStateOf(0) }
     var activeMapTool by remember { mutableStateOf(MapFieldTool.NONE) }
     var toolPoints by remember { mutableStateOf<List<LatLng>>(emptyList()) }
-    var committedGeometries by remember(project?.id) { mutableStateOf<List<CommittedGeometry>>(emptyList()) }
+    var committedGeometries by remember(project?.id) {
+        mutableStateOf(project?.id?.let { loadCommittedGeometries(context, it) } ?: emptyList())
+    }
+    var selectedGeometryIndex by remember(project?.id) { mutableStateOf<Int?>(null) }
+    var editingOriginalGeometry by remember(project?.id) { mutableStateOf<CommittedGeometry?>(null) }
     var toolResult by remember { mutableStateOf<String?>(null) }
     var parallelOffsetText by remember { mutableStateOf("1.00") }
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
@@ -106,6 +112,11 @@ fun SurveyScreen(
 
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         pointPhoto = uri
+    }
+
+    fun persistGeometries(items: List<CommittedGeometry>) {
+        committedGeometries = items
+        project?.id?.let { saveCommittedGeometries(context, it, items) }
     }
 
     fun redrawCommitted(map: MapLibreMap?) {
@@ -188,8 +199,11 @@ fun SurveyScreen(
                 code = code.trim(),
                 antennaHeightM = antennaHeight.toDoubleOrNull() ?: p.antennaHeightM,
                 occupationSeconds = seconds.toIntOrNull()?.coerceIn(1, 600) ?: 5,
-                horizontalAccuracyM = gnss.horizontalAccuracyM,
+                latitude = gnss.latitude,
+                longitude = gnss.longitude,
+                ellipsoidalHeightM = gnss.ellipsoidalHeightM,
                 verticalAccuracyM = gnss.verticalAccuracyM,
+                horizontalAccuracyM = gnss.horizontalAccuracyM,
                 solution = gnss.solution,
                 satellites = gnss.satellites
             )
@@ -258,9 +272,45 @@ fun SurveyScreen(
                             }
 
                             map.addOnMapClickListener { latLng ->
+                                val hitIndex = findGeometryAt(latLng, committedGeometries)
+
                                 if (activeMapTool == MapFieldTool.NONE) {
-                                    false
+                                    if (hitIndex != null) {
+                                        selectedGeometryIndex = hitIndex
+                                        toolResult = null
+                                        true
+                                    } else {
+                                        selectedGeometryIndex = null
+                                        false
+                                    }
+                                } else if (
+                                    hitIndex != null &&
+                                    (activeMapTool == MapFieldTool.AREA ||
+                                     activeMapTool == MapFieldTool.DISTANCE ||
+                                     activeMapTool == MapFieldTool.PERIMETER)
+                                ) {
+                                    val geometry = committedGeometries[hitIndex]
+                                    val acceptsSelection = when (activeMapTool) {
+                                        MapFieldTool.AREA -> geometrySupportsArea(geometry)
+                                        MapFieldTool.DISTANCE -> geometrySupportsDistance(geometry)
+                                        MapFieldTool.PERIMETER -> geometrySupportsArea(geometry)
+                                        else -> false
+                                    }
+                                    if (acceptsSelection) {
+                                        selectedGeometryIndex = hitIndex
+                                        toolResult = when (activeMapTool) {
+                                            MapFieldTool.AREA -> areaText(geometry)
+                                            MapFieldTool.DISTANCE -> distanceText(geometry)
+                                            MapFieldTool.PERIMETER -> perimeterText(geometry)
+                                            else -> null
+                                        }
+                                        activeMapTool = MapFieldTool.NONE
+                                        true
+                                    } else {
+                                        false
+                                    }
                                 } else {
+                                    selectedGeometryIndex = null
                                     val updated = when (activeMapTool) {
                                         MapFieldTool.POINT -> listOf(latLng)
                                         MapFieldTool.RECTANGLE, MapFieldTool.CIRCLE ->
@@ -426,6 +476,79 @@ fun SurveyScreen(
                 .padding(horizontal = 12.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            selectedGeometryIndex?.let { index ->
+                committedGeometries.getOrNull(index)?.let { geometry ->
+                    Surface(tonalElevation = 5.dp, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(8.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "Seleccionado: ${geometry.tool.label}",
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                                TextButton(onClick = { selectedGeometryIndex = null }) { Text("Cerrar") }
+                            }
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                if (geometrySupportsDistance(geometry)) {
+                                    OutlinedButton(
+                                        onClick = { toolResult = distanceText(geometry) },
+                                        modifier = Modifier.weight(1f),
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                    ) { Text(if (geometrySupportsArea(geometry)) "Perímetro" else "Distancia") }
+                                }
+                                if (geometrySupportsArea(geometry)) {
+                                    OutlinedButton(
+                                        onClick = { toolResult = areaText(geometry) },
+                                        modifier = Modifier.weight(1f),
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                    ) { Text("Área") }
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        editingOriginalGeometry = geometry
+                                        val without = committedGeometries.filterIndexed { i, _ -> i != index }
+                                        persistGeometries(without)
+                                        selectedGeometryIndex = null
+                                        activeMapTool = geometry.tool
+                                        toolPoints = geometry.points
+                                        parallelOffsetText = geometry.parallelOffsetM.toString()
+                                        toolResult = "Editando ${geometry.tool.label}. Puede agregar puntos, usar ↶ para quitar el último, Cancelar o Listo."
+                                        mapRef?.clear()
+                                        redrawCommitted(mapRef)
+                                        mapRef?.let {
+                                            drawActiveGeometry(it, activeMapTool, toolPoints, geometry.parallelOffsetM)
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Editar") }
+                                Button(
+                                    onClick = {
+                                        persistGeometries(committedGeometries.filterIndexed { i, _ -> i != index })
+                                        selectedGeometryIndex = null
+                                        toolResult = "Elemento eliminado."
+                                        mapRef?.clear()
+                                        redrawCommitted(mapRef)
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Eliminar") }
+                            }
+                        }
+                    }
+                }
+            }
+
             toolResult?.let { result ->
                 Surface(tonalElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(8.dp)) {
@@ -462,6 +585,10 @@ fun SurveyScreen(
                                     ) { Text("↶") }
                                     OutlinedButton(
                                         onClick = {
+                                            editingOriginalGeometry?.let { original ->
+                                                persistGeometries(committedGeometries + original)
+                                            }
+                                            editingOriginalGeometry = null
                                             toolPoints = emptyList()
                                             toolResult = null
                                             activeMapTool = MapFieldTool.NONE
@@ -473,13 +600,20 @@ fun SurveyScreen(
                                     Button(
                                         onClick = {
                                             if (toolPoints.isNotEmpty()) {
-                                                committedGeometries = committedGeometries + CommittedGeometry(
+                                                val savedGeometry = CommittedGeometry(
+                                                    id = editingOriginalGeometry?.id ?: UUID.randomUUID().toString(),
                                                     tool = activeMapTool,
                                                     points = toolPoints,
                                                     parallelOffsetM = parallelOffsetText.toDoubleOrNull() ?: 1.0
                                                 )
+                                                persistGeometries(committedGeometries + savedGeometry)
+                                                editingOriginalGeometry = null
                                                 toolPoints = emptyList()
-                                                toolResult = "Elemento guardado temporalmente en el mapa."
+                                                toolResult = if (project != null) {
+                                                    "Elemento guardado en el proyecto."
+                                                } else {
+                                                    "Elemento guardado temporalmente en el mapa."
+                                                }
                                                 activeMapTool = MapFieldTool.NONE
                                                 mapRef?.clear()
                                                 redrawCommitted(mapRef)
@@ -607,9 +741,20 @@ fun SurveyScreen(
                                         showToolsPanel = false
                                         showDividePanel = true
                                     } else {
+                                        editingOriginalGeometry?.let { original ->
+                                            persistGeometries(committedGeometries + original)
+                                        }
+                                        editingOriginalGeometry = null
+                                        selectedGeometryIndex = null
                                         activeMapTool = tool
                                         toolPoints = emptyList()
-                                        toolResult = tool.instructions
+                                        toolResult = if (
+                                            tool == MapFieldTool.AREA ||
+                                            tool == MapFieldTool.DISTANCE ||
+                                            tool == MapFieldTool.PERIMETER
+                                        ) {
+                                            tool.instructions + " También puede tocar una figura ya dibujada."
+                                        } else tool.instructions
                                         mapRef?.clear()
                                         redrawCommitted(mapRef)
                                         showToolsPanel = false
@@ -1044,6 +1189,7 @@ private fun sanitizeWmsBaseUrl(raw: String): String {
 
 
 private data class CommittedGeometry(
+    val id: String = UUID.randomUUID().toString(),
     val tool: MapFieldTool,
     val points: List<LatLng>,
     val parallelOffsetM: Double
@@ -1064,7 +1210,7 @@ private fun drawActiveGeometry(
         MapFieldTool.LINE, MapFieldTool.DISTANCE -> if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points).width(4f))
         MapFieldTool.AREA, MapFieldTool.PERIMETER, MapFieldTool.POLYGON -> {
             if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points).width(4f))
-            if (points.size >= 3 && tool != MapFieldTool.LINE) map.addPolygon(PolygonOptions().addAll(points))
+            if (points.size >= 3 && tool != MapFieldTool.LINE) drawTransparentPolygon(map, points)
         }
         MapFieldTool.RECTANGLE -> if (points.size >= 2) {
             val a = points[0]; val b = points[1]
@@ -1074,11 +1220,11 @@ private fun drawActiveGeometry(
                 LatLng(b.latitude, b.longitude),
                 LatLng(b.latitude, a.longitude)
             )
-            map.addPolygon(PolygonOptions().addAll(rect))
+            drawTransparentPolygon(map, rect)
         }
         MapFieldTool.CIRCLE -> if (points.size >= 2) {
             val circle = circlePolygon(points[0], haversineMeters(points[0], points[1]), 64)
-            map.addPolygon(PolygonOptions().addAll(circle))
+            drawTransparentPolygon(map, circle)
         }
         MapFieldTool.PARALLEL -> if (points.size >= 2) {
             val base = points.take(2)
@@ -1088,6 +1234,182 @@ private fun drawActiveGeometry(
         MapFieldTool.DIVIDE_LINE -> if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points.take(2)).width(4f))
         MapFieldTool.DIVIDE, MapFieldTool.NONE -> Unit
     }
+}
+
+private fun drawTransparentPolygon(map: MapLibreMap, points: List<LatLng>) {
+    if (points.size < 3) return
+    map.addPolygon(
+        PolygonOptions()
+            .addAll(points)
+            .fillColor(android.graphics.Color.TRANSPARENT)
+            .strokeColor(android.graphics.Color.rgb(103, 58, 183))
+    )
+    map.addPolyline(
+        PolylineOptions()
+            .addAll(points + points.first())
+            .width(4f)
+            .color(android.graphics.Color.rgb(103, 58, 183))
+    )
+}
+
+private fun geometryPath(geometry: CommittedGeometry): List<LatLng> = when (geometry.tool) {
+    MapFieldTool.RECTANGLE -> if (geometry.points.size >= 2) {
+        val a = geometry.points[0]
+        val b = geometry.points[1]
+        listOf(
+            LatLng(a.latitude, a.longitude),
+            LatLng(a.latitude, b.longitude),
+            LatLng(b.latitude, b.longitude),
+            LatLng(b.latitude, a.longitude)
+        )
+    } else geometry.points
+    MapFieldTool.CIRCLE -> if (geometry.points.size >= 2) {
+        circlePolygon(
+            geometry.points[0],
+            haversineMeters(geometry.points[0], geometry.points[1]),
+            64
+        )
+    } else geometry.points
+    else -> geometry.points
+}
+
+private fun geometrySupportsArea(geometry: CommittedGeometry): Boolean =
+    geometry.tool == MapFieldTool.AREA ||
+    geometry.tool == MapFieldTool.POLYGON ||
+    geometry.tool == MapFieldTool.RECTANGLE ||
+    geometry.tool == MapFieldTool.CIRCLE
+
+private fun geometrySupportsDistance(geometry: CommittedGeometry): Boolean =
+    geometry.tool != MapFieldTool.POINT &&
+    geometry.tool != MapFieldTool.DIVIDE &&
+    geometry.tool != MapFieldTool.DIVIDE_LINE
+
+private fun areaText(geometry: CommittedGeometry): String {
+    val area = polygonAreaMeters2(geometryPath(geometry))
+    return if (area >= 10000.0) {
+        "Área: %.2f m² (%.4f ha)".format(area, area / 10000.0)
+    } else {
+        "Área: %.2f m²".format(area)
+    }
+}
+
+private fun perimeterText(geometry: CommittedGeometry): String {
+    val path = geometryPath(geometry)
+    if (path.size < 2) return "Perímetro no disponible."
+    return "Perímetro: %.2f m".format(polylineDistanceMeters(path + path.first()))
+}
+
+private fun distanceText(geometry: CommittedGeometry): String {
+    return if (geometrySupportsArea(geometry)) {
+        perimeterText(geometry)
+    } else {
+        "Distancia: %.2f m".format(polylineDistanceMeters(geometryPath(geometry)))
+    }
+}
+
+private fun findGeometryAt(point: LatLng, geometries: List<CommittedGeometry>): Int? {
+    for (index in geometries.indices.reversed()) {
+        val geometry = geometries[index]
+        val path = geometryPath(geometry)
+        if (path.isEmpty()) continue
+        if (geometrySupportsArea(geometry) && path.size >= 3 && pointInPolygon(point, path)) {
+            return index
+        }
+        val closed = if (geometrySupportsArea(geometry) && path.size >= 3) path + path.first() else path
+        if (distanceToPathMeters(point, closed) <= 4.0) return index
+    }
+    return null
+}
+
+private fun pointInPolygon(point: LatLng, polygon: List<LatLng>): Boolean {
+    var inside = false
+    var j = polygon.lastIndex
+    for (i in polygon.indices) {
+        val xi = polygon[i].longitude
+        val yi = polygon[i].latitude
+        val xj = polygon[j].longitude
+        val yj = polygon[j].latitude
+        val intersects = ((yi > point.latitude) != (yj > point.latitude)) &&
+            (point.longitude < (xj - xi) * (point.latitude - yi) / ((yj - yi).takeIf { abs(it) > 1e-12 } ?: 1e-12) + xi)
+        if (intersects) inside = !inside
+        j = i
+    }
+    return inside
+}
+
+private fun distanceToPathMeters(point: LatLng, path: List<LatLng>): Double {
+    if (path.isEmpty()) return Double.POSITIVE_INFINITY
+    if (path.size == 1) return haversineMeters(point, path[0])
+    val meanLat = Math.toRadians(point.latitude)
+    val r = 6371008.8
+    fun xy(p: LatLng): XY = XY(
+        r * Math.toRadians(p.longitude - point.longitude) * cos(meanLat),
+        r * Math.toRadians(p.latitude - point.latitude)
+    )
+    var best = Double.POSITIVE_INFINITY
+    for (i in 0 until path.lastIndex) {
+        val a = xy(path[i])
+        val b = xy(path[i + 1])
+        val dx = b.x - a.x
+        val dy = b.y - a.y
+        val denom = dx * dx + dy * dy
+        val t = if (denom <= 1e-12) 0.0 else (-(a.x * dx + a.y * dy) / denom).coerceIn(0.0, 1.0)
+        val px = a.x + t * dx
+        val py = a.y + t * dy
+        best = min(best, hypot(px, py))
+    }
+    return best
+}
+
+private fun loadCommittedGeometries(context: android.content.Context, projectId: String): List<CommittedGeometry> {
+    val raw = context.getSharedPreferences("survey_geometries", android.content.Context.MODE_PRIVATE)
+        .getString("geometries_$projectId", null) ?: return emptyList()
+    return runCatching {
+        val array = JSONArray(raw)
+        (0 until array.length()).mapNotNull { i ->
+            val o = array.getJSONObject(i)
+            val tool = runCatching { MapFieldTool.valueOf(o.getString("tool")) }.getOrNull()
+                ?: return@mapNotNull null
+            val pts = o.getJSONArray("points")
+            val points = (0 until pts.length()).map { j ->
+                val p = pts.getJSONObject(j)
+                LatLng(p.getDouble("lat"), p.getDouble("lon"))
+            }
+            CommittedGeometry(
+                id = o.optString("id", UUID.randomUUID().toString()),
+                tool = tool,
+                points = points,
+                parallelOffsetM = o.optDouble("parallelOffsetM", 1.0)
+            )
+        }
+    }.getOrDefault(emptyList())
+}
+
+private fun saveCommittedGeometries(
+    context: android.content.Context,
+    projectId: String,
+    geometries: List<CommittedGeometry>
+) {
+    val array = JSONArray()
+    geometries.forEach { geometry ->
+        array.put(JSONObject().apply {
+            put("id", geometry.id)
+            put("tool", geometry.tool.name)
+            put("parallelOffsetM", geometry.parallelOffsetM)
+            put("points", JSONArray().apply {
+                geometry.points.forEach { point ->
+                    put(JSONObject().apply {
+                        put("lat", point.latitude)
+                        put("lon", point.longitude)
+                    })
+                }
+            })
+        })
+    }
+    context.getSharedPreferences("survey_geometries", android.content.Context.MODE_PRIVATE)
+        .edit()
+        .putString("geometries_$projectId", array.toString())
+        .apply()
 }
 
 private enum class DivideMode(val label: String, val help: String) {
@@ -1199,7 +1521,7 @@ private fun renderDivisionPolygons(map: MapLibreMap, pieces: List<List<LatLng>>)
     map.clear()
     pieces.forEach { p ->
         if (p.size >= 3) {
-            map.addPolygon(PolygonOptions().addAll(p))
+            drawTransparentPolygon(map, p)
             map.addPolyline(PolylineOptions().addAll(p + p.first()).width(4f))
         }
     }
