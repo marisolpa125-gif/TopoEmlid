@@ -371,7 +371,7 @@ fun SurveyScreen(
                                     committedGeometries.forEach { drawCommittedGeometry(map, it) }
                                     true
                                 }
-                            }}
+                            }
                         }
                     }
                 }
