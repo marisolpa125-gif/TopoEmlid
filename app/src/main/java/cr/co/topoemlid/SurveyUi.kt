@@ -30,6 +30,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.annotations.IconFactory
 import org.maplibre.android.annotations.MarkerOptions
@@ -53,6 +55,8 @@ import org.locationtech.jts.geom.GeometryFactory
 import org.locationtech.jts.geom.Polygon
 import org.locationtech.jts.geom.TopologyException
 import java.net.URI
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.UUID
 import kotlin.math.roundToInt
 import kotlin.math.*
@@ -139,6 +143,9 @@ fun SurveyScreen(
     var secondsRemaining by remember { mutableIntStateOf(0) }
     var lastMessage by remember { mutableStateOf<String?>(null) }
     var pendingQuickMeasureCode by remember { mutableStateOf<String?>(null) }
+    var wmsDiagnostic by remember { mutableStateOf<String?>(null) }
+    var wmsTestingId by remember { mutableStateOf<String?>(null) }
+    val surveyScope = rememberCoroutineScope()
 
     var dragOffset by remember { mutableStateOf(Offset(40f, 300f)) }
     var parentSize by remember { mutableStateOf(IntSize.Zero) }
@@ -607,68 +614,97 @@ fun SurveyScreen(
                     )
                 } else {
                     androidx.compose.foundation.Canvas(
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(34.dp)
                     ) {
                         val white = Color.White
-                        val sw = 2.2.dp.toPx()
+                        val sw = 2.0.dp.toPx()
 
-                        // Silueta del topógrafo.
-                        drawCircle(
+                        val poleX = size.width * 0.72f
+                        drawOval(
                             color = white,
-                            radius = size.width * 0.095f,
-                            center = Offset(size.width * 0.33f, size.height * 0.22f)
+                            topLeft = Offset(size.width * 0.61f, size.height * 0.08f),
+                            size = androidx.compose.ui.geometry.Size(size.width * 0.22f, size.height * 0.12f)
                         )
                         drawLine(
                             color = white,
-                            start = Offset(size.width * 0.33f, size.height * 0.32f),
-                            end = Offset(size.width * 0.33f, size.height * 0.62f),
+                            start = Offset(size.width * 0.59f, size.height * 0.22f),
+                            end = Offset(size.width * 0.85f, size.height * 0.22f),
                             strokeWidth = sw
                         )
-                        drawLine(
-                            color = white,
-                            start = Offset(size.width * 0.33f, size.height * 0.40f),
-                            end = Offset(size.width * 0.54f, size.height * 0.49f),
-                            strokeWidth = sw
-                        )
-                        drawLine(
-                            color = white,
-                            start = Offset(size.width * 0.33f, size.height * 0.62f),
-                            end = Offset(size.width * 0.20f, size.height * 0.91f),
-                            strokeWidth = sw
-                        )
-                        drawLine(
-                            color = white,
-                            start = Offset(size.width * 0.33f, size.height * 0.62f),
-                            end = Offset(size.width * 0.46f, size.height * 0.91f),
-                            strokeWidth = sw
-                        )
-
-                        // Bastón con antena RTK.
-                        val poleX = size.width * 0.70f
                         drawLine(
                             color = white,
                             start = Offset(poleX, size.height * 0.20f),
-                            end = Offset(poleX, size.height * 0.92f),
+                            end = Offset(poleX, size.height * 0.95f),
+                            strokeWidth = sw
+                        )
+
+                        drawCircle(
+                            color = white,
+                            radius = size.width * 0.09f,
+                            center = Offset(size.width * 0.31f, size.height * 0.23f)
+                        )
+                        drawLine(
+                            color = white,
+                            start = Offset(size.width * 0.20f, size.height * 0.15f),
+                            end = Offset(size.width * 0.41f, size.height * 0.15f),
+                            strokeWidth = sw
+                        )
+
+                        val torso = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(size.width * 0.24f, size.height * 0.34f)
+                            lineTo(size.width * 0.40f, size.height * 0.34f)
+                            lineTo(size.width * 0.45f, size.height * 0.63f)
+                            lineTo(size.width * 0.20f, size.height * 0.63f)
+                            close()
+                        }
+                        drawPath(torso, white)
+
+                        drawLine(
+                            color = white,
+                            start = Offset(size.width * 0.39f, size.height * 0.40f),
+                            end = Offset(size.width * 0.58f, size.height * 0.50f),
+                            strokeWidth = sw * 1.5f
+                        )
+                        drawLine(
+                            color = white,
+                            start = Offset(size.width * 0.58f, size.height * 0.50f),
+                            end = Offset(poleX, size.height * 0.50f),
+                            strokeWidth = sw * 1.5f
+                        )
+                        drawCircle(
+                            color = white,
+                            radius = size.width * 0.035f,
+                            center = Offset(poleX, size.height * 0.50f)
+                        )
+
+                        drawLine(
+                            color = white,
+                            start = Offset(size.width * 0.27f, size.height * 0.62f),
+                            end = Offset(size.width * 0.17f, size.height * 0.92f),
+                            strokeWidth = sw * 1.6f
+                        )
+                        drawLine(
+                            color = white,
+                            start = Offset(size.width * 0.37f, size.height * 0.62f),
+                            end = Offset(size.width * 0.48f, size.height * 0.92f),
+                            strokeWidth = sw * 1.6f
+                        )
+                        drawLine(
+                            color = white,
+                            start = Offset(size.width * 0.13f, size.height * 0.92f),
+                            end = Offset(size.width * 0.22f, size.height * 0.92f),
+                            strokeWidth = sw
+                        )
+                        drawLine(
+                            color = white,
+                            start = Offset(size.width * 0.44f, size.height * 0.92f),
+                            end = Offset(size.width * 0.53f, size.height * 0.92f),
                             strokeWidth = sw
                         )
                         drawCircle(
                             color = white,
-                            radius = size.width * 0.105f,
-                            center = Offset(poleX, size.height * 0.14f)
-                        )
-                        drawLine(
-                            color = white,
-                            start = Offset(poleX - size.width * 0.13f, size.height * 0.24f),
-                            end = Offset(poleX + size.width * 0.13f, size.height * 0.24f),
-                            strokeWidth = sw
-                        )
-
-                        // Brazo/mano sujetando el bastón.
-                        drawLine(
-                            color = white,
-                            start = Offset(size.width * 0.54f, size.height * 0.49f),
-                            end = Offset(poleX, size.height * 0.49f),
-                            strokeWidth = sw
+                            radius = size.width * 0.025f,
+                            center = Offset(poleX, size.height * 0.95f)
                         )
                     }
                 }
@@ -1725,8 +1761,56 @@ fun SurveyScreen(
                                         }
                                     )
                                 }
+
+                                if (layer.type == LayerType.WMS) {
+                                    Spacer(Modifier.height(6.dp))
+                                    OutlinedButton(
+                                        onClick = {
+                                            val map = mapRef
+                                            if (map == null) {
+                                                wmsDiagnostic = "El mapa aún no está listo."
+                                            } else {
+                                                val bounds = map.projection.visibleRegion.latLngBounds
+                                                val testUrl = buildViewportWmsUrl(
+                                                    layer,
+                                                    bounds.latitudeNorth.coerceIn(-89.0, 89.0),
+                                                    bounds.longitudeEast,
+                                                    bounds.latitudeSouth.coerceIn(-89.0, 89.0),
+                                                    bounds.longitudeWest
+                                                )
+                                                if (testUrl == null) {
+                                                    wmsDiagnostic = "Falta URL o nombre técnico de la capa WMS."
+                                                } else {
+                                                    wmsTestingId = layer.id
+                                                    surveyScope.launch {
+                                                        wmsDiagnostic = withContext(Dispatchers.IO) {
+                                                            probeWmsUrl(testUrl)
+                                                        }
+                                                        wmsTestingId = null
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(if (wmsTestingId == layer.id) "Probando WMS…" else "Probar WMS")
+                                    }
+                                }
                             }
                         }
+                }
+
+                wmsDiagnostic?.let {
+                    Spacer(Modifier.height(10.dp))
+                    Card(Modifier.fillMaxWidth()) {
+                        Text(
+                            it,
+                            modifier = Modifier.padding(10.dp),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -1950,6 +2034,34 @@ private fun incrementPointNumber(current: String): String {
 }
 
 
+private fun probeWmsUrl(url: String): String {
+    return try {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 10000
+            readTimeout = 10000
+            requestMethod = "GET"
+            setRequestProperty("User-Agent", "TopoEmlid/0.3")
+            setRequestProperty("Accept", "image/png,image/jpeg,*/*")
+        }
+        val code = conn.responseCode
+        val type = conn.contentType ?: "sin Content-Type"
+        val length = conn.contentLengthLong
+        val message = when {
+            code in 200..299 && type.startsWith("image/") ->
+                "WMS responde correctamente: HTTP " + code + " • " + type + " • " +
+                    (if (length > 0) length.toString() + " bytes" else "tamaño desconocido") + "."
+            code in 200..299 ->
+                "WMS respondió HTTP " + code + ", pero devolvió " + type + " en vez de una imagen. Revise layer/CRS/versión."
+            else ->
+                "WMS devolvió HTTP " + code + " (" + (conn.responseMessage ?: "error") + ")."
+        }
+        conn.disconnect()
+        message
+    } catch (e: Exception) {
+        "Error al consultar WMS: " + (e.message ?: e.javaClass.simpleName)
+    }
+}
+
 private fun addSelectedBasemap(
     style: Style,
     basemap: BasemapType,
@@ -1957,21 +2069,22 @@ private fun addSelectedBasemap(
 ) {
     if (basemap == BasemapType.NONE) return
 
-    // Keep a reliable base underneath every external source. If Mapbox or a
-    // project WMS fails, the user must never be left with a blank map.
-    runCatching {
-        val fallbackSourceId = "basemap-fallback-source"
-        val fallbackLayerId = "basemap-fallback-layer"
-        val fallbackTiles = TileSet("2.2.0", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
-        style.addSource(RasterSource(fallbackSourceId, fallbackTiles, 256))
-        style.addLayer(
-            RasterLayer(fallbackLayerId, fallbackSourceId).withProperties(
-                PropertyFactory.rasterOpacity(1f)
+    if (basemap == BasemapType.BASIC) {
+        runCatching {
+            val sourceId = "basemap-basic-source"
+            val layerId = "basemap-basic-layer"
+            val tiles = TileSet("2.2.0", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
+            style.addSource(RasterSource(sourceId, tiles, 256))
+            style.addLayer(
+                RasterLayer(layerId, sourceId).withProperties(
+                    PropertyFactory.rasterOpacity(1f)
+                )
             )
-        )
+        }
+        return
     }
 
-    if (basemap == BasemapType.BASIC || mapboxToken.isBlank()) return
+    if (mapboxToken.isBlank()) return
 
     val cleanToken = mapboxToken.trim()
     val tileUrl = when (basemap) {
