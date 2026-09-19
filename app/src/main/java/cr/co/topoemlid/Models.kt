@@ -34,6 +34,19 @@ data class GnssStatus(
     val antennaHeightM: Double = 2.0
 )
 
+data class NtripLiveStatus(
+    val connected: Boolean = false,
+    val connecting: Boolean = false,
+    val profileName: String? = null,
+    val caster: String? = null,
+    val mountPoint: String? = null,
+    val bytesReceived: Long = 0L,
+    val bytesForwarded: Long = 0L,
+    val lastDataAt: Long? = null,
+    val startedAt: Long? = null,
+    val lastError: String? = null
+)
+
 data class NtripProfile(
     val id: String,
     val name: String,
