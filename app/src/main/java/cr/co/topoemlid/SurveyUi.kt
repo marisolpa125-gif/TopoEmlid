@@ -294,17 +294,25 @@ fun SurveyScreen(
                                         MapFieldTool.AREA -> geometrySupportsArea(geometry)
                                         MapFieldTool.DISTANCE -> geometrySupportsDistance(geometry)
                                         MapFieldTool.PERIMETER -> geometrySupportsArea(geometry)
+                                        MapFieldTool.DIVIDE -> geometrySupportsArea(geometry)
                                         else -> false
                                     }
                                     if (acceptsSelection) {
                                         selectedGeometryIndex = hitIndex
-                                        toolResult = when (activeMapTool) {
-                                            MapFieldTool.AREA -> areaText(geometry)
-                                            MapFieldTool.DISTANCE -> distanceText(geometry)
-                                            MapFieldTool.PERIMETER -> perimeterText(geometry)
-                                            else -> null
+                                        if (activeMapTool == MapFieldTool.DIVIDE) {
+                                            toolPoints = geometryPath(geometry)
+                                            activeMapTool = MapFieldTool.NONE
+                                            toolResult = "Polígono seleccionado para dividir: " + areaText(geometry)
+                                            showDividePanel = true
+                                        } else {
+                                            toolResult = when (activeMapTool) {
+                                                MapFieldTool.AREA -> areaText(geometry)
+                                                MapFieldTool.DISTANCE -> distanceText(geometry)
+                                                MapFieldTool.PERIMETER -> perimeterText(geometry)
+                                                else -> null
+                                            }
+                                            activeMapTool = MapFieldTool.NONE
                                         }
-                                        activeMapTool = MapFieldTool.NONE
                                         true
                                     } else {
                                         false
@@ -599,7 +607,15 @@ fun SurveyScreen(
                                     ) { Text("Cancelar") }
                                     Button(
                                         onClick = {
-                                            if (toolPoints.isNotEmpty()) {
+                                            if (activeMapTool == MapFieldTool.DIVIDE) {
+                                                if (toolPoints.size >= 3) {
+                                                    activeMapTool = MapFieldTool.NONE
+                                                    toolResult = "Polígono fijado para dividir: %.2f m²".format(polygonAreaMeters2(toolPoints))
+                                                    showDividePanel = true
+                                                } else {
+                                                    toolResult = "Para dividir se necesita un polígono con al menos 3 vértices."
+                                                }
+                                            } else if (toolPoints.isNotEmpty()) {
                                                 val savedGeometry = CommittedGeometry(
                                                     id = editingOriginalGeometry?.id ?: UUID.randomUUID().toString(),
                                                     tool = activeMapTool,
@@ -738,8 +754,17 @@ fun SurveyScreen(
                                 .heightIn(min = 82.dp)
                                 .clickable {
                                     if (tool == MapFieldTool.DIVIDE) {
+                                        editingOriginalGeometry?.let { original ->
+                                            persistGeometries(committedGeometries + original)
+                                        }
+                                        editingOriginalGeometry = null
+                                        selectedGeometryIndex = null
+                                        activeMapTool = MapFieldTool.DIVIDE
+                                        toolPoints = emptyList()
+                                        toolResult = "Seleccione un polígono existente o marque sus vértices. Para dividir se necesita un polígono cerrado. Cuando termine de marcarlo, pulse Listo."
+                                        mapRef?.clear()
+                                        redrawCommitted(mapRef)
                                         showToolsPanel = false
-                                        showDividePanel = true
                                     } else {
                                         editingOriginalGeometry?.let { original ->
                                             persistGeometries(committedGeometries + original)
@@ -1232,7 +1257,11 @@ private fun drawActiveGeometry(
             map.addPolyline(PolylineOptions().addAll(parallelLine(base[0], base[1], parallelOffsetM)).width(4f))
         }
         MapFieldTool.DIVIDE_LINE -> if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points.take(2)).width(4f))
-        MapFieldTool.DIVIDE, MapFieldTool.NONE -> Unit
+        MapFieldTool.DIVIDE -> {
+            if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points).width(4f))
+            if (points.size >= 3) drawTransparentPolygon(map, points)
+        }
+        MapFieldTool.NONE -> Unit
     }
 }
 
@@ -1544,9 +1573,9 @@ private enum class MapFieldTool(
     LINE("Crear línea", "Toque varios puntos para crear la línea.", "╱"),
     DISTANCE("Medir distancia", "Toque dos o más puntos. Se mostrará la distancia acumulada.", "↔ m"),
     AREA("Medir área", "Toque tres o más puntos para formar el área.", "A²"),
-    PERIMETER("Medir perímetro", "Toque tres o más vértices del polígono.", "▱"),
+    PERIMETER("Medir perímetro", "Seleccione una figura cerrada existente o marque tres o más vértices.", "▱"),
     POLYGON("Crear polígono", "Toque tres o más vértices para dibujar el polígono.", "⬡"),
-    DIVIDE("Dividir polígono", "Divida por área igual, frente igual o por una línea de corte.", "▭┆"),
+    DIVIDE("Dividir polígono", "Seleccione un polígono existente o márquelo por puntos; la división requiere un polígono cerrado.", "▭┆"),
     DIVIDE_LINE("Línea de división", "Toque dos puntos para definir la línea de corte.", "┆"),
     RECTANGLE("Rectángulo / cuadrado", "Toque dos esquinas opuestas.", "▭"),
     CIRCLE("Círculo", "Toque el centro y luego un punto del borde.", "○"),
@@ -1632,7 +1661,17 @@ private fun renderFieldTool(
             return "Marque al menos 3 vértices."
         }
 
-        MapFieldTool.DIVIDE -> return "Abra Dividir polígono para elegir el método."
+        MapFieldTool.DIVIDE -> {
+            points.forEach { map.addMarker(MarkerOptions().position(it)) }
+            if (points.size >= 2) {
+                map.addPolyline(PolylineOptions().addAll(points).width(4f))
+            }
+            if (points.size >= 3) {
+                drawTransparentPolygon(map, points)
+                return "Polígono para dividir: %.2f m² • Pulse Listo para fijarlo.".format(polygonAreaMeters2(points))
+            }
+            return "Marque al menos 3 vértices del polígono que desea dividir."
+        }
 
         MapFieldTool.DIVIDE_LINE -> {
             points.forEach { map.addMarker(MarkerOptions().position(it)) }
