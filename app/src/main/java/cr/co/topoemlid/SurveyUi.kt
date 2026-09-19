@@ -2,10 +2,13 @@ package cr.co.topoemlid
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -59,6 +62,7 @@ import java.net.URI
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 import kotlin.math.*
 
@@ -2194,11 +2198,12 @@ private fun addProjectRasterLayers(
 }
 
 
+private val wmsLastSuccessfulUrl = ConcurrentHashMap<String, String>()
+
 private fun refreshViewportWmsLayers(
     map: MapLibreMap,
     layers: List<LayerItem>
 ) {
-    val style = map.style ?: return
     val bounds = runCatching { map.projection.visibleRegion.latLngBounds }.getOrNull() ?: return
 
     val north = bounds.latitudeNorth.coerceIn(-89.0, 89.0)
@@ -2220,29 +2225,86 @@ private fun refreshViewportWmsLayers(
         .sortedBy { it.order }
         .forEach { layer ->
             val uri = buildViewportWmsUrl(layer, north, east, south, west) ?: return@forEach
-            val sourceId = "project-wms-image-source-${layer.id}"
-            val layerId = "project-wms-image-layer-${layer.id}"
+            if (wmsLastSuccessfulUrl[layer.id] == uri) return@forEach
 
-            val existing = runCatching {
-                style.getSourceAs<ImageSource>(sourceId)
-            }.getOrNull()
+            Thread {
+                val bitmap = downloadWmsBitmapWithRetry(uri, layer.url.orEmpty())
+                if (bitmap != null) {
+                    Handler(Looper.getMainLooper()).post {
+                        val style = map.style ?: return@post
+                        val sourceId = "project-wms-image-source-${layer.id}"
+                        val layerId = "project-wms-image-layer-${layer.id}"
 
-            if (existing != null) {
-                runCatching {
-                    existing.setCoordinates(quad)
-                    existing.setUri(uri)
+                        val existing = runCatching {
+                            style.getSourceAs<ImageSource>(sourceId)
+                        }.getOrNull()
+
+                        if (existing != null) {
+                            runCatching {
+                                existing.setCoordinates(quad)
+                                existing.setImage(bitmap)
+                                style.getLayerAs<RasterLayer>(layerId)?.setProperties(
+                                    PropertyFactory.rasterOpacity(layer.opacity)
+                                )
+                                wmsLastSuccessfulUrl[layer.id] = uri
+                            }
+                        } else {
+                            runCatching {
+                                style.addSource(ImageSource(sourceId, quad, bitmap))
+                                style.addLayer(
+                                    RasterLayer(layerId, sourceId).withProperties(
+                                        PropertyFactory.rasterOpacity(layer.opacity)
+                                    )
+                                )
+                                wmsLastSuccessfulUrl[layer.id] = uri
+                            }
+                        }
+                    }
+                }
+            }.start()
+        }
+}
+
+private fun downloadWmsBitmapWithRetry(url: String, serviceUrl: String): Bitmap? {
+    val attempts = if (serviceUrl.contains("siri.snitcr.go.cr", true)) 4 else 1
+
+    repeat(attempts) { attempt ->
+        try {
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 10000
+                readTimeout = 15000
+                requestMethod = "GET"
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "TopoEmlid/0.3")
+                setRequestProperty("Accept", "image/png,image/jpeg,*/*")
+            }
+
+            val finalUrl = conn.url.toString()
+            val code = conn.responseCode
+            val type = conn.contentType.orEmpty()
+
+            if (code in 200..299 &&
+                type.startsWith("image/", ignoreCase = true) &&
+                !finalUrl.contains("/Geoservicios/error", true)
+            ) {
+                conn.inputStream.use { input ->
+                    val bitmap = BitmapFactory.decodeStream(input)
+                    conn.disconnect()
+                    if (bitmap != null) return bitmap
                 }
             } else {
-                runCatching {
-                    style.addSource(ImageSource(sourceId, quad, URI.create(uri)))
-                    style.addLayer(
-                        RasterLayer(layerId, sourceId).withProperties(
-                            PropertyFactory.rasterOpacity(layer.opacity)
-                        )
-                    )
-                }
+                conn.disconnect()
             }
+        } catch (_: Exception) {
+            // SIRI is intermittent; retry below.
         }
+
+        if (attempt < attempts - 1) {
+            Thread.sleep(1500)
+        }
+    }
+
+    return null
 }
 
 private fun buildViewportWmsUrl(
@@ -2253,8 +2315,19 @@ private fun buildViewportWmsUrl(
     west: Double
 ): String? {
     val raw = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return null
-    val layerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val rawLayerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
     val base = sanitizeWmsBaseUrl(raw)
+    val siriRegistro = base.contains("siri.snitcr.go.cr", ignoreCase = true)
+    val layerName = if (siriRegistro) {
+        when (rawLayerName.lowercase().replace(" ", "").replace("_", "")) {
+            "zona1", "catastro" -> "catastro"
+            "zona2", "catastroaldia" -> "catastro_aldia"
+            "viaspublicas" -> "vias_publicas"
+            else -> rawLayerName
+        }
+    } else {
+        rawLayerName
+    }
 
     val separator = if (base.contains("?")) {
         if (base.endsWith("?") || base.endsWith("&")) "" else "&"
@@ -2280,6 +2353,37 @@ private fun buildViewportWmsUrl(
     }
 
     val configured = layer.crs.trim().uppercase()
+
+    if (siriRegistro) {
+        val bbox3857 = "%.3f,%.3f,%.3f,%.3f".format(
+            java.util.Locale.US,
+            mercatorX(west),
+            mercatorY(south),
+            mercatorX(east),
+            mercatorY(north)
+        )
+
+        return buildString {
+            append(base)
+            append(separator)
+            append("service=WMS")
+            append("&request=GetMap")
+            append("&version=1.1.1")
+            append("&layers=")
+            append(encodedLayer)
+            append("&styles=")
+            append(encodedStyle)
+            append("&format=")
+            append(encodedFormat)
+            append("&transparent=")
+            append(layer.transparent)
+            append("&srs=EPSG:3857")
+            append("&bbox=")
+            append(bbox3857)
+            append("&width=1024")
+            append("&height=1024")
+        }
+    }
 
     // The Registro/SNIT services are published as WMS 1.3.0 and support
     // WGS84 (EPSG:4326). In WMS 1.3.0 EPSG:4326 uses latitude,longitude
