@@ -92,6 +92,7 @@ fun SurveyScreen(
     var divideMode by remember { mutableStateOf(DivideMode.EQUAL_AREA) }
     var dividePartsText by remember { mutableStateOf("2") }
     var divideFrontEdge by remember { mutableIntStateOf(0) }
+    var divisionPreview by remember(project?.id) { mutableStateOf<List<List<LatLng>>>(emptyList()) }
     var activeMapTool by remember { mutableStateOf(MapFieldTool.NONE) }
     var toolPoints by remember { mutableStateOf<List<LatLng>>(emptyList()) }
     var committedGeometries by remember(project?.id) {
@@ -707,6 +708,92 @@ fun SurveyScreen(
                 }
             }
 
+            if (divisionPreview.isNotEmpty()) {
+                Surface(tonalElevation = 5.dp, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(8.dp)) {
+                        Text(
+                            "División en vista previa: ${divisionPreview.size} lotes",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Text(
+                            "Puede guardarla en el proyecto o crear puntos topográficos en todos los vértices.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    val newGeometries = divisionPreview.map { piece ->
+                                        CommittedGeometry(
+                                            tool = MapFieldTool.POLYGON,
+                                            points = piece,
+                                            parallelOffsetM = 0.0
+                                        )
+                                    }
+                                    persistGeometries(committedGeometries + newGeometries)
+                                    divisionPreview = emptyList()
+                                    toolPoints = emptyList()
+                                    selectedGeometryIndex = null
+                                    toolResult = "División guardada en el proyecto."
+                                    mapRef?.clear()
+                                    redrawCommitted(mapRef)
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Guardar división") }
+
+                            OutlinedButton(
+                                onClick = {
+                                    val p = project
+                                    if (p == null) {
+                                        toolResult = "Abra o cree un proyecto para guardar puntos."
+                                    } else {
+                                        val vertices = uniqueDivisionVertices(divisionPreview)
+                                        var next = nextPointNumber(savedPoints).toIntOrNull() ?: (savedPoints.size + 1)
+                                        val newPoints = vertices.map { vertex ->
+                                            SurveyPoint(
+                                                id = UUID.randomUUID().toString(),
+                                                projectId = p.id,
+                                                pointNumber = (next++).toString(),
+                                                description = "Vértice de división",
+                                                code = "DIV",
+                                                antennaHeightM = 0.0,
+                                                occupationSeconds = 0,
+                                                latitude = vertex.latitude,
+                                                longitude = vertex.longitude,
+                                                ellipsoidalHeightM = null,
+                                                horizontalAccuracyM = null,
+                                                verticalAccuracyM = null,
+                                                solution = "CALCULADO",
+                                                satellites = null
+                                            )
+                                        }
+                                        val updated = savedPoints + newPoints
+                                        savedPoints = updated
+                                        pointStore.save(p.id, updated)
+                                        pointNumber = nextPointNumber(updated)
+                                        toolResult = "${newPoints.size} puntos de vértice creados y guardados en el proyecto."
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Crear puntos") }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(
+                            onClick = {
+                                divisionPreview = emptyList()
+                                mapRef?.clear()
+                                redrawCommitted(mapRef)
+                                toolResult = "Vista previa de división descartada."
+                            },
+                            modifier = Modifier.align(Alignment.End)
+                        ) { Text("Descartar vista previa") }
+                    }
+                }
+            }
+
             lastMessage?.let { message ->
                 Surface(tonalElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
                     Text(message, modifier = Modifier.padding(10.dp))
@@ -1074,8 +1161,11 @@ fun SurveyScreen(
                                 activeMapTool = MapFieldTool.DIVIDE_LINE
                                 toolResult = "Trace dos puntos sobre el mapa para definir la línea de corte."
                             } else {
+                                divisionPreview = result
+                                map.clear()
+                                redrawCommitted(map)
                                 renderDivisionPolygons(map, result)
-                                toolResult = divisionSummary(divideMode.label, result)
+                                toolResult = divisionSummary(divideMode.label, result) + " • Use Guardar división para conservarla."
                             }
                         }
                         showDividePanel = false
@@ -1692,6 +1782,16 @@ private fun saveCommittedGeometries(
         .apply()
 }
 
+private fun uniqueDivisionVertices(pieces: List<List<LatLng>>, toleranceM: Double = 0.02): List<LatLng> {
+    val unique = mutableListOf<LatLng>()
+    pieces.flatten().forEach { candidate ->
+        if (unique.none { haversineMeters(it, candidate) <= toleranceM }) {
+            unique += candidate
+        }
+    }
+    return unique
+}
+
 private enum class DivideMode(val label: String, val help: String) {
     EQUAL_AREA("Áreas iguales", "Divide en 2 o más lotes con áreas aproximadamente iguales."),
     EQUAL_FRONT("Frentes iguales", "Seleccione el frente y divídalo en distancias iguales."),
@@ -1798,7 +1898,6 @@ private fun dividePolygonEqualFront(polygon: List<LatLng>, parts: Int, edge: Int
 }
 
 private fun renderDivisionPolygons(map: MapLibreMap, pieces: List<List<LatLng>>) {
-    map.clear()
     pieces.forEach { p ->
         if (p.size >= 3) {
             drawTransparentPolygon(map, p)
