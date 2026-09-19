@@ -71,7 +71,7 @@ fun SurveyScreen(
     val pointStore = remember(project?.id) { SurveyPointStore(context) }
     val layerStore = remember(project?.id) { LayerStore(context) }
     val basemapStore = remember(project?.id) { BasemapStore(context) }
-    val selectedBasemap = basemapStore.selected(project?.id)
+    var selectedBasemap by remember(project?.id) { mutableStateOf(basemapStore.selected(project?.id)) }
     val mapboxToken = basemapStore.mapboxToken()
     fun loadEffectiveLayers(): List<LayerItem> {
         val saved = project?.let { layerStore.load(it.id) }.orEmpty()
@@ -162,6 +162,15 @@ fun SurveyScreen(
     fun persistGeometries(items: List<CommittedGeometry>) {
         committedGeometries = items
         project?.id?.let { saveCommittedGeometries(context, it, items) }
+    }
+
+    fun persistVisibleLayers(updated: List<LayerItem>) {
+        projectLayers = updated
+        if (project != null) {
+            layerStore.save(project.id, updated)
+        } else {
+            layerStore.saveLibrary(updated)
+        }
     }
 
     fun redrawCommitted(map: MapLibreMap?) {
@@ -598,40 +607,68 @@ fun SurveyScreen(
                     )
                 } else {
                     androidx.compose.foundation.Canvas(
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(32.dp)
                     ) {
-                        val stroke = 2.4.dp.toPx()
-                        val centerX = size.width / 2f
-                        val domeY = size.height * 0.34f
-                        val domeR = size.width * 0.23f
+                        val white = Color.White
+                        val sw = 2.2.dp.toPx()
+
+                        // Silueta del topógrafo.
                         drawCircle(
-                            color = Color.White,
-                            radius = domeR,
-                            center = Offset(centerX, domeY)
+                            color = white,
+                            radius = size.width * 0.095f,
+                            center = Offset(size.width * 0.33f, size.height * 0.22f)
                         )
                         drawLine(
-                            color = Color.White,
-                            start = Offset(centerX, domeY + domeR),
-                            end = Offset(centerX, size.height * 0.76f),
-                            strokeWidth = stroke
+                            color = white,
+                            start = Offset(size.width * 0.33f, size.height * 0.32f),
+                            end = Offset(size.width * 0.33f, size.height * 0.62f),
+                            strokeWidth = sw
                         )
                         drawLine(
-                            color = Color.White,
-                            start = Offset(size.width * 0.28f, size.height * 0.78f),
-                            end = Offset(size.width * 0.72f, size.height * 0.78f),
-                            strokeWidth = stroke
+                            color = white,
+                            start = Offset(size.width * 0.33f, size.height * 0.40f),
+                            end = Offset(size.width * 0.54f, size.height * 0.49f),
+                            strokeWidth = sw
                         )
                         drawLine(
-                            color = Color.White,
-                            start = Offset(size.width * 0.38f, size.height * 0.90f),
-                            end = Offset(centerX, size.height * 0.78f),
-                            strokeWidth = stroke
+                            color = white,
+                            start = Offset(size.width * 0.33f, size.height * 0.62f),
+                            end = Offset(size.width * 0.20f, size.height * 0.91f),
+                            strokeWidth = sw
                         )
                         drawLine(
-                            color = Color.White,
-                            start = Offset(size.width * 0.62f, size.height * 0.90f),
-                            end = Offset(centerX, size.height * 0.78f),
-                            strokeWidth = stroke
+                            color = white,
+                            start = Offset(size.width * 0.33f, size.height * 0.62f),
+                            end = Offset(size.width * 0.46f, size.height * 0.91f),
+                            strokeWidth = sw
+                        )
+
+                        // Bastón con antena RTK.
+                        val poleX = size.width * 0.70f
+                        drawLine(
+                            color = white,
+                            start = Offset(poleX, size.height * 0.20f),
+                            end = Offset(poleX, size.height * 0.92f),
+                            strokeWidth = sw
+                        )
+                        drawCircle(
+                            color = white,
+                            radius = size.width * 0.105f,
+                            center = Offset(poleX, size.height * 0.14f)
+                        )
+                        drawLine(
+                            color = white,
+                            start = Offset(poleX - size.width * 0.13f, size.height * 0.24f),
+                            end = Offset(poleX + size.width * 0.13f, size.height * 0.24f),
+                            strokeWidth = sw
+                        )
+
+                        // Brazo/mano sujetando el bastón.
+                        drawLine(
+                            color = white,
+                            start = Offset(size.width * 0.54f, size.height * 0.49f),
+                            end = Offset(poleX, size.height * 0.49f),
+                            strokeWidth = sw
                         )
                     }
                 }
@@ -1602,30 +1639,62 @@ fun SurveyScreen(
                 Text("Capas visibles", style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Active o desactive las capas globales y las del proyecto sin salir del Levantamiento.",
+                    "Cambie el mapa base y active o desactive capas sin salir del Levantamiento.",
                     style = MaterialTheme.typography.bodySmall
                 )
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(14.dp))
+                Text("Mapa base", fontWeight = FontWeight.Bold)
 
-                if (project != null && projectLayers.isNotEmpty()) {
-                    OutlinedButton(
-                        onClick = {
-                            val updated = projectLayers.map { it.copy(visible = false) }
-                            projectLayers = updated
-                            layerStore.save(project.id, updated)
-                        },
-                        modifier = Modifier.fillMaxWidth()
+                listOf(
+                    BasemapType.BASIC,
+                    BasemapType.MAPBOX_STREETS,
+                    BasemapType.MAPBOX_SATELLITE
+                ).forEach { type ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedBasemap = type
+                                basemapStore.setSelected(project?.id, type)
+                            }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Apagar todas las capas")
+                        RadioButton(
+                            selected = selectedBasemap == type,
+                            onClick = {
+                                selectedBasemap = type
+                                basemapStore.setSelected(project?.id, type)
+                            }
+                        )
+                        Text(type.label)
                     }
-                    Spacer(Modifier.height(8.dp))
                 }
 
-                if (project == null) {
-                    Text("No hay un proyecto activo.")
-                } else if (projectLayers.isEmpty()) {
-                    Text("No hay capas guardadas en la biblioteca global ni en este proyecto.")
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = {
+                        selectedBasemap = BasemapType.NONE
+                        basemapStore.setSelected(project?.id, BasemapType.NONE)
+                        persistVisibleLayers(projectLayers.map { it.copy(visible = false) })
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Apagar todo")
+                }
+
+                Spacer(Modifier.height(14.dp))
+                Text("Capas superpuestas", fontWeight = FontWeight.Bold)
+
+                if (projectLayers.isEmpty()) {
+                    Text(
+                        if (project == null)
+                            "No hay capas WMS/XYZ guardadas en la biblioteca global."
+                        else
+                            "No hay capas WMS/XYZ guardadas en este proyecto.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 } else {
                     projectLayers
                         .sortedBy { it.order }
@@ -1645,15 +1714,14 @@ fun SurveyScreen(
                                         Text(layer.name, style = MaterialTheme.typography.titleMedium)
                                         Text(layer.type.label, style = MaterialTheme.typography.bodySmall)
                                     }
-
                                     Switch(
                                         checked = layer.visible,
                                         onCheckedChange = { checked ->
-                                            val updated = projectLayers.map {
-                                                if (it.id == layer.id) it.copy(visible = checked) else it
-                                            }
-                                            projectLayers = updated
-                                            project?.let { layerStore.save(it.id, updated) }
+                                            persistVisibleLayers(
+                                                projectLayers.map {
+                                                    if (it.id == layer.id) it.copy(visible = checked) else it
+                                                }
+                                            )
                                         }
                                     )
                                 }
@@ -1887,6 +1955,8 @@ private fun addSelectedBasemap(
     basemap: BasemapType,
     mapboxToken: String
 ) {
+    if (basemap == BasemapType.NONE) return
+
     // Keep a reliable base underneath every external source. If Mapbox or a
     // project WMS fails, the user must never be left with a blank map.
     runCatching {
@@ -1909,7 +1979,7 @@ private fun addSelectedBasemap(
         // more predictable with a real raster tile endpoint than with a style
         // URL whose response format is inferred.
         BasemapType.MAPBOX_STREETS ->
-            "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}.png?access_token=$cleanToken"
+            "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/{z}/{x}/{y}.png?access_token=$cleanToken"
 
         // Satellite is already a native raster tileset, so use the Raster
         // Tiles API directly instead of rasterizing a Mapbox style.
@@ -1923,7 +1993,8 @@ private fun addSelectedBasemap(
         val sourceId = "basemap-mapbox-source"
         val layerId = "basemap-mapbox-layer"
         val tileSet = TileSet("2.2.0", tileUrl)
-        style.addSource(RasterSource(sourceId, tileSet, 256))
+        val tileSize = if (basemap == BasemapType.MAPBOX_STREETS) 512 else 256
+        style.addSource(RasterSource(sourceId, tileSet, tileSize))
         style.addLayer(
             RasterLayer(layerId, sourceId).withProperties(
                 PropertyFactory.rasterOpacity(1f)
