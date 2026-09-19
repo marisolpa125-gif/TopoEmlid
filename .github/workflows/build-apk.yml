@@ -33,6 +33,115 @@ jobs:
         with:
           gradle-version: "8.13"
 
+
+      - name: Preparar sonidos de campo
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import math, random, re, struct, urllib.request, wave
+
+          raw = Path("app/src/main/res/raw")
+          raw.mkdir(parents=True, exist_ok=True)
+
+          SR = 44100
+
+          def write_wav(name, samples):
+              path = raw / name
+              peak = max(1e-9, max(abs(x) for x in samples))
+              scale = 0.985 / peak
+              pcm = b"".join(struct.pack("<h", int(max(-1, min(1, x*scale))*32767)) for x in samples)
+              with wave.open(str(path), "wb") as w:
+                  w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR); w.writeframes(pcm)
+
+          def tone(freq, dur, amp=0.8):
+              n=int(SR*dur); out=[]
+              for i in range(n):
+                  t=i/SR
+                  a=min(1,t/0.012)*min(1,max(0,(dur-t)/0.06))
+                  out.append(math.sin(2*math.pi*freq*t)*amp*a)
+              return out
+
+          def silence(d):
+              return [0.0]*int(SR*d)
+
+          # FIX: tres tonos ascendentes.
+          write_wav("sound_fix.wav",
+                    tone(1200,0.08,0.85)+silence(0.045)+tone(1500,0.10,0.9)+silence(0.045)+tone(1800,0.12,0.95))
+
+          # FLOAT: dos tonos iguales.
+          write_wav("sound_float.wav",
+                    tone(760,0.12,0.9)+silence(0.06)+tone(760,0.12,0.9))
+
+          # AUTÓNOMO/SINGLE: un pulso grave, fuerte y un poco largo.
+          n=int(SR*0.72); auto=[]
+          for i in range(n):
+              t=i/SR
+              env=min(1,t/0.012)*min(1,max(0,(0.72-t)/0.12))
+              y=(math.sin(2*math.pi*210*t)+0.24*math.sin(2*math.pi*420*t)+0.08*math.sin(2*math.pi*630*t))*env
+              auto.append(math.tanh(y*1.35))
+          write_wav("sound_autonomous.wav", auto)
+
+          # Desconexión Bluetooth/NMEA: alarma larga tipo sirena.
+          dur=2.2; n=int(SR*dur); alarm=[]; phase=0.0
+          for i in range(n):
+              t=i/SR
+              modulation=0.5*(1+math.sin(2*math.pi*2.1*t))
+              f=780+520*modulation
+              phase += 2*math.pi*f/SR
+              pulse=0.70+0.30*(0.5*(1+math.sin(2*math.pi*3.0*t)))
+              alarm.append(math.sin(phase)*pulse*0.92)
+          write_wav("sound_disconnected.wav", alarm)
+
+          # Fallbacks, solo si no se puede bajar el audio real.
+          write_wav("sound_connected.wav", tone(900,0.20,0.8)+silence(0.05)+tone(1200,0.25,0.9))
+          random.seed(19)
+          n=int(SR*0.32); mech=[]
+          for i in range(n):
+              t=i/SR
+              noise=(random.random()*2-1)
+              env=math.exp(-18*t)
+              body=0.45*math.sin(2*math.pi*260*t)*math.exp(-12*t)
+              mech.append((0.35*noise+body)*env)
+          write_wav("sound_point_saved.wav", mech)
+
+          def fetch_pixabay(page_url, out_name, trim_seconds=None):
+              req=urllib.request.Request(page_url, headers={"User-Agent":"Mozilla/5.0"})
+              html=urllib.request.urlopen(req, timeout=30).read().decode("utf-8", "ignore")
+              candidates=[]
+              # Pixabay pages commonly expose cdn MP3 URLs in embedded JSON/HTML.
+              for pattern in [
+                  r'https://cdn\.pixabay\.com/download/audio/[^"\\ ]+?\.mp3[^"\\ ]*',
+                  r'https:\\u002F\\u002Fcdn\.pixabay\.com\\u002Fdownload\\u002Faudio\\u002F[^"]+?\.mp3[^"]*',
+                  r'https://cdn\.pixabay\.com/audio/[^"\\ ]+?\.mp3[^"\\ ]*'
+              ]:
+                  candidates += re.findall(pattern, html)
+              if not candidates:
+                  raise RuntimeError("No se encontró URL MP3 en Pixabay")
+              url=candidates[0].replace("\\u002F","/").replace("\\u0026","&").replace("\\/","/")
+              data=urllib.request.urlopen(urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0"}),timeout=40).read()
+              mp3=raw/(out_name+".mp3")
+              mp3.write_bytes(data)
+              print(f"Audio real descargado: {out_name} ({len(data)} bytes)")
+              if trim_seconds:
+                  import subprocess
+                  wav=raw/(out_name+".wav")
+                  subprocess.run(["ffmpeg","-y","-loglevel","error","-i",str(mp3),"-t",str(trim_seconds),"-ac","1","-ar",str(SR),str(wav)],check=True)
+                  mp3.unlink(missing_ok=True)
+              return True
+
+          try:
+              fetch_pixabay("https://pixabay.com/sound-effects/film-special-effects-plane-takeoff-sound-effect-521112/",
+                            "sound_connected", 2.0)
+          except Exception as e:
+              print("AVISO: no se pudo obtener el avión real; se conserva fallback:", e)
+
+          try:
+              fetch_pixabay("https://pixabay.com/sound-effects/film-special-effects-sig-sauer-p229-handgun-slide-rack-100293/",
+                            "sound_point_saved", None)
+          except Exception as e:
+              print("AVISO: no se pudo obtener la corredera real; se conserva fallback:", e)
+          PY
+
       - name: Compilar APK debug
         run: gradle --no-daemon :app:assembleDebug
 
