@@ -128,7 +128,7 @@ fun TopoEmlidApp() {
     }
 
     Scaffold(
-        topBar = { GnssBar(gnss, activeProject?.name) },
+        topBar = { GnssBar(gnss, ntripStatus, activeProject?.name) },
         bottomBar = {
             NavigationBar {
                 listOf("Receptores", "Proyecto", "Capas", "Levantamiento", "Replanteo").forEach { item ->
@@ -218,14 +218,27 @@ fun TopoEmlidApp() {
 }
 
 @Composable
-private fun GnssBar(status: GnssStatus, projectName: String?) {
+private fun GnssBar(status: GnssStatus, ntrip: NtripLiveStatus, projectName: String?) {
     Surface(shadowElevation = 4.dp) {
-        Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(projectName ?: "Sin proyecto activo", fontWeight = FontWeight.Bold)
-                Text(if (status.connected) "${status.receiverName} • ${status.solution}" else "${status.receiverName} • Desconectado")
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(projectName ?: "Sin proyecto activo", fontWeight = FontWeight.Bold)
+                    Text(
+                        "GNSS: ${if (status.connected) "Conectado" else "Desconectado"} • RTK: ${status.solution}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Text(
+                    "Sat: ${status.satellites ?: "—"}",
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
-            Text("H: ${status.horizontalAccuracyM?.let { "%.3f m".format(it) } ?: "—"} • Sat: ${status.satellites ?: "—"}")
+            Text(
+                "NTRIP: ${if (ntrip.connected) "Conectado" else if (ntrip.connecting) "Conectando" else "Desconectado"} • " +
+                    "H: ${status.horizontalAccuracyM?.let { "%.3f m".format(it) } ?: "—"}",
+                style = MaterialTheme.typography.labelSmall
+            )
         }
     }
 }
