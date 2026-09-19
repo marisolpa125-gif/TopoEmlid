@@ -3,6 +3,7 @@ package cr.co.topoemlid
 import android.content.Context
 
 enum class BasemapType(val label: String) {
+    NONE("Sin mapa base"),
     BASIC("Mapa básico"),
     MAPBOX_STREETS("Mapbox calles"),
     MAPBOX_SATELLITE("Mapbox satélite")
