@@ -5,67 +5,94 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Parcel / cadastral motif -->
-    <path
-        android:fillColor="#6A1B9A"
-        android:pathData="M14,70 L36,56 L58,62 L80,48 L96,62 L84,92 L54,96 L24,90 Z"/>
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#D7B7FF"
-        android:strokeWidth="2.2"
-        android:pathData="M14,70 L36,56 L58,62 L80,48 L96,62 L84,92 L54,96 L24,90 Z"/>
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#D7B7FF"
-        android:strokeWidth="1.8"
-        android:pathData="M36,56 L38,88 M58,62 L54,96 M80,48 L72,94 M24,90 L84,92"/>
+    <!-- Variante 1: composición más detallada, reducida y centrada -->
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.78"
+        android:scaleY="0.78">
 
-    <!-- Survey pole -->
-    <path
-        android:fillColor="#ECE6F7"
-        android:pathData="M51,43 L57,43 L57,84 L51,84 Z"/>
-    <path
-        android:fillColor="#311B56"
-        android:pathData="M49,58 L59,58 L59,64 L49,64 Z"/>
+        <!-- Parcela catastral -->
+        <path
+            android:fillColor="#5E178B"
+            android:pathData="M15,70 L36,57 L59,61 L81,49 L95,63 L84,91 L54,96 L24,89 Z"/>
+        <path
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="#DCC6FF"
+            android:strokeWidth="2.2"
+            android:pathData="M15,70 L36,57 L59,61 L81,49 L95,63 L84,91 L54,96 L24,89 Z"/>
+        <path
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="#B991F0"
+            android:strokeWidth="1.5"
+            android:pathData="M36,57 L38,88 M59,61 L55,95 M81,49 L73,94 M24,89 L84,91"/>
+        <path
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="#9D72DB"
+            android:strokeWidth="1.1"
+            android:pathData="M20,76 C31,71 41,72 49,78 M62,68 C71,64 80,65 89,70 M28,83 C39,80 50,82 58,86"/>
 
-    <!-- GNSS receiver -->
-    <path
-        android:fillColor="#F8F5FF"
-        android:pathData="M35,34 C35,28 40,24 46,24 L62,24 C68,24 73,28 73,34 L70,42 L38,42 Z"/>
-    <path
-        android:fillColor="#7E57C2"
-        android:pathData="M38,38 L70,38 L70,43 L38,43 Z"/>
-    <path
-        android:fillColor="#2E1648"
-        android:pathData="M42,43 L66,43 L62,49 L46,49 Z"/>
+        <!-- Nodos de control -->
+        <path android:fillColor="#EEE5FF" android:pathData="M12,68 A3.3,3.3 0,1 0,18.6 68 A3.3,3.3 0,1 0,12 68"/>
+        <path android:fillColor="#EEE5FF" android:pathData="M32.7,54.5 A3.3,3.3 0,1 0,39.3 54.5 A3.3,3.3 0,1 0,32.7 54.5"/>
+        <path android:fillColor="#EEE5FF" android:pathData="M91.7,61 A3.3,3.3 0,1 0,98.3 61 A3.3,3.3 0,1 0,91.7 61"/>
+        <path android:fillColor="#EEE5FF" android:pathData="M80.7,91 A3.3,3.3 0,1 0,87.3 91 A3.3,3.3 0,1 0,80.7 91"/>
 
-    <!-- GNSS signal arcs -->
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#E9D8FF"
-        android:strokeWidth="3.2"
-        android:strokeLineCap="round"
-        android:pathData="M44,20 C49,15 59,15 64,20"/>
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#C9A7F5"
-        android:strokeWidth="3.2"
-        android:strokeLineCap="round"
-        android:pathData="M39,15 C47,7 61,7 69,15"/>
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#A97BE8"
-        android:strokeWidth="3.2"
-        android:strokeLineCap="round"
-        android:pathData="M34,10 C45,-1 63,-1 74,10"/>
+        <!-- Diana central -->
+        <path
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="#C9A8F5"
+            android:strokeWidth="1.6"
+            android:pathData="M44,85 C44,78.8 48.5,74 54,74 C59.5,74 64,78.8 64,85 C64,91.2 59.5,96 54,96 C48.5,96 44,91.2 44,85 Z"/>
+        <path
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="#EDE4FF"
+            android:strokeWidth="1.4"
+            android:pathData="M48,85 C48,81.2 50.7,78.5 54,78.5 C57.3,78.5 60,81.2 60,85 C60,88.8 57.3,91.5 54,91.5 C50.7,91.5 48,88.8 48,85 Z"/>
 
-    <!-- Accuracy target -->
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#E9D8FF"
-        android:strokeWidth="1.8"
-        android:pathData="M45,85 C45,79 49,75 54,75 C59,75 63,79 63,85 C63,91 59,95 54,95 C49,95 45,91 45,85 Z"/>
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M51,82 L57,82 L57,88 L51,88 Z"/>
+        <!-- Bastón -->
+        <path
+            android:fillColor="#E9E3F2"
+            android:pathData="M51.5,43 L56.5,43 L56.5,85 L51.5,85 Z"/>
+        <path
+            android:fillColor="#BCAED2"
+            android:pathData="M52.5,43 L54,43 L54,85 L52.5,85 Z"/>
+        <path
+            android:fillColor="#3E235E"
+            android:pathData="M49,58 L59,58 L59,64 L49,64 Z"/>
+
+        <!-- Receptor GNSS -->
+        <path
+            android:fillColor="#FAF8FF"
+            android:pathData="M34,34 C34,27.5 39.5,23 46,23 L62,23 C68.5,23 74,27.5 74,34 L71,41 L37,41 Z"/>
+        <path
+            android:fillColor="#D8D0E7"
+            android:pathData="M37,41 L71,41 L67,47 L41,47 Z"/>
+        <path
+            android:fillColor="#8557C8"
+            android:pathData="M37,37 L71,37 L71,42 L37,42 Z"/>
+        <path
+            android:fillColor="#2C1745"
+            android:pathData="M42,47 L66,47 L62,51 L46,51 Z"/>
+
+        <!-- Ondas GNSS -->
+        <path
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="#F0E6FF"
+            android:strokeWidth="3.0"
+            android:strokeLineCap="round"
+            android:pathData="M45,20 C49.5,15.5 58.5,15.5 63,20"/>
+        <path
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="#D8BCFF"
+            android:strokeWidth="3.0"
+            android:strokeLineCap="round"
+            android:pathData="M40,15 C47,8 61,8 68,15"/>
+        <path
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="#B98AEF"
+            android:strokeWidth="3.0"
+            android:strokeLineCap="round"
+            android:pathData="M35,10 C45,-0.5 63,-0.5 73,10"/>
+    </group>
 </vector>
