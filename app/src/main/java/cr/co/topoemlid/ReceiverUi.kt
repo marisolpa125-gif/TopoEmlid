@@ -62,6 +62,16 @@ private fun receiverBrand(name: String): String {
     }
 }
 
+private fun rtkStatusColor(gnss: GnssStatus): Color = when {
+    !gnss.connected -> Color(0xFF757575)
+    gnss.solution.equals("FIX", ignoreCase = true) -> Color(0xFF2E7D32)
+    gnss.solution.equals("FLOAT", ignoreCase = true) -> Color(0xFFF9A825)
+    else -> Color(0xFFC62828)
+}
+
+private fun ntripStatusColor(status: NtripLiveStatus): Color =
+    if (status.connected || status.connecting) Color(0xFF00ACC1) else Color(0xFF757575)
+
 @SuppressLint("MissingPermission")
 @Composable
 fun ReceiverSection(
@@ -396,7 +406,11 @@ private fun ReceiverDetailScreen(
 
         if (gnss.connected && gnss.receiverName == receiver.name) {
             Text("Datos en vivo", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
-            ReceiverMenuRow("Estado GNSS", gnss.solution) { page = ReceiverPage.STATUS }
+            ReceiverMenuRow(
+                "Estado GNSS",
+                gnss.solution,
+                subtitleColor = rtkStatusColor(gnss)
+            ) { page = ReceiverPage.STATUS }
 
             Spacer(Modifier.height(10.dp))
             Text("Correcciones RTK", fontWeight = FontWeight.Bold)
@@ -459,7 +473,12 @@ private enum class ReceiverPage {
 }
 
 @Composable
-private fun ReceiverMenuRow(title: String, subtitle: String, onClick: () -> Unit) {
+private fun ReceiverMenuRow(
+    title: String,
+    subtitle: String,
+    subtitleColor: Color = Color.Unspecified,
+    onClick: () -> Unit
+) {
     Card(
         Modifier
             .fillMaxWidth()
@@ -472,7 +491,12 @@ private fun ReceiverMenuRow(title: String, subtitle: String, onClick: () -> Unit
         ) {
             Column(Modifier.weight(1f)) {
                 Text(title, fontWeight = FontWeight.Bold)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = subtitleColor,
+                    fontWeight = if (subtitleColor != Color.Unspecified) FontWeight.Bold else FontWeight.Normal
+                )
             }
             Text("›", style = MaterialTheme.typography.headlineSmall)
         }
@@ -513,7 +537,7 @@ private fun ReceiverSubPage(
                 StatusLine("Satélites a la vista", (gnss.satellitesInView ?: gnss.satellites)?.toString() ?: "—")
                 StatusLine("Satélites usados", gnss.satellites?.toString() ?: "—")
                 StatusLine("PDOP", gnss.pdop?.let { "%.2f".format(it) } ?: "—")
-                StatusLine("Solución", gnss.solution)
+                StatusLine("Solución", gnss.solution, valueColor = rtkStatusColor(gnss))
                 StatusLine("Modo de posicionamiento", gnss.positioningMode ?: "—")
                 StatusLine("Edad de corrección", gnss.correctionAgeS?.let { "%.1f s".format(it) } ?: "—")
 
@@ -525,7 +549,8 @@ private fun ReceiverSubPage(
                         ntripStatus.connecting -> "CONECTANDO"
                         ntripStatus.connected -> "CONECTADO"
                         else -> "DESCONECTADO"
-                    }
+                    },
+                    valueColor = ntripStatusColor(ntripStatus)
                 )
                 StatusLine("Perfil", ntripStatus.profileName ?: "—")
                 StatusLine("Caster", ntripStatus.caster ?: "—")
@@ -645,13 +670,21 @@ private fun ReceiverSubPage(
 }
 
 @Composable
-private fun StatusLine(label: String, value: String) {
+private fun StatusLine(
+    label: String,
+    value: String,
+    valueColor: Color = Color.Unspecified
+) {
     Row(
         Modifier.fillMaxWidth().padding(vertical = 7.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(label)
-        Text(value, fontWeight = FontWeight.Medium)
+        Text(
+            value,
+            fontWeight = FontWeight.Bold,
+            color = valueColor
+        )
     }
     HorizontalDivider()
 }
