@@ -1903,12 +1903,18 @@ private fun addSelectedBasemap(
 
     if (basemap == BasemapType.BASIC || mapboxToken.isBlank()) return
 
+    val cleanToken = mapboxToken.trim()
     val tileUrl = when (basemap) {
+        // Request an explicit raster format. MapLibre's RasterSource is much
+        // more predictable with a real raster tile endpoint than with a style
+        // URL whose response format is inferred.
         BasemapType.MAPBOX_STREETS ->
-            "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}?access_token=$mapboxToken"
+            "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}.png?access_token=$cleanToken"
 
+        // Satellite is already a native raster tileset, so use the Raster
+        // Tiles API directly instead of rasterizing a Mapbox style.
         BasemapType.MAPBOX_SATELLITE ->
-            "https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/256/{z}/{x}/{y}?access_token=$mapboxToken"
+            "https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg90?access_token=$cleanToken"
 
         BasemapType.BASIC -> return
     }
