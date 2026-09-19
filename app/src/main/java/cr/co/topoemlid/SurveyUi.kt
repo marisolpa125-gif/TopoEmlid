@@ -88,6 +88,7 @@ fun SurveyScreen(
     var divideFrontEdge by remember { mutableIntStateOf(0) }
     var activeMapTool by remember { mutableStateOf(MapFieldTool.NONE) }
     var toolPoints by remember { mutableStateOf<List<LatLng>>(emptyList()) }
+    var committedGeometries by remember(project?.id) { mutableStateOf<List<CommittedGeometry>>(emptyList()) }
     var toolResult by remember { mutableStateOf<String?>(null) }
     var parallelOffsetText by remember { mutableStateOf("1.00") }
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
@@ -105,6 +106,22 @@ fun SurveyScreen(
 
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         pointPhoto = uri
+    }
+
+    fun redrawCommitted(map: MapLibreMap?) {
+        val m = map ?: return
+        committedGeometries.forEach { g ->
+            drawCommittedGeometry(m, g)
+        }
+    }
+
+    fun redrawActiveAndCommitted() {
+        val map = mapRef ?: return
+        map.clear()
+        committedGeometries.forEach { drawCommittedGeometry(map, it) }
+        if (activeMapTool != MapFieldTool.NONE && toolPoints.isNotEmpty()) {
+            drawActiveGeometry(map, activeMapTool, toolPoints, parallelOffsetText.toDoubleOrNull() ?: 1.0)
+        }
     }
 
     fun startMeasurement() {
@@ -237,6 +254,7 @@ fun SurveyScreen(
                             map.setStyle(baseStyle) { style ->
                                 addSelectedBasemap(style, selectedBasemap, mapboxToken)
                                 addProjectRasterLayers(style, projectLayers)
+                                redrawCommitted(map)
                             }
 
                             map.addOnMapClickListener { latLng ->
@@ -252,15 +270,7 @@ fun SurveyScreen(
 
                                     toolPoints = updated
                                     toolResult = renderFieldTool(map, activeMapTool, updated, parallelOffsetText.toDoubleOrNull() ?: 1.0)
-
-                                    if (
-                                        activeMapTool == MapFieldTool.POINT ||
-                                        ((activeMapTool == MapFieldTool.RECTANGLE ||
-                                          activeMapTool == MapFieldTool.CIRCLE ||
-                                          activeMapTool == MapFieldTool.PARALLEL) && updated.size >= 2)
-                                    ) {
-                                        activeMapTool = MapFieldTool.NONE
-                                    }
+                                    committedGeometries.forEach { drawCommittedGeometry(map, it) }
                                     true
                                 }
                             }
@@ -418,12 +428,68 @@ fun SurveyScreen(
         ) {
             toolResult?.let { result ->
                 Surface(tonalElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(10.dp)) {
+                    Column(Modifier.padding(8.dp)) {
                         if (activeMapTool != MapFieldTool.NONE) {
-                            Text(
-                                "Herramienta activa: ${activeMapTool.label}",
-                                style = MaterialTheme.typography.titleSmall
-                            )
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "${activeMapTool.symbol} ${activeMapTool.label}",
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            if (toolPoints.isNotEmpty()) {
+                                                toolPoints = toolPoints.dropLast(1)
+                                                toolResult = if (toolPoints.isEmpty()) {
+                                                    activeMapTool.instructions
+                                                } else {
+                                                    renderFieldTool(
+                                                        mapRef ?: return@OutlinedButton,
+                                                        activeMapTool,
+                                                        toolPoints,
+                                                        parallelOffsetText.toDoubleOrNull() ?: 1.0
+                                                    )
+                                                }
+                                                committedGeometries.forEach { g -> mapRef?.let { drawCommittedGeometry(it, g) } }
+                                            }
+                                        },
+                                        enabled = toolPoints.isNotEmpty(),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                    ) { Text("↶") }
+                                    OutlinedButton(
+                                        onClick = {
+                                            toolPoints = emptyList()
+                                            toolResult = null
+                                            activeMapTool = MapFieldTool.NONE
+                                            mapRef?.clear()
+                                            redrawCommitted(mapRef)
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                    ) { Text("Cancelar") }
+                                    Button(
+                                        onClick = {
+                                            if (toolPoints.isNotEmpty()) {
+                                                committedGeometries = committedGeometries + CommittedGeometry(
+                                                    tool = activeMapTool,
+                                                    points = toolPoints,
+                                                    parallelOffsetM = parallelOffsetText.toDoubleOrNull() ?: 1.0
+                                                )
+                                                toolPoints = emptyList()
+                                                toolResult = "Elemento guardado temporalmente en el mapa."
+                                                activeMapTool = MapFieldTool.NONE
+                                                mapRef?.clear()
+                                                redrawCommitted(mapRef)
+                                            }
+                                        },
+                                        enabled = toolPoints.isNotEmpty(),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                    ) { Text("Listo") }
+                                }
+                            }
                         }
                         Text(result, style = MaterialTheme.typography.bodySmall)
                     }
@@ -545,6 +611,7 @@ fun SurveyScreen(
                                         toolPoints = emptyList()
                                         toolResult = tool.instructions
                                         mapRef?.clear()
+                                        redrawCommitted(mapRef)
                                         showToolsPanel = false
                                     }
                                 }
@@ -570,38 +637,7 @@ fun SurveyScreen(
 
                 Spacer(Modifier.height(8.dp))
 
-                if (activeMapTool != MapFieldTool.NONE) {
-                    if (activeMapTool == MapFieldTool.LINE ||
-                        activeMapTool == MapFieldTool.DISTANCE ||
-                        activeMapTool == MapFieldTool.AREA ||
-                        activeMapTool == MapFieldTool.PERIMETER ||
-                        activeMapTool == MapFieldTool.POLYGON
-                    ) {
-                        Button(
-                            onClick = {
-                                activeMapTool = MapFieldTool.NONE
-                                showToolsPanel = false
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Terminar herramienta")
-                        }
-                        Spacer(Modifier.height(6.dp))
-                    }
 
-                    OutlinedButton(
-                        onClick = {
-                            activeMapTool = MapFieldTool.NONE
-                            toolPoints = emptyList()
-                            toolResult = null
-                            mapRef?.clear()
-                            showToolsPanel = false
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Cancelar herramienta")
-                    }
-                }
 
                 Spacer(Modifier.height(20.dp))
             }
@@ -1006,6 +1042,53 @@ private fun sanitizeWmsBaseUrl(raw: String): String {
     return if (kept.isEmpty()) base else base + "?" + kept.joinToString("&")
 }
 
+
+private data class CommittedGeometry(
+    val tool: MapFieldTool,
+    val points: List<LatLng>,
+    val parallelOffsetM: Double
+)
+
+private fun drawCommittedGeometry(map: MapLibreMap, geometry: CommittedGeometry) {
+    drawActiveGeometry(map, geometry.tool, geometry.points, geometry.parallelOffsetM)
+}
+
+private fun drawActiveGeometry(
+    map: MapLibreMap,
+    tool: MapFieldTool,
+    points: List<LatLng>,
+    parallelOffsetM: Double
+) {
+    when (tool) {
+        MapFieldTool.POINT -> points.lastOrNull()?.let { map.addMarker(MarkerOptions().position(it)) }
+        MapFieldTool.LINE, MapFieldTool.DISTANCE -> if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points).width(4f))
+        MapFieldTool.AREA, MapFieldTool.PERIMETER, MapFieldTool.POLYGON -> {
+            if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points).width(4f))
+            if (points.size >= 3 && tool != MapFieldTool.LINE) map.addPolygon(PolygonOptions().addAll(points))
+        }
+        MapFieldTool.RECTANGLE -> if (points.size >= 2) {
+            val a = points[0]; val b = points[1]
+            val rect = listOf(
+                LatLng(a.latitude, a.longitude),
+                LatLng(a.latitude, b.longitude),
+                LatLng(b.latitude, b.longitude),
+                LatLng(b.latitude, a.longitude)
+            )
+            map.addPolygon(PolygonOptions().addAll(rect))
+        }
+        MapFieldTool.CIRCLE -> if (points.size >= 2) {
+            val circle = circlePolygon(points[0], haversineMeters(points[0], points[1]), 64)
+            map.addPolygon(PolygonOptions().addAll(circle))
+        }
+        MapFieldTool.PARALLEL -> if (points.size >= 2) {
+            val base = points.take(2)
+            map.addPolyline(PolylineOptions().addAll(base).width(4f))
+            map.addPolyline(PolylineOptions().addAll(parallelLine(base[0], base[1], parallelOffsetM)).width(4f))
+        }
+        MapFieldTool.DIVIDE_LINE -> if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points.take(2)).width(4f))
+        MapFieldTool.DIVIDE, MapFieldTool.NONE -> Unit
+    }
+}
 
 private enum class DivideMode(val label: String, val help: String) {
     EQUAL_AREA("Áreas iguales", "Divide en 2 o más lotes con áreas aproximadamente iguales."),
