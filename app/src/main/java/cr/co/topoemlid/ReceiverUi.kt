@@ -159,7 +159,9 @@ fun ReceiverSection(
                 activeReceiverId = activeReceiverId,
                 gnss = gnss,
                 onSelectReceiver = onSelectReceiver,
-                onOpenReceiver = { detailReceiver = it }
+                onOpenReceiver = { detailReceiver = it },
+                onConnect = onConnect,
+                onDisconnect = onDisconnect
             )
         }
     }
@@ -173,7 +175,9 @@ private fun ReceiversScreen(
     activeReceiverId: String?,
     gnss: GnssStatus,
     onSelectReceiver: (ReceiverProfile) -> Unit,
-    onOpenReceiver: (ReceiverProfile) -> Unit
+    onOpenReceiver: (ReceiverProfile) -> Unit,
+    onConnect: (ReceiverProfile) -> Unit,
+    onDisconnect: () -> Unit
 ) {
     val context = LocalContext.current
     val bluetoothManager = remember { context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager }
@@ -183,6 +187,7 @@ private fun ReceiversScreen(
 
     var nearby by remember { mutableStateOf<List<NearbyReceiver>>(emptyList()) }
     var scanning by remember { mutableStateOf(false) }
+    var connectedActions by remember { mutableStateOf<ReceiverProfile?>(null) }
     var permissionGranted by remember {
         mutableStateOf(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -306,10 +311,17 @@ private fun ReceiversScreen(
         if (scanning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 10.dp))
 
         if (gnss.connected) {
+            val connectedProfile =
+                profiles.firstOrNull { it.id == activeReceiverId } ?:
+                profiles.firstOrNull { it.name == gnss.receiverName }
+
             Card(
                 Modifier
                     .fillMaxWidth()
                     .padding(vertical = 6.dp)
+                    .clickable(enabled = connectedProfile != null) {
+                        connectedProfile?.let { connectedActions = it }
+                    }
             ) {
                 Column(Modifier.padding(14.dp)) {
                     Text(gnss.receiverName, fontWeight = FontWeight.Bold)
@@ -323,8 +335,53 @@ private fun ReceiversScreen(
                         "Mientras este receptor esté conectado, Topo Emlid no inicia un nuevo escaneo Bluetooth.",
                         style = MaterialTheme.typography.bodySmall
                     )
+                    Text(
+                        "Toque este recuadro para opciones de conexión.",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
+        }
+
+        connectedActions?.let { receiver ->
+            AlertDialog(
+                onDismissRequest = { connectedActions = null },
+                title = { Text(receiver.name) },
+                text = {
+                    Column {
+                        Text("Conectado por " + (gnss.connectionTransport ?: "Bluetooth / NMEA"))
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Apagar o reiniciar físicamente la antena requiere un protocolo propio del fabricante. Bluetooth/NMEA estándar no permite apagar el receptor.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            connectedActions = null
+                            onDisconnect()
+                        }
+                    ) { Text("Desconectar") }
+                },
+                dismissButton = {
+                    Row {
+                        TextButton(
+                            onClick = {
+                                connectedActions = null
+                                onDisconnect()
+                                handler.postDelayed({
+                                    onSelectReceiver(receiver)
+                                    onConnect(receiver)
+                                }, 1200L)
+                            }
+                        ) { Text("Reiniciar conexión") }
+                        TextButton(onClick = { connectedActions = null }) { Text("Cancelar") }
+                    }
+                }
+            )
         }
 
         nearby.forEach { r ->
@@ -342,6 +399,7 @@ private fun ReceiversScreen(
                     .fillMaxWidth()
                     .padding(vertical = 5.dp)
                     .clickable {
+                        stopScan()
                         if (existing == null && profiles.none { it.address == candidate.address }) {
                             onProfilesChanged(profiles + candidate)
                         }
