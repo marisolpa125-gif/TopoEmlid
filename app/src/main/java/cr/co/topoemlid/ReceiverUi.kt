@@ -71,7 +71,11 @@ fun ReceiverSection(
     onSelectReceiver: (ReceiverProfile) -> Unit,
     ntripProfiles: List<NtripProfile>,
     onNtripProfilesChanged: (List<NtripProfile>) -> Unit,
+    ntripStatus: NtripLiveStatus,
+    onConnectNtrip: (NtripProfile) -> Unit,
+    onDisconnectNtrip: () -> Unit,
     gnss: GnssStatus,
+    ntripStatus: NtripLiveStatus,
     connecting: Boolean,
     lastError: String?,
     onConnect: (ReceiverProfile) -> Unit,
@@ -87,12 +91,19 @@ fun ReceiverSection(
         }
 
         if (tab == "NTRIP") {
-            NtripProfilesScreen(profiles = ntripProfiles, onProfilesChanged = onNtripProfilesChanged)
+            NtripProfilesScreen(
+                profiles = ntripProfiles,
+                onProfilesChanged = onNtripProfilesChanged,
+                liveStatus = ntripStatus,
+                onConnect = onConnectNtrip,
+                onDisconnect = onDisconnectNtrip
+            )
         } else if (detailReceiver != null) {
             ReceiverDetailScreen(
                 receiver = detailReceiver!!,
                 isSelected = detailReceiver!!.id == activeReceiverId,
                 gnss = gnss,
+                ntripStatus = ntripStatus,
                 connecting = connecting,
                 lastError = lastError,
                 onBack = { detailReceiver = null },
@@ -391,6 +402,7 @@ private fun ReceiverDetailScreen(
             page = page,
             receiver = receiver,
             gnss = gnss,
+            ntripStatus = ntripStatus,
             onBack = { page = ReceiverPage.HOME }
         )
         return
@@ -529,6 +541,7 @@ private fun ReceiverSubPage(
     page: ReceiverPage,
     receiver: ReceiverProfile,
     gnss: GnssStatus,
+    ntripStatus: NtripLiveStatus,
     onBack: () -> Unit
 ) {
     Column(
@@ -560,6 +573,25 @@ private fun ReceiverSubPage(
                 StatusLine("Solución", gnss.solution)
                 StatusLine("Modo de posicionamiento", gnss.positioningMode ?: "—")
                 StatusLine("Edad de corrección", gnss.correctionAgeS?.let { "%.1f s".format(it) } ?: "—")
+
+                Spacer(Modifier.height(14.dp))
+                Text("Correcciones NTRIP / RTCM", fontWeight = FontWeight.Bold)
+                StatusLine(
+                    "NTRIP",
+                    when {
+                        ntripStatus.connecting -> "CONECTANDO"
+                        ntripStatus.connected -> "CONECTADO"
+                        else -> "DESCONECTADO"
+                    }
+                )
+                StatusLine("Perfil", ntripStatus.profileName ?: "—")
+                StatusLine("Caster", ntripStatus.caster ?: "—")
+                StatusLine("Mountpoint", ntripStatus.mountPoint ?: "—")
+                StatusLine("RTCM recibido", if (ntripStatus.bytesReceived > 0L) "${ntripStatus.bytesReceived} bytes" else "—")
+                StatusLine("RTCM enviado al receptor", if (ntripStatus.bytesForwarded > 0L) "${ntripStatus.bytesForwarded} bytes" else "—")
+                ntripStatus.lastError?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
 
                 Spacer(Modifier.height(14.dp))
                 Text("Señal de satélites", fontWeight = FontWeight.Bold)
