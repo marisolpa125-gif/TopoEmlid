@@ -161,7 +161,7 @@ fun ProjectLayersScreen(project: TopoProject?) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp)) {
                 Text("Mapa base", fontWeight = FontWeight.Bold)
-                BasemapType.entries.forEach { type ->
+                BasemapType.entries.filter { it != BasemapType.NONE }.forEach { type ->
                     Row(
                         Modifier.fillMaxWidth(),
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
