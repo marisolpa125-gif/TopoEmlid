@@ -52,8 +52,18 @@ fun SurveyScreen(
     val basemapStore = remember(project?.id) { BasemapStore(context) }
     val selectedBasemap = basemapStore.selected(project?.id)
     val mapboxToken = basemapStore.mapboxToken()
+    fun loadEffectiveLayers(): List<LayerItem> {
+        val saved = project?.let { layerStore.load(it.id) }.orEmpty()
+        val global = layerStore.loadLibrary()
+        if (project == null) return global
+        val fromLibrary = global.map { lib ->
+            saved.firstOrNull { it.id == lib.id } ?: lib.copy(visible = false)
+        }
+        val projectOnly = saved.filter { s -> global.none { it.id == s.id } }
+        return (fromLibrary + projectOnly).mapIndexed { index, item -> item.copy(order = index) }
+    }
     var projectLayers by remember(project?.id) {
-        mutableStateOf(project?.let { layerStore.load(it.id) } ?: emptyList())
+        mutableStateOf(loadEffectiveLayers())
     }
     var savedPoints by remember(project?.id) {
         mutableStateOf(project?.let { pointStore.load(it.id) } ?: emptyList())
@@ -333,27 +343,21 @@ fun SurveyScreen(
 
             SmallFloatingActionButton(
                 onClick = {
-                    projectLayers = project?.let { layerStore.load(it.id) } ?: emptyList()
+                    projectLayers = loadEffectiveLayers()
                     showLayersPanel = true
                 }
             ) { Text("▱") }
         }
 
-        ExtendedFloatingActionButton(
+        SmallFloatingActionButton(
             onClick = { showToolsPanel = true },
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .padding(start = 12.dp),
-            text = {
-                Text(
-                    if (activeMapTool == MapFieldTool.NONE)
-                        "HERRAMIENTAS"
-                    else
-                        activeMapTool.label.uppercase()
-                )
-            },
-            icon = { Text("✣") }
-        )
+            shape = CircleShape
+        ) {
+            Text("🛠")
+        }
 
         Box(
             modifier = Modifier
@@ -417,53 +421,51 @@ fun SurveyScreen(
             }
 
             Surface(tonalElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.fillMaxWidth().padding(10.dp)) {
-                    Text("Datos rápidos de levantamiento", style = MaterialTheme.typography.titleSmall)
-
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         OutlinedTextField(
                             value = pointNumber,
                             onValueChange = { pointNumber = it },
-                            label = { Text("Punto") },
+                            label = { Text("Pto") },
                             singleLine = true,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(0.75f)
+                        )
+                        OutlinedTextField(
+                            value = code,
+                            onValueChange = { code = it.uppercase() },
+                            label = { Text("Código") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1.35f)
                         )
                         OutlinedTextField(
                             value = antennaHeight,
                             onValueChange = { antennaHeight = it },
-                            label = { Text("Altura (m)") },
+                            label = { Text("Alt. m") },
                             singleLine = true,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(0.9f)
                         )
                     }
-
-                    Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = code,
-                        onValueChange = { code = it.uppercase() },
-                        label = { Text("Código") },
-                        placeholder = { Text("Ej. ASFALTO, CAÑO, EJE, POSTE") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(Modifier.height(6.dp))
                     Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        Modifier.fillMaxWidth().padding(top = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("H: ${gnss.horizontalAccuracyM?.let { "%.3f".format(it) } ?: "—"}")
-                        Text("V: ${gnss.verticalAccuracyM?.let { "%.3f".format(it) } ?: "—"}")
-                        Text(if (gnss.connected) gnss.solution else "SIN RECEPTOR")
+                        Text(
+                            "H ${gnss.horizontalAccuracyM?.let { "%.3f".format(it) } ?: "—"} • V ${gnss.verticalAccuracyM?.let { "%.3f".format(it) } ?: "—"} • ${if (gnss.connected) gnss.solution else "SIN RECEPTOR"}",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                        TextButton(
+                            onClick = { showConfigPanel = true },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                        ) { Text("Más", style = MaterialTheme.typography.labelSmall) }
                     }
                 }
             }
 
-            Button(
-                onClick = { showConfigPanel = true },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Más opciones del punto") }
         }
     }
 
@@ -666,7 +668,7 @@ fun SurveyScreen(
                 Text("Capas visibles", style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Active o desactive las capas cargadas del proyecto sin salir del Levantamiento.",
+                    "Active o desactive las capas globales y las del proyecto sin salir del Levantamiento.",
                     style = MaterialTheme.typography.bodySmall
                 )
 
@@ -675,7 +677,7 @@ fun SurveyScreen(
                 if (project == null) {
                     Text("No hay un proyecto activo.")
                 } else if (projectLayers.isEmpty()) {
-                    Text("Este proyecto no tiene capas cargadas.")
+                    Text("No hay capas guardadas en la biblioteca global ni en este proyecto.")
                 } else {
                     projectLayers
                         .sortedBy { it.order }
