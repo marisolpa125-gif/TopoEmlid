@@ -1986,7 +1986,7 @@ private fun addSelectedBasemap(
         BasemapType.MAPBOX_SATELLITE ->
             "https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg90?access_token=$cleanToken"
 
-        BasemapType.BASIC -> return
+        BasemapType.BASIC, BasemapType.NONE -> return
     }
 
     runCatching {
