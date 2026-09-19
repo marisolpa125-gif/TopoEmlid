@@ -39,6 +39,11 @@ import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
 import org.json.JSONArray
 import org.json.JSONObject
+import org.locationtech.jts.geom.Coordinate
+import org.locationtech.jts.geom.Geometry
+import org.locationtech.jts.geom.GeometryFactory
+import org.locationtech.jts.geom.Polygon
+import org.locationtech.jts.geom.TopologyException
 import java.util.UUID
 import kotlin.math.roundToInt
 import kotlin.math.*
@@ -333,7 +338,7 @@ fun SurveyScreen(
                                     toolResult = "Centro del círculo marcado en el mapa. Indique radio o diámetro."
                                     true
                                 } else if (activeMapTool == MapFieldTool.PARALLEL) {
-                                    val lineIndex = findLineGeometryAt(latLng, committedGeometries)
+                                    val lineIndex = findLineGeometryAtScreen(map, latLng, committedGeometries)
                                     if (lineIndex != null) {
                                         val geometry = committedGeometries[lineIndex]
                                         selectedGeometryIndex = lineIndex
@@ -945,7 +950,7 @@ fun SurveyScreen(
                                             toolResult = "Línea base seleccionada. Indique la separación."
                                         } else {
                                             toolPoints = emptyList()
-                                            toolResult = "Toque la línea guardada a la que desea crearle una paralela."
+                                            toolResult = "Toque directamente la línea guardada. Al seleccionarla se resaltará y podrá indicar distancia, izquierda o derecha."
                                             mapRef?.clear()
                                             redrawCommitted(mapRef)
                                             showToolsPanel = false
@@ -1085,7 +1090,13 @@ fun SurveyScreen(
         ModalBottomSheet(onDismissRequest = { showParallelPanel = false }) {
             Column(Modifier.fillMaxWidth().padding(16.dp)) {
                 Text("Crear línea paralela", style = MaterialTheme.typography.headlineSmall)
-                Text("La línea base ya está seleccionada.", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    if (toolPoints.size >= 2)
+                        "Línea base seleccionada • %.2f m".format(polylineDistanceMeters(toolPoints))
+                    else
+                        "Seleccione primero una línea en el mapa.",
+                    style = MaterialTheme.typography.bodySmall
+                )
                 Spacer(Modifier.height(8.dp))
                 Text("Lado de la paralela", style = MaterialTheme.typography.titleSmall)
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1956,6 +1967,42 @@ private fun rectangleLengthMeters(points: List<LatLng>): Double {
     return if (rect.size >= 4) haversineMeters(rect[0], rect[3]) else 0.0
 }
 
+private fun findLineGeometryAtScreen(
+    map: MapLibreMap,
+    point: LatLng,
+    geometries: List<CommittedGeometry>,
+    tolerancePx: Double = 45.0
+): Int? {
+    val tap = map.projection.toScreenLocation(point)
+    var bestIndex: Int? = null
+    var bestDistance = Double.POSITIVE_INFINITY
+
+    geometries.forEachIndexed { index, geometry ->
+        if (!geometrySupportsParallel(geometry)) return@forEachIndexed
+        val path = geometryPath(geometry)
+        if (path.size < 2) return@forEachIndexed
+
+        for (i in 0 until path.lastIndex) {
+            val a = map.projection.toScreenLocation(path[i])
+            val b = map.projection.toScreenLocation(path[i + 1])
+            val dx = (b.x - a.x).toDouble()
+            val dy = (b.y - a.y).toDouble()
+            val denom = dx * dx + dy * dy
+            val t = if (denom <= 1e-9) 0.0 else (
+                ((tap.x - a.x) * dx + (tap.y - a.y) * dy) / denom
+            ).coerceIn(0.0, 1.0)
+            val px = a.x + t * dx
+            val py = a.y + t * dy
+            val d = hypot((tap.x - px).toDouble(), (tap.y - py).toDouble())
+            if (d < bestDistance) {
+                bestDistance = d
+                bestIndex = index
+            }
+        }
+    }
+    return if (bestDistance <= tolerancePx) bestIndex else null
+}
+
 private fun findLineGeometryAt(
     point: LatLng,
     geometries: List<CommittedGeometry>,
@@ -2290,10 +2337,136 @@ private fun divideAxis(
 }
 
 private fun dividePolygonEqualArea(polygon: List<LatLng>, parts: Int): List<List<LatLng>> {
-    val (xy, _) = toXY(polygon)
+    if (polygon.size < 3 || parts < 2) return listOf(polygon)
+    val (xy, meanLat) = toXY(polygon)
+
+    val candidates = mutableListOf<Pair<Double, Double>>()
     val dx = (xy.maxOfOrNull { it.x } ?: 0.0) - (xy.minOfOrNull { it.x } ?: 0.0)
     val dy = (xy.maxOfOrNull { it.y } ?: 0.0) - (xy.minOfOrNull { it.y } ?: 0.0)
-    return if (dx >= dy) divideAxis(polygon, parts, 1.0, 0.0, true) else divideAxis(polygon, parts, 0.0, 1.0, true)
+    if (dx >= dy) {
+        candidates += 1.0 to 0.0
+        candidates += 0.0 to 1.0
+    } else {
+        candidates += 0.0 to 1.0
+        candidates += 1.0 to 0.0
+    }
+
+    // Also try directions of the parcel edges. This helps concave parcels
+    // produce contiguous lots instead of fragmented strips.
+    for (i in xy.indices) {
+        val a = xy[i]
+        val b = xy[(i + 1) % xy.size]
+        val ex = b.x - a.x
+        val ey = b.y - a.y
+        if (hypot(ex, ey) > 0.01) candidates += ex to ey
+    }
+
+    var best: List<List<LatLng>>? = null
+    var bestError = Double.POSITIVE_INFINITY
+    for ((ax, ay) in candidates) {
+        val attempt = divideEqualAreaJts(xy, meanLat, parts, ax, ay) ?: continue
+        if (attempt.size != parts) continue
+        val areas = attempt.map(::polygonAreaMeters2)
+        val target = polygonAreaMeters2(polygon) / parts.toDouble()
+        if (target <= 0.0) continue
+        val maxRelativeError = areas.maxOf { abs(it - target) / target }
+        val coveredError = abs(areas.sum() - polygonAreaMeters2(polygon)) / polygonAreaMeters2(polygon)
+        val score = maxRelativeError + coveredError
+        if (score < bestError) {
+            bestError = score
+            best = attempt
+        }
+        if (maxRelativeError <= 0.001 && coveredError <= 0.001) break
+    }
+
+    return best ?: divideAxis(polygon, parts, 1.0, 0.0, true)
+}
+
+private fun divideEqualAreaJts(
+    xy: List<XY>,
+    meanLat: Double,
+    parts: Int,
+    axisX: Double,
+    axisY: Double
+): List<List<LatLng>>? {
+    val len = hypot(axisX, axisY)
+    if (len <= 1e-9) return null
+    val ux = axisX / len
+    val uy = axisY / len
+    val vx = -uy
+    val vy = ux
+
+    fun toUV(p: XY): Coordinate = Coordinate(
+        p.x * ux + p.y * uy,
+        p.x * vx + p.y * vy
+    )
+    fun uvToXY(c: Coordinate): XY = XY(
+        c.x * ux + c.y * vx,
+        c.x * uy + c.y * vy
+    )
+
+    val factory = GeometryFactory()
+    val ring = (xy.map(::toUV) + toUV(xy.first())).toTypedArray()
+    val source = runCatching {
+        factory.createPolygon(factory.createLinearRing(ring))
+    }.getOrNull() ?: return null
+    if (!source.isValid || source.area <= 1e-8) return null
+
+    val env = source.envelopeInternal
+    val pad = max(env.width, env.height).coerceAtLeast(1.0) * 4.0
+    fun slab(minU: Double, maxU: Double): Polygon {
+        val minV = env.minY - pad
+        val maxV = env.maxY + pad
+        val coords = arrayOf(
+            Coordinate(minU, minV),
+            Coordinate(maxU, minV),
+            Coordinate(maxU, maxV),
+            Coordinate(minU, maxV),
+            Coordinate(minU, minV)
+        )
+        return factory.createPolygon(factory.createLinearRing(coords))
+    }
+
+    val totalArea = source.area
+    val target = totalArea / parts.toDouble()
+    val cuts = mutableListOf(env.minX)
+
+    try {
+        for (k in 1 until parts) {
+            val wanted = target * k
+            var lo = env.minX
+            var hi = env.maxX
+            repeat(70) {
+                val mid = (lo + hi) / 2.0
+                val clipped = source.intersection(slab(env.minX - pad, mid))
+                if (clipped.area < wanted) lo = mid else hi = mid
+            }
+            cuts += (lo + hi) / 2.0
+        }
+        cuts += env.maxX
+
+        val out = mutableListOf<List<LatLng>>()
+        for (i in 0 until parts) {
+            val geom = source.intersection(slab(cuts[i] - if (i == 0) pad else 0.0, cuts[i + 1] + if (i == parts - 1) pad else 0.0))
+            val poly = singlePolygonOrNull(geom) ?: return null
+            val coords = poly.exteriorRing.coordinates
+            if (coords.size < 4) return null
+            val pieceXY = coords.dropLast(1).map(::uvToXY)
+            out += fromXY(pieceXY, meanLat)
+        }
+        return out
+    } catch (_: TopologyException) {
+        return null
+    }
+}
+
+private fun singlePolygonOrNull(geometry: Geometry): Polygon? {
+    if (geometry.isEmpty) return null
+    if (geometry is Polygon) return geometry
+    if (geometry.numGeometries == 1 && geometry.getGeometryN(0) is Polygon) {
+        return geometry.getGeometryN(0) as Polygon
+    }
+    return null
 }
 
 private fun dividePolygonEqualFront(polygon: List<LatLng>, parts: Int, edge: Int): List<List<LatLng>> {
@@ -2316,7 +2489,11 @@ private fun renderDivisionPolygons(map: MapLibreMap, pieces: List<List<LatLng>>)
 
 private fun divisionSummary(title: String, pieces: List<List<LatLng>>): String {
     if (pieces.isEmpty()) return title + ": no se pudo generar la división."
-    return title + " • " + pieces.mapIndexed { index, p ->
+    val areas = pieces.map(::polygonAreaMeters2)
+    val avg = areas.average()
+    val spread = if (avg > 0.0) (areas.maxOrNull()!! - areas.minOrNull()!!) / avg * 100.0 else 0.0
+    val equality = if (title.contains("iguales", ignoreCase = true)) " • diferencia máx. %.3f%%".format(spread) else ""
+    return title + equality + " • " + pieces.mapIndexed { index, p ->
         "Lote " + (index + 1) + ": " + "%.2f".format(polygonAreaMeters2(p)) + " m²"
     }.joinToString(" • ")
 }
