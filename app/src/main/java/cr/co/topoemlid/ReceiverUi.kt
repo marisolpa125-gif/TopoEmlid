@@ -11,7 +11,9 @@ import android.os.Handler
 import android.os.Looper
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -19,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -558,27 +561,77 @@ private fun ReceiverSubPage(
                 StatusLine("Modo de posicionamiento", gnss.positioningMode ?: "—")
                 StatusLine("Edad de corrección", gnss.correctionAgeS?.let { "%.1f s".format(it) } ?: "—")
 
-                if (gnss.satelliteSnrValues.isNotEmpty()) {
-                    Spacer(Modifier.height(12.dp))
-                    Text("Señal de satélites", fontWeight = FontWeight.Bold)
-                    Text("Barras de SNR recibidas por NMEA GSV.", style = MaterialTheme.typography.bodySmall)
-                    gnss.satelliteSnrValues.take(24).forEachIndexed { index, snr ->
-                        Row(
-                            Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("S${index + 1}", modifier = Modifier.width(36.dp), style = MaterialTheme.typography.bodySmall)
-                            LinearProgressIndicator(
-                                progress = { (snr / 60.0).coerceIn(0.0, 1.0).toFloat() },
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                "${"%.0f".format(snr)}",
-                                modifier = Modifier.width(42.dp),
-                                style = MaterialTheme.typography.bodySmall
-                            )
+                Spacer(Modifier.height(14.dp))
+                Text("Señal de satélites", fontWeight = FontWeight.Bold)
+                Text(
+                    "Altura de barra = SNR/CN0. Rojo: débil • amarillo: media • verde: buena.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(8.dp))
+
+                if (gnss.satelliteSignals.isEmpty()) {
+                    Card(Modifier.fillMaxWidth()) {
+                        Text(
+                            "Aún no se han recibido datos GSV del receptor.",
+                            modifier = Modifier.padding(12.dp),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                } else {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .height(190.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        gnss.satelliteSignals.forEach { sat ->
+                            val snr = sat.snrDbHz ?: 0.0
+                            val strengthColor = when {
+                                snr < 21.0 -> Color(0xFFD32F2F)
+                                snr < 36.0 -> Color(0xFFF9A825)
+                                else -> Color(0xFF388E3C)
+                            }
+                            val barHeight = ((snr / 60.0).coerceIn(0.05, 1.0).toFloat() * 135f).dp
+
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Bottom,
+                                modifier = Modifier.width(36.dp)
+                            ) {
+                                Text(
+                                    sat.snrDbHz?.let { "%.0f".format(it) } ?: "—",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                                Spacer(Modifier.height(3.dp))
+                                Box(
+                                    Modifier
+                                        .width(24.dp)
+                                        .height(barHeight)
+                                        .background(strengthColor)
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    sat.id,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (sat.usedInFix) FontWeight.Bold else FontWeight.Normal
+                                )
+                                Text(
+                                    if (sat.usedInFix) "●" else "○",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
                         }
                     }
+
+                    val good = gnss.satelliteSignals.count { (it.snrDbHz ?: 0.0) >= 36.0 }
+                    val medium = gnss.satelliteSignals.count { (it.snrDbHz ?: 0.0) in 21.0..<36.0 }
+                    val weak = gnss.satelliteSignals.count { (it.snrDbHz ?: 0.0) < 21.0 }
+                    Text(
+                        "Buena: $good • Media: $medium • Débil: $weak • ● usado en solución • ○ visible",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
 
                 Spacer(Modifier.height(12.dp))
