@@ -24,13 +24,28 @@ data class GstAccuracy(
 
 data class GsaStatus(
     val mode: String?,
-    val pdop: Double?
+    val pdop: Double?,
+    val usedSatelliteIds: Set<String>
+)
+
+data class GsvSatellite(
+    val id: String,
+    val constellation: String,
+    val snrDbHz: Double?,
+    val elevationDeg: Int?,
+    val azimuthDeg: Int?
 )
 
 data class GsvStatus(
     val satellitesInView: Int?,
+    val totalMessages: Int?,
+    val messageNumber: Int?,
+    val talker: String,
+    val satellites: List<GsvSatellite>
+) {
     val snrValues: List<Double>
-)
+        get() = satellites.mapNotNull { it.snrDbHz }
+}
 
 object NmeaParser {
     fun parseGga(sentence: String): GgaFix? {
@@ -73,21 +88,93 @@ object NmeaParser {
             1 -> "Sin solución"
             else -> null
         }
-        return GsaStatus(mode = mode, pdop = p.getOrNull(15)?.toDoubleOrNull())
+        val talker = sentence.removePrefix("$").take(2)
+        val used = (3..14)
+            .mapNotNull { p.getOrNull(it)?.toIntOrNull() }
+            .map { satelliteLabel(talker, it) }
+            .toSet()
+        return GsaStatus(
+            mode = mode,
+            pdop = p.getOrNull(15)?.toDoubleOrNull(),
+            usedSatelliteIds = used
+        )
     }
 
     fun parseGsv(sentence: String): GsvStatus? {
         if (!sentence.contains("GSV")) return null
         val p = sentence.substringBefore('*').split(',')
         if (p.size < 4) return null
+
+        val talker = sentence.removePrefix("$").take(2)
+        val totalMessages = p.getOrNull(1)?.toIntOrNull()
+        val messageNumber = p.getOrNull(2)?.toIntOrNull()
         val inView = p.getOrNull(3)?.toIntOrNull()
-        val snr = mutableListOf<Double>()
-        var i = 7
-        while (i < p.size) {
-            p.getOrNull(i)?.toDoubleOrNull()?.let { snr += it }
+        val satellites = mutableListOf<GsvSatellite>()
+
+        var i = 4
+        while (i + 3 < p.size) {
+            val prn = p.getOrNull(i)?.toIntOrNull()
+            val elevation = p.getOrNull(i + 1)?.toIntOrNull()
+            val azimuth = p.getOrNull(i + 2)?.toIntOrNull()
+            val snr = p.getOrNull(i + 3)?.toDoubleOrNull()
+            if (prn != null) {
+                val label = satelliteLabel(talker, prn)
+                satellites += GsvSatellite(
+                    id = label,
+                    constellation = constellationName(talker, prn),
+                    snrDbHz = snr,
+                    elevationDeg = elevation,
+                    azimuthDeg = azimuth
+                )
+            }
             i += 4
         }
-        return GsvStatus(inView, snr)
+
+        return GsvStatus(
+            satellitesInView = inView,
+            totalMessages = totalMessages,
+            messageNumber = messageNumber,
+            talker = talker,
+            satellites = satellites
+        )
+    }
+
+    private fun satelliteLabel(talker: String, prn: Int): String {
+        val prefix = when (talker.uppercase()) {
+            "GP" -> "G"
+            "GL" -> "R"
+            "GA" -> "E"
+            "GB", "BD" -> "C"
+            "GQ", "QZ" -> "J"
+            "GI" -> "I"
+            else -> when (prn) {
+                in 1..32 -> "G"
+                in 65..96 -> "R"
+                in 193..200 -> "J"
+                in 201..237 -> "C"
+                in 301..336 -> "E"
+                else -> "S"
+            }
+        }
+        val displayPrn = when (prefix) {
+            "R" -> if (prn >= 65) prn - 64 else prn
+            "C" -> if (prn >= 201) prn - 200 else prn
+            "E" -> if (prn >= 301) prn - 300 else prn
+            else -> prn
+        }
+        return prefix + displayPrn.toString().padStart(2, '0')
+    }
+
+    private fun constellationName(talker: String, prn: Int): String {
+        return when (satelliteLabel(talker, prn).firstOrNull()) {
+            'G' -> "GPS"
+            'R' -> "GLONASS"
+            'E' -> "Galileo"
+            'C' -> "BeiDou"
+            'J' -> "QZSS"
+            'I' -> "NavIC"
+            else -> "SBAS/Otro"
+        }
     }
 
     private fun nmeaCoord(value: String, hemisphere: String): Double? {
