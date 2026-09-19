@@ -1742,7 +1742,6 @@ private fun drawLiveReceiverPosition(
         MarkerOptions()
             .position(LatLng(lat, lon))
             .icon(icon)
-            .anchor(0.5f, 0.5f)
             .title("Posición GNSS • ${gnss.solution}")
     )
 }
@@ -1779,7 +1778,6 @@ private fun drawSavedSurveyPoints(
             MarkerOptions()
                 .position(LatLng(lat, lon))
                 .icon(iconFactory.fromBitmap(bitmap))
-                .anchor(0.08f, 0.5f)
                 .title("Punto ${point.pointNumber}")
                 .snippet(detail)
         )
