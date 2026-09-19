@@ -271,9 +271,9 @@ private fun ReceiversScreen(
             ) { Text(if (scanning) "Buscando…" else "↻ Actualizar") }
         }
 
-        Text("Dispositivos emparejados / detectados", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+        Text("Receptores detectados cerca", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
         Text(
-            "Aparecer aquí no significa que el receptor esté conectado. Topo Emlid muestra los equipos que Android ya tiene emparejados y los que detecta cerca.",
+            "Aquí solo aparecen receptores que Topo Emlid detecta durante la búsqueda actual. Si la antena está apagada o fuera de alcance, no debe aparecer en esta sección.",
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -285,32 +285,10 @@ private fun ReceiversScreen(
 
         if (scanning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 10.dp))
 
-        pairedGnss.forEach { p ->
-            val stored = profiles.firstOrNull { it.address == p.address } ?: p
-            ReceiverCard(
-                profile = stored,
-                subtitle = when {
-                    stored.id == activeReceiverId && gnss.connected && gnss.receiverName == stored.name && gnss.connectionTransport == "BLE" ->
-                        "${receiverBrand(stored.name)} • BLE conectado"
-                    stored.id == activeReceiverId && gnss.connected && gnss.receiverName == stored.name && gnss.nmeaReceiving ->
-                        "${receiverBrand(stored.name)} • Bluetooth/NMEA • datos recibiendo"
-                    stored.id == activeReceiverId && gnss.connected && gnss.receiverName == stored.name ->
-                        "${receiverBrand(stored.name)} • ${gnss.connectionTransport ?: "Bluetooth"} conectado"
-                    else ->
-                        "${receiverBrand(stored.name)} • ${stored.preferredMode.label} • no conectado"
-                },
-                selected = stored.id == activeReceiverId,
-                onClick = {
-                    if (profiles.none { it.address == stored.address }) onProfilesChanged(profiles + stored)
-                    onSelectReceiver(stored)
-                    onOpenReceiver(stored)
-                }
-            )
-        }
-
-        nearby.filter { n -> pairedGnss.none { it.address == n.address } }.forEach { r ->
+        nearby.forEach { r ->
+            val paired = pairedGnss.firstOrNull { it.address == r.address }
             val existing = profiles.firstOrNull { it.address == r.address }
-            val candidate = existing ?: ReceiverProfile(
+            val candidate = existing ?: paired ?: ReceiverProfile(
                 id = UUID.randomUUID().toString(),
                 name = r.name,
                 address = r.address,
@@ -322,16 +300,51 @@ private fun ReceiversScreen(
                     .fillMaxWidth()
                     .padding(vertical = 5.dp)
                     .clickable {
-                        if (existing == null) onProfilesChanged(profiles + candidate)
+                        if (existing == null && profiles.none { it.address == candidate.address }) {
+                            onProfilesChanged(profiles + candidate)
+                        }
                         onSelectReceiver(candidate)
                         onOpenReceiver(candidate)
                     }
             ) {
                 Column(Modifier.padding(14.dp)) {
                     Text(r.name, fontWeight = FontWeight.Bold)
-                    Text("Detectado por BLE • señal ${r.rssi} dBm", style = MaterialTheme.typography.bodySmall)
-                    Text("Toque para seleccionar y probar conexión BLE.", style = MaterialTheme.typography.bodySmall)
+                    Text("Detectado ahora • señal ${r.rssi} dBm", style = MaterialTheme.typography.bodySmall)
+                    if (paired != null) {
+                        Text("Emparejado en Android", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text("Toque para seleccionar y conectar.", style = MaterialTheme.typography.bodySmall)
                 }
+            }
+        }
+
+        if (!scanning && nearby.isEmpty()) {
+            InfoCard("No se detectó ningún receptor GNSS cercano en la última búsqueda. Si la antena está apagada, este es el comportamiento esperado.")
+        }
+
+        if (pairedGnss.isNotEmpty()) {
+            Spacer(Modifier.height(14.dp))
+            Text("Emparejados en Android", fontWeight = FontWeight.Bold)
+            Text(
+                "Estos equipos pueden aparecer aunque estén apagados, porque Android conserva el emparejamiento. Esto no significa que estén cerca ni conectados.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            pairedGnss.forEach { p ->
+                val stored = profiles.firstOrNull { it.address == p.address } ?: p
+                val detectedNow = nearby.any { it.address == p.address }
+                ReceiverCard(
+                    profile = stored,
+                    subtitle = if (detectedNow)
+                        "${receiverBrand(stored.name)} • detectado cerca"
+                    else
+                        "${receiverBrand(stored.name)} • emparejado • no detectado",
+                    selected = stored.id == activeReceiverId,
+                    onClick = {
+                        if (profiles.none { it.address == stored.address }) onProfilesChanged(profiles + stored)
+                        onSelectReceiver(stored)
+                        onOpenReceiver(stored)
+                    }
+                )
             }
         }
 
@@ -357,9 +370,6 @@ private fun ReceiversScreen(
             }
         }
 
-        if (!scanning && allPaired.isEmpty() && nearby.isEmpty()) {
-            InfoCard("No se han encontrado receptores ni dispositivos Bluetooth emparejados. Compruebe que la antena esté encendida, visible y emparejada en Android; luego pulse Actualizar.")
-        }
 
         if (profiles.isNotEmpty()) {
             Spacer(Modifier.height(18.dp))
@@ -367,7 +377,7 @@ private fun ReceiversScreen(
             profiles.forEach { p ->
                 ReceiverCard(
                     profile = p,
-                    subtitle = p.transport,
+                    subtitle = if (nearby.any { it.address == p.address }) "${p.transport} • detectado cerca" else "${p.transport} • guardado • no detectado",
                     selected = p.id == activeReceiverId,
                     onClick = {
                         onSelectReceiver(p)
