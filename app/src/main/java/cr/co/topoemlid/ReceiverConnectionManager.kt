@@ -50,12 +50,10 @@ class ReceiverConnectionManager(context: Context) {
 
         when (profile.preferredMode) {
             ReceiverConnectionMode.AUTO -> {
-                if (isEmlidLike(profile.name)) {
-                    autoFallbackProfile = profile
-                    connectBle(profile, allowFallback = true)
-                } else {
-                    connectNmea(profile)
-                }
+                // For field work we need actual GNSS telemetry (GGA/GST/GSA/GSV),
+                // so AUTO prioritizes the paired Bluetooth/NMEA channel. BLE is
+                // useful for discovery/admin but does not guarantee position data.
+                connectNmea(profile)
             }
             ReceiverConnectionMode.BLE -> connectBle(profile, allowFallback = false)
             ReceiverConnectionMode.BLUETOOTH_NMEA -> connectNmea(profile)
@@ -191,7 +189,7 @@ class ReceiverConnectionManager(context: Context) {
                 // Some rugged Android devices keep the RFCOMM channel busy for
                 // a fraction of a second after disconnecting. Retry the complete
                 // SPP sequence instead of failing after the first pass.
-                repeat(3) { round ->
+                repeat(5) { round ->
                     if (connectedSocket != null || Thread.currentThread().isInterrupted) return@repeat
 
                     for (uuid in candidates) {
@@ -217,7 +215,7 @@ class ReceiverConnectionManager(context: Context) {
                         }
                     }
 
-                    if (connectedSocket == null && round < 2) {
+                    if (connectedSocket == null && round < 4) {
                         Thread.sleep(700L * (round + 1))
                     }
                 }
@@ -385,14 +383,15 @@ class ReceiverConnectionManager(context: Context) {
                             connected = false,
                             receiverName = profile.name,
                             connectionTransport = "Bluetooth / NMEA",
-                            solution = "RECONECTANDO"
+                            solution = "RECONECTANDO",
+                            nmeaReceiving = false
                         )
                     }
                     mainHandler.postDelayed({
                         if (requestedProfileId == profile.id && socket == null) {
                             connectNmea(profile)
                         }
-                    }, 1200L)
+                    }, 1800L)
                 }
             }
         }
