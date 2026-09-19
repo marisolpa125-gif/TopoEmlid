@@ -374,12 +374,18 @@ fun SurveyScreen(
                             map.setStyle(baseStyle) { style ->
                                 addSelectedBasemap(style, selectedBasemap, mapboxToken)
                                 addProjectRasterLayers(style, projectLayers)
-                                refreshViewportWmsLayers(map, projectLayers)
+                                refreshViewportWmsLayers(map, projectLayers) {
+                                    map.clear()
+                                    redrawCommitted(map)
+                                }
                                 redrawCommitted(map)
                             }
 
                             map.addOnCameraIdleListener {
-                                refreshViewportWmsLayers(map, projectLayers)
+                                refreshViewportWmsLayers(map, projectLayers) {
+                                    map.clear()
+                                    redrawCommitted(map)
+                                }
                             }
 
                             map.addOnMapClickListener { latLng ->
@@ -2114,7 +2120,7 @@ private fun probeWmsUrl(url: String): String {
     }
 }
 
-private fun addSelectedBasemap(
+fun addSelectedBasemap(
     style: Style,
     basemap: BasemapType,
     mapboxToken: String
@@ -2168,7 +2174,7 @@ private fun addSelectedBasemap(
     }
 }
 
-private fun addProjectRasterLayers(
+fun addProjectRasterLayers(
     style: Style,
     layers: List<LayerItem>
 ) {
@@ -2200,9 +2206,10 @@ private fun addProjectRasterLayers(
 
 private val wmsLastSuccessfulUrl = ConcurrentHashMap<String, String>()
 
-private fun refreshViewportWmsLayers(
+fun refreshViewportWmsLayers(
     map: MapLibreMap,
-    layers: List<LayerItem>
+    layers: List<LayerItem>,
+    onLayerUpdated: (() -> Unit)? = null
 ) {
     val bounds = runCatching { map.projection.visibleRegion.latLngBounds }.getOrNull() ?: return
 
@@ -2247,6 +2254,7 @@ private fun refreshViewportWmsLayers(
                                     PropertyFactory.rasterOpacity(layer.opacity)
                                 )
                                 wmsLastSuccessfulUrl[layer.id] = uri
+                                onLayerUpdated?.invoke()
                             }
                         } else {
                             runCatching {
@@ -2257,6 +2265,7 @@ private fun refreshViewportWmsLayers(
                                     )
                                 )
                                 wmsLastSuccessfulUrl[layer.id] = uri
+                                onLayerUpdated?.invoke()
                             }
                         }
                     }
