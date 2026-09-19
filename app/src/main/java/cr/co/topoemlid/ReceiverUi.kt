@@ -99,6 +99,7 @@ fun ReceiverSection(
                     onConnect(detailReceiver!!)
                 },
                 onDisconnect = onDisconnect,
+                onOpenNtrip = { tab = "NTRIP" },
                 onModeChanged = { mode ->
                     val current = detailReceiver!!
                     val updated = current.copy(
@@ -376,6 +377,7 @@ private fun ReceiverDetailScreen(
     onSelect: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
+    onOpenNtrip: () -> Unit,
     onModeChanged: (ReceiverConnectionMode) -> Unit,
     onForget: () -> Unit
 ) {
@@ -492,7 +494,7 @@ private fun ReceiverDetailScreen(
 }
 
 private enum class ReceiverPage {
-    HOME, STATUS, CORRECTIONS, BASE_OUTPUT, BASE_CONFIG, LOGGING, WIFI, SETTINGS
+    HOME, STATUS, ADVANCED
 }
 
 @Composable
@@ -592,78 +594,7 @@ private fun ReceiverSubPage(
                 )
             }
 
-            ReceiverPage.CORRECTIONS -> ReceiverAdminPlaceholder(
-                title = "Entrada de correcciones",
-                rows = listOf(
-                    "NTRIP a través del dispositivo móvil",
-                    "NTRIP a través de Reach",
-                    "Radio LoRa",
-                    "Apagado"
-                )
-            )
-
-            ReceiverPage.BASE_OUTPUT -> ReceiverAdminPlaceholder(
-                title = "Salida de la base 1",
-                rows = listOf(
-                    "Apagado",
-                    "Radio LoRa",
-                    "NTRIP",
-                    "Serie RS‑232",
-                    "Servidor TCP",
-                    "Cliente TCP",
-                    "NTRIP local",
-                    "Bluetooth"
-                )
-            )
-
-            ReceiverPage.BASE_CONFIG -> ReceiverAdminPlaceholder(
-                title = "Configuración de la base",
-                rows = listOf(
-                    "Método de introducción de coordenadas",
-                    "Altura de la antena",
-                    "Tiempo medio",
-                    "Marcador de base",
-                    "Mensajes RTCM3"
-                )
-            )
-
-            ReceiverPage.LOGGING -> ReceiverAdminPlaceholder(
-                title = "Registro",
-                rows = listOf(
-                    "Almacenamiento",
-                    "RINEX 3.03",
-                    "Trayectoria de la posición (LLH)",
-                    "Corrección de base (RTCM3)",
-                    "Configuración y registros grabados"
-                )
-            )
-
-            ReceiverPage.WIFI -> ReceiverAdminPlaceholder(
-                title = "Wi‑Fi",
-                rows = listOf(
-                    "Modo de punto de acceso",
-                    "Redes disponibles",
-                    "Red conectada",
-                    "Activar / desactivar Wi‑Fi"
-                )
-            )
-
-            ReceiverPage.SETTINGS -> ReceiverAdminPlaceholder(
-                title = "Configuración",
-                rows = listOf(
-                    "Salida de la base 2",
-                    "Datos móviles",
-                    "Bluetooth",
-                    "Configuración de GNSS",
-                    "Transmisión de posición 1",
-                    "Transmisión de posición 2",
-                    "Actualizaciones de firmware",
-                    "Información del receptor",
-                    "Solución de problemas",
-                    "Sonidos",
-                    "Modo nocturno"
-                )
-            )
+            ReceiverPage.ADVANCED -> ReceiverAdvancedPlaceholder()
 
             ReceiverPage.HOME -> Unit
         }
@@ -676,7 +607,7 @@ private fun ReceiverSubPage(
                 else
                     "Estos valores se actualizan únicamente con datos reales recibidos del receptor por NMEA. Si aparece ESPERANDO, Topo Emlid tiene Bluetooth pero todavía no está recibiendo tramas de posición."
             else
-                "Esta pantalla ya forma parte de TopoEmlid. La lectura y modificación real de estos ajustes requiere integrar el canal de administración del Reach; por ahora no se muestran valores inventados.",
+                "Las opciones avanzadas se muestran separadas y marcadas como pendientes hasta que exista control real del receptor.",
             style = MaterialTheme.typography.bodySmall
         )
     }
@@ -714,6 +645,46 @@ private fun ReceiverAdminPlaceholder(title: String, rows: List<String>) {
             }
         }
     }
+}
+
+@Composable
+private fun ReceiverAdvancedPlaceholder() {
+    Text("Configuración avanzada del receptor", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Estas opciones corresponden a la configuración interna del receptor. Topo Emlid las separa de la conexión y de NTRIP para no confundir funciones reales con controles todavía no implementados.",
+        style = MaterialTheme.typography.bodySmall
+    )
+    Spacer(Modifier.height(12.dp))
+
+    listOf(
+        "Entrada de correcciones" to "NTRIP a través del receptor / LoRa / apagado",
+        "Salida de base" to "LoRa / NTRIP / Bluetooth / TCP / RS-232",
+        "Mensajes RTCM3" to "Selección de mensajes y frecuencia",
+        "Configuración de base" to "Coordenadas, altura y promedio",
+        "Registro" to "RINEX / LLH / RTCM3",
+        "Wi-Fi del receptor" to "Redes, hotspot y estado",
+        "Transmisión de posición" to "NMEA y otros formatos soportados"
+    ).forEach { (title, subtitle) ->
+        Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Row(
+                Modifier.fillMaxWidth().padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, fontWeight = FontWeight.Bold)
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall)
+                }
+                Text("Pendiente", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+
+    Spacer(Modifier.height(10.dp))
+    Text(
+        "Se habilitará cada opción únicamente cuando Topo Emlid pueda leer y escribir ese ajuste de forma real en el receptor.",
+        style = MaterialTheme.typography.bodySmall
+    )
 }
 
 private fun pageTitle(page: ReceiverPage): String = when (page) {
