@@ -92,6 +92,7 @@ fun SurveyScreen(
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
     var pointPhoto by remember { mutableStateOf<Uri?>(null) }
     var followReceiver by remember { mutableStateOf(false) }
+    var initialAutoZoomDone by remember(project?.id) { mutableStateOf(false) }
 
     var measuring by remember { mutableStateOf(false) }
     var secondsRemaining by remember { mutableIntStateOf(0) }
@@ -120,6 +121,20 @@ fun SurveyScreen(
         secondsRemaining = duration
         lastMessage = null
         measuring = true
+    }
+
+    LaunchedEffect(gnss.connected, gnss.latitude, gnss.longitude, mapRef, project?.id) {
+        if (!initialAutoZoomDone && gnss.connected) {
+            val lat = gnss.latitude
+            val lon = gnss.longitude
+            val map = mapRef
+            if (lat != null && lon != null && map != null) {
+                map.animateCamera(
+                    CameraUpdateFactory.newLatLngZoom(LatLng(lat, lon), 18.0)
+                )
+                initialAutoZoomDone = true
+            }
+        }
     }
 
     LaunchedEffect(gnss.latitude, gnss.longitude, followReceiver) {
@@ -509,25 +524,46 @@ fun SurveyScreen(
 
                 Spacer(Modifier.height(8.dp))
 
-                tools.forEach { tool ->
-                    Button(
-                        onClick = {
-                            if (tool == MapFieldTool.DIVIDE) {
-                                showToolsPanel = false
-                                showDividePanel = true
-                            } else {
-                                activeMapTool = tool
-                                toolPoints = emptyList()
-                                toolResult = tool.instructions
-                                mapRef?.clear()
-                                showToolsPanel = false
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    maxItemsInEachRow = 2,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    tools.forEach { tool ->
+                        OutlinedCard(
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 82.dp)
+                                .clickable {
+                                    if (tool == MapFieldTool.DIVIDE) {
+                                        showToolsPanel = false
+                                        showDividePanel = true
+                                    } else {
+                                        activeMapTool = tool
+                                        toolPoints = emptyList()
+                                        toolResult = tool.instructions
+                                        mapRef?.clear()
+                                        showToolsPanel = false
+                                    }
+                                }
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(tool.symbol, style = MaterialTheme.typography.headlineMedium)
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    tool.label,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    maxLines = 2
+                                )
                             }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                    ) {
-                        Text(tool.label)
+                        }
                     }
                 }
 
@@ -1094,20 +1130,21 @@ private fun divisionSummary(title: String, pieces: List<List<LatLng>>): String {
 
 private enum class MapFieldTool(
     val label: String,
-    val instructions: String
+    val instructions: String,
+    val symbol: String
 ) {
-    NONE("", ""),
-    POINT("Crear punto", "Toque el mapa para crear un punto."),
-    LINE("Crear línea", "Toque varios puntos para crear la línea."),
-    DISTANCE("Medir distancia", "Toque dos o más puntos. Se mostrará la distancia acumulada."),
-    AREA("Medir área", "Toque tres o más puntos para formar el área."),
-    PERIMETER("Medir perímetro", "Toque tres o más vértices del polígono."),
-    POLYGON("Crear polígono", "Toque tres o más vértices para dibujar el polígono."),
-    DIVIDE("Dividir polígono", "Divida por área igual, frente igual o por una línea de corte."),
-    DIVIDE_LINE("Línea de división", "Toque dos puntos para definir la línea de corte."),
-    RECTANGLE("Rectángulo / cuadrado", "Toque dos esquinas opuestas."),
-    CIRCLE("Círculo", "Toque el centro y luego un punto del borde."),
-    PARALLEL("Línea paralela", "Toque dos puntos de la línea base. Se creará una paralela con la separación indicada.")
+    NONE("", "", ""),
+    POINT("Crear punto", "Toque el mapa para crear un punto.", "●"),
+    LINE("Crear línea", "Toque varios puntos para crear la línea.", "╱"),
+    DISTANCE("Medir distancia", "Toque dos o más puntos. Se mostrará la distancia acumulada.", "↔ m"),
+    AREA("Medir área", "Toque tres o más puntos para formar el área.", "A²"),
+    PERIMETER("Medir perímetro", "Toque tres o más vértices del polígono.", "▱"),
+    POLYGON("Crear polígono", "Toque tres o más vértices para dibujar el polígono.", "⬡"),
+    DIVIDE("Dividir polígono", "Divida por área igual, frente igual o por una línea de corte.", "▭┆"),
+    DIVIDE_LINE("Línea de división", "Toque dos puntos para definir la línea de corte.", "┆"),
+    RECTANGLE("Rectángulo / cuadrado", "Toque dos esquinas opuestas.", "▭"),
+    CIRCLE("Círculo", "Toque el centro y luego un punto del borde.", "○"),
+    PARALLEL("Línea paralela", "Toque dos puntos de la línea base. Se creará una paralela con la separación indicada.", "∥")
 }
 
 private fun renderFieldTool(
