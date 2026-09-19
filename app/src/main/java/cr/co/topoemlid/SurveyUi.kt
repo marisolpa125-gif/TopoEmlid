@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -973,7 +974,6 @@ private enum class DivideMode(val label: String, val help: String) {
     BY_LINE("Por línea de corte", "Trace una línea de corte manual sobre el polígono.")
 }
 
-private data class XY(val x: Double, val y: Double)
 
 private fun toXY(points: List<LatLng>): Pair<List<XY>, Double> {
     val meanLat = Math.toRadians(points.map { it.latitude }.average())
