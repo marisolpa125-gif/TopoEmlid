@@ -125,6 +125,7 @@ fun SurveyScreen(
     var measuring by remember { mutableStateOf(false) }
     var secondsRemaining by remember { mutableIntStateOf(0) }
     var lastMessage by remember { mutableStateOf<String?>(null) }
+    var pendingQuickMeasureCode by remember { mutableStateOf<String?>(null) }
 
     var dragOffset by remember { mutableStateOf(Offset(40f, 300f)) }
     var parentSize by remember { mutableStateOf(IntSize.Zero) }
@@ -190,6 +191,17 @@ fun SurveyScreen(
         secondsRemaining = duration
         lastMessage = null
         measuring = true
+    }
+
+    LaunchedEffect(pendingQuickMeasureCode, showConfigPanel) {
+        val quickCode = pendingQuickMeasureCode ?: return@LaunchedEffect
+        if (!showConfigPanel) {
+            code = quickCode
+            if (description.isBlank()) description = quickCode
+            delay(120)
+            startMeasurement()
+            pendingQuickMeasureCode = null
+        }
     }
 
     LaunchedEffect(gnss.connected, gnss.latitude, gnss.longitude, mapRef, project?.id) {
@@ -513,7 +525,7 @@ fun SurveyScreen(
         Box(
             modifier = Modifier
                 .offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }
-                .size(62.dp)
+                .size(54.dp)
                 .onGloballyPositioned { buttonSize = it.size }
                 .pointerInput(parentSize, buttonSize, measuring) {
                     detectDragGesturesAfterLongPress(
@@ -1621,8 +1633,8 @@ fun SurveyScreen(
                         AssistChip(
                             onClick = {
                                 code = item
+                                pendingQuickMeasureCode = item
                                 showConfigPanel = false
-                                startMeasurement()
                             },
                             label = { Text(item) }
                         )
