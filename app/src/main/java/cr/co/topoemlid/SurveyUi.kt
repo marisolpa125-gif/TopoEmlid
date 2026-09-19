@@ -282,28 +282,24 @@ fun SurveyScreen(
                         getMapAsync { map ->
                             mapRef = map
 
-                            val baseStyle = when (selectedBasemap) {
-                                BasemapType.BASIC -> Style.Builder()
-                                    .fromUri("https://demotiles.maplibre.org/style.json")
-
-                                BasemapType.MAPBOX_STREETS,
-                                BasemapType.MAPBOX_SATELLITE -> Style.Builder()
-                                    .fromJson(
-                                        """
+                            // Always start from a local style so the MapView can render
+                            // immediately even if an external style server is slow or unavailable.
+                            val baseStyle = Style.Builder()
+                                .fromJson(
+                                    """
+                                    {
+                                      "version": 8,
+                                      "sources": {},
+                                      "layers": [
                                         {
-                                          "version": 8,
-                                          "sources": {},
-                                          "layers": [
-                                            {
-                                              "id": "background",
-                                              "type": "background",
-                                              "paint": {"background-color": "#d9dde1"}
-                                            }
-                                          ]
+                                          "id": "background",
+                                          "type": "background",
+                                          "paint": {"background-color": "#d9dde1"}
                                         }
-                                        """.trimIndent()
-                                    )
-                            }
+                                      ]
+                                    }
+                                    """.trimIndent()
+                                )
 
                             map.setStyle(baseStyle) { style ->
                                 addSelectedBasemap(style, selectedBasemap, mapboxToken)
@@ -478,7 +474,7 @@ fun SurveyScreen(
 
             SmallFloatingActionButton(
                 onClick = { followReceiver = !followReceiver }
-            ) { Text(if (followReceiver) "F✓" else "F") }
+            ) { Text(if (followReceiver) "GPS✓" else "GPS") }
 
             SmallFloatingActionButton(
                 onClick = {
@@ -1679,17 +1675,19 @@ private fun addSelectedBasemap(
     basemap: BasemapType,
     mapboxToken: String
 ) {
-    if (basemap == BasemapType.BASIC) return
-    if (mapboxToken.isBlank()) return
-
     val tileUrl = when (basemap) {
-        BasemapType.MAPBOX_STREETS ->
+        BasemapType.BASIC ->
+            "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+
+        BasemapType.MAPBOX_STREETS -> {
+            if (mapboxToken.isBlank()) return
             "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}?access_token=$mapboxToken"
+        }
 
-        BasemapType.MAPBOX_SATELLITE ->
+        BasemapType.MAPBOX_SATELLITE -> {
+            if (mapboxToken.isBlank()) return
             "https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg90?access_token=$mapboxToken"
-
-        BasemapType.BASIC -> return
+        }
     }
 
     runCatching {
