@@ -1,5 +1,12 @@
 # Topo Emlid v0.3 — prototipo Android
 
+## Descargar APK directo
+
+**[DESCARGAR TopoEmlid-v0.3-debug.apk](https://github.com/marisolpa125-gif/TopoEmlid/releases/download/topoemlid-latest-debug/TopoEmlid-v0.3-debug.apk)**
+
+> Importante: el archivo correcto pesa aproximadamente 60.9 MB y termina en `.apk`.  
+> Si GitHub ofrece `TopoEmlid-v0.3-debug.zip` de unos 30.45 MB, está entrando a **Actions**; ese no es el enlace de descarga directa.
+
 Proyecto inicial de una libreta topográfica Android orientada al trabajo con receptores Emlid Reach.
 
 ## Incluido en esta versión
