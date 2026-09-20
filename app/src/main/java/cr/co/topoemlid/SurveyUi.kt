@@ -2293,11 +2293,25 @@ fun refreshViewportWmsLayers(
         LatLng(south, west)
     )
 
+    // QGIS Desktop pide GetMap con un tamaño cercano al viewport real.
+    // Hacemos lo mismo en vez de forzar siempre una imagen cuadrada.
+    val nwScreen = runCatching { map.projection.toScreenLocation(LatLng(north, west)) }.getOrNull()
+    val seScreen = runCatching { map.projection.toScreenLocation(LatLng(south, east)) }.getOrNull()
+    val viewportWidthPx = if (nwScreen != null && seScreen != null) {
+        kotlin.math.abs(seScreen.x - nwScreen.x).toInt().coerceIn(256, 1200)
+    } else 768
+    val viewportHeightPx = if (nwScreen != null && seScreen != null) {
+        kotlin.math.abs(seScreen.y - nwScreen.y).toInt().coerceIn(256, 1200)
+    } else 768
+
     layers
         .filter { it.visible && it.type == LayerType.WMS }
         .sortedBy { it.order }
         .forEach { layer ->
-            val uri = buildViewportWmsUrl(layer, north, east, south, west) ?: return@forEach
+            val uri = buildViewportWmsUrl(
+                layer, north, east, south, west,
+                viewportWidthPx, viewportHeightPx
+            ) ?: return@forEach
             if (wmsLastSuccessfulUrl[layer.id] == uri) return@forEach
 
             Thread {
@@ -2312,7 +2326,8 @@ fun refreshViewportWmsLayers(
                     }
                     buildViewportWmsUrl(
                         layer.copy(crs = alternateCrs),
-                        north, east, south, west
+                        north, east, south, west,
+                        viewportWidthPx, viewportHeightPx
                     )?.let { alternate ->
                         if (alternate !in urls) urls += alternate
                     }
@@ -2376,16 +2391,28 @@ private fun downloadWmsBitmapWithRetry(url: String, serviceUrl: String): Bitmap?
     repeat(attempts) { attempt ->
         var conn: HttpURLConnection? = null
         try {
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            val requestUrl = if (isSiri) {
+                val separator = if (url.contains("?")) "&" else "?"
+                url + separator + "_topo_retry=" + System.nanoTime()
+            } else {
+                url
+            }
+
+            conn = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
                 connectTimeout = if (isSiri) 12000 else 10000
                 readTimeout = if (isSiri) 18000 else 12000
                 requestMethod = "GET"
                 instanceFollowRedirects = true
                 useCaches = false
-                setRequestProperty("User-Agent", "TopoEmlid/0.3")
+                setRequestProperty("User-Agent", "Mozilla/5.0 TopoEmlid/0.3")
                 setRequestProperty("Accept", "image/png,image/jpeg,*/*")
-                setRequestProperty("Cache-Control", "no-cache")
+                setRequestProperty("Accept-Language", "es-CR,es;q=0.9")
+                setRequestProperty("Cache-Control", "no-cache, no-store")
+                setRequestProperty("Pragma", "no-cache")
                 setRequestProperty("Connection", "close")
+                if (isSiri) {
+                    setRequestProperty("Referer", "https://siri.snitcr.go.cr/")
+                }
             }
 
             val code = conn.responseCode
@@ -2438,7 +2465,9 @@ private fun buildViewportWmsUrl(
     north: Double,
     east: Double,
     south: Double,
-    west: Double
+    west: Double,
+    widthPx: Int = 768,
+    heightPx: Int = 768
 ): String? {
     val raw = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return null
     val layerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
@@ -2497,12 +2526,16 @@ private fun buildViewportWmsUrl(
         append(encodedFormat)
         append("&transparent=")
         append(layer.transparent)
+        append("&exceptions=application/vnd.ogc.se_inimage")
+        append("&tiled=false")
         append("&srs=")
         append(requestedCrs)
         append("&bbox=")
         append(bbox)
-        append("&width=768")
-        append("&height=768")
+        append("&width=")
+        append(widthPx)
+        append("&height=")
+        append(heightPx)
     }
 }
 
