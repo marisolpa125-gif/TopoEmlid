@@ -2015,73 +2015,75 @@ private fun ensureSurveyPointOverlayOnTop(
 
     val savedSourceId = "survey-points-top-source"
     val savedLayerId = "survey-points-top-layer"
+
     val savedSource = style.getSourceAs<GeoJsonSource>(savedSourceId)
     if (savedSource == null) {
-        style.addSource(GeoJsonSource(savedSourceId, FeatureCollection.fromFeatures(savedFeatures)))
-        style.addLayer(
-            CircleLayer(savedLayerId, savedSourceId).withProperties(
-                PropertyFactory.circleColor(android.graphics.Color.WHITE),
-                PropertyFactory.circleStrokeColor(android.graphics.Color.rgb(30, 30, 30)),
-                PropertyFactory.circleStrokeWidth(3f),
-                PropertyFactory.circleRadius(7f)
+        style.addSource(
+            GeoJsonSource(
+                savedSourceId,
+                FeatureCollection.fromFeatures(savedFeatures)
             )
         )
     } else {
         savedSource.setGeoJson(FeatureCollection.fromFeatures(savedFeatures))
-        style.getLayer(savedLayerId)?.let {
-            style.removeLayer(savedLayerId)
-            style.addLayer(
-                CircleLayer(savedLayerId, savedSourceId).withProperties(
-                    PropertyFactory.circleColor(android.graphics.Color.WHITE),
-                    PropertyFactory.circleStrokeColor(android.graphics.Color.rgb(30, 30, 30)),
-                    PropertyFactory.circleStrokeWidth(3f),
-                    PropertyFactory.circleRadius(7f)
-                )
-            )
-        }
     }
+
+    // Siempre recreamos la capa al final del stack del estilo.
+    // Así queda por encima de mapa básico, satélite, WMS, WMTS y XYZ.
+    runCatching { style.removeLayer(savedLayerId) }
+    style.addLayer(
+        CircleLayer(savedLayerId, savedSourceId).withProperties(
+            PropertyFactory.circleColor(android.graphics.Color.WHITE),
+            PropertyFactory.circleStrokeColor(android.graphics.Color.rgb(30, 30, 30)),
+            PropertyFactory.circleStrokeWidth(3f),
+            PropertyFactory.circleRadius(7f)
+        )
+    )
 
     val liveSourceId = "gnss-live-top-source"
     val liveLayerId = "gnss-live-top-layer"
     val liveFeatures = if (
         gnss.connected && gnss.latitude != null && gnss.longitude != null
     ) {
-        listOf(Feature.fromGeometry(Point.fromLngLat(gnss.longitude!!, gnss.latitude!!)))
+        listOf(
+            Feature.fromGeometry(
+                Point.fromLngLat(gnss.longitude!!, gnss.latitude!!)
+            )
+        )
     } else {
         emptyList()
     }
 
     val liveSource = style.getSourceAs<GeoJsonSource>(liveSourceId)
-    val liveColor = when {
-        gnss.solution.equals("FIX", true) -> android.graphics.Color.rgb(46, 125, 50)
-        gnss.solution.equals("FLOAT", true) -> android.graphics.Color.rgb(249, 168, 37)
-        else -> android.graphics.Color.rgb(198, 40, 40)
-    }
-
     if (liveSource == null) {
-        style.addSource(GeoJsonSource(liveSourceId, FeatureCollection.fromFeatures(liveFeatures)))
-        style.addLayer(
-            CircleLayer(liveLayerId, liveSourceId).withProperties(
-                PropertyFactory.circleColor(liveColor),
-                PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
-                PropertyFactory.circleStrokeWidth(4f),
-                PropertyFactory.circleRadius(10f)
+        style.addSource(
+            GeoJsonSource(
+                liveSourceId,
+                FeatureCollection.fromFeatures(liveFeatures)
             )
         )
     } else {
         liveSource.setGeoJson(FeatureCollection.fromFeatures(liveFeatures))
-        style.getLayer(liveLayerId)?.let {
-            style.removeLayer(liveLayerId)
-            style.addLayer(
-                CircleLayer(liveLayerId, liveSourceId).withProperties(
-                    PropertyFactory.circleColor(liveColor),
-                    PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
-                    PropertyFactory.circleStrokeWidth(4f),
-                    PropertyFactory.circleRadius(10f)
-                )
-            )
-        }
     }
+
+    val liveColor = when {
+        gnss.solution.equals("FIX", true) ->
+            android.graphics.Color.rgb(46, 125, 50)
+        gnss.solution.equals("FLOAT", true) ->
+            android.graphics.Color.rgb(249, 168, 37)
+        else ->
+            android.graphics.Color.rgb(198, 40, 40)
+    }
+
+    runCatching { style.removeLayer(liveLayerId) }
+    style.addLayer(
+        CircleLayer(liveLayerId, liveSourceId).withProperties(
+            PropertyFactory.circleColor(liveColor),
+            PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
+            PropertyFactory.circleStrokeWidth(4f),
+            PropertyFactory.circleRadius(10f)
+        )
+    )
 }
 
 
