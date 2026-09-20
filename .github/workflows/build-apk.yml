@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-debug-apk:
@@ -158,3 +158,19 @@ jobs:
           path: release/TopoEmlid-v0.3-debug.apk
           if-no-files-found: error
           retention-days: 30
+
+
+      - name: Publicar APK directo en GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="topoemlid-latest-debug"
+          APK="release/TopoEmlid-v0.3-debug.apk"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Actualizando release existente $TAG"
+          else
+            gh release create "$TAG"               --title "TopoEmlid APK de prueba"               --notes "APK debug más reciente generado automáticamente por GitHub Actions."
+          fi
+
+          gh release upload "$TAG" "$APK" --clobber
