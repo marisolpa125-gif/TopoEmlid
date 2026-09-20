@@ -1,3 +1,4 @@
+# Nuevo run solicitado para generar un artefacto APK fresco desde GitHub Actions.
 name: Generar APK de prueba
 
 on:
