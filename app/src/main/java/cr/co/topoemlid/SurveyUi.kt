@@ -2301,8 +2301,37 @@ fun refreshViewportWmsLayers(
             if (wmsLastSuccessfulUrl[layer.id] == uri) return@forEach
 
             Thread {
-                val bitmap = downloadWmsBitmapWithRetry(uri, layer.url.orEmpty())
-                if (bitmap != null) {
+                val serviceUrl = layer.url.orEmpty()
+                val urls = mutableListOf(uri)
+
+                if (serviceUrl.contains("siri.snitcr.go.cr", ignoreCase = true)) {
+                    val alternateCrs = if (layer.crs.equals("EPSG:3857", true)) {
+                        "EPSG:4326"
+                    } else {
+                        "EPSG:3857"
+                    }
+                    buildViewportWmsUrl(
+                        layer.copy(crs = alternateCrs),
+                        north, east, south, west
+                    )?.let { alternate ->
+                        if (alternate !in urls) urls += alternate
+                    }
+                }
+
+                var successfulUrl: String? = null
+                var bitmap: Bitmap? = null
+
+                for (candidateUrl in urls) {
+                    bitmap = downloadWmsBitmapWithRetry(candidateUrl, serviceUrl)
+                    if (bitmap != null) {
+                        successfulUrl = candidateUrl
+                        break
+                    }
+                }
+
+                if (bitmap != null && successfulUrl != null) {
+                    val loadedBitmap = bitmap
+                    val loadedUrl = successfulUrl
                     Handler(Looper.getMainLooper()).post {
                         val style = map.style ?: return@post
                         val sourceId = "project-wms-image-source-${layer.id}"
@@ -2315,22 +2344,22 @@ fun refreshViewportWmsLayers(
                         if (existing != null) {
                             runCatching {
                                 existing.setCoordinates(quad)
-                                existing.setImage(bitmap)
+                                existing.setImage(loadedBitmap)
                                 style.getLayerAs<RasterLayer>(layerId)?.setProperties(
                                     PropertyFactory.rasterOpacity(layer.opacity)
                                 )
-                                wmsLastSuccessfulUrl[layer.id] = uri
+                                wmsLastSuccessfulUrl[layer.id] = loadedUrl
                                 onLayerUpdated?.invoke()
                             }
                         } else {
                             runCatching {
-                                style.addSource(ImageSource(sourceId, quad, bitmap))
+                                style.addSource(ImageSource(sourceId, quad, loadedBitmap))
                                 style.addLayer(
                                     RasterLayer(layerId, sourceId).withProperties(
                                         PropertyFactory.rasterOpacity(layer.opacity)
                                     )
                                 )
-                                wmsLastSuccessfulUrl[layer.id] = uri
+                                wmsLastSuccessfulUrl[layer.id] = loadedUrl
                                 onLayerUpdated?.invoke()
                             }
                         }
@@ -2341,41 +2370,63 @@ fun refreshViewportWmsLayers(
 }
 
 private fun downloadWmsBitmapWithRetry(url: String, serviceUrl: String): Bitmap? {
-    val attempts = if (serviceUrl.contains("siri.snitcr.go.cr", true)) 4 else 1
+    val isSiri = serviceUrl.contains("siri.snitcr.go.cr", ignoreCase = true)
+    val attempts = if (isSiri) 8 else 2
 
     repeat(attempts) { attempt ->
+        var conn: HttpURLConnection? = null
         try {
-            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 10000
-                readTimeout = 15000
+            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = if (isSiri) 12000 else 10000
+                readTimeout = if (isSiri) 18000 else 12000
                 requestMethod = "GET"
                 instanceFollowRedirects = true
+                useCaches = false
                 setRequestProperty("User-Agent", "TopoEmlid/0.3")
                 setRequestProperty("Accept", "image/png,image/jpeg,*/*")
+                setRequestProperty("Cache-Control", "no-cache")
+                setRequestProperty("Connection", "close")
             }
 
-            val finalUrl = conn.url.toString()
             val code = conn.responseCode
-            val type = conn.contentType.orEmpty()
+            val finalUrl = conn.url.toString()
 
-            if (code in 200..299 &&
-                type.startsWith("image/", ignoreCase = true) &&
-                !finalUrl.contains("/Geoservicios/error", true)
+            if (
+                code in 200..299 &&
+                !finalUrl.contains("/Geoservicios/error", ignoreCase = true)
             ) {
-                conn.inputStream.use { input ->
-                    val bitmap = BitmapFactory.decodeStream(input)
-                    conn.disconnect()
-                    if (bitmap != null) return bitmap
+                val bytes = conn.inputStream.use { it.readBytes() }
+
+                // SIRI a veces no devuelve un Content-Type fiable. En vez de
+                // rechazar la respuesta solo por el encabezado, validamos los
+                // bytes reales de PNG/JPEG y después intentamos decodificarlos.
+                val looksLikePng =
+                    bytes.size >= 8 &&
+                    bytes[0] == 0x89.toByte() &&
+                    bytes[1] == 0x50.toByte() &&
+                    bytes[2] == 0x4E.toByte() &&
+                    bytes[3] == 0x47.toByte()
+
+                val looksLikeJpeg =
+                    bytes.size >= 3 &&
+                    bytes[0] == 0xFF.toByte() &&
+                    bytes[1] == 0xD8.toByte() &&
+                    bytes[2] == 0xFF.toByte()
+
+                if (looksLikePng || looksLikeJpeg) {
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let {
+                        return it
+                    }
                 }
-            } else {
-                conn.disconnect()
             }
         } catch (_: Exception) {
-            // SIRI is intermittent; retry below.
+            // La red del SIRI es intermitente; reintentamos más abajo.
+        } finally {
+            runCatching { conn?.disconnect() }
         }
 
         if (attempt < attempts - 1) {
-            Thread.sleep(1500)
+            Thread.sleep(if (isSiri) 1500L else 700L)
         }
     }
 
@@ -2450,8 +2501,8 @@ private fun buildViewportWmsUrl(
         append(requestedCrs)
         append("&bbox=")
         append(bbox)
-        append("&width=1024")
-        append("&height=1024")
+        append("&width=768")
+        append("&height=768")
     }
 }
 
