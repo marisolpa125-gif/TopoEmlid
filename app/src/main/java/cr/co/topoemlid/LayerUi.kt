@@ -432,9 +432,9 @@ private fun LayerEditorDialog(
                                                 layerName = option.name
                                                 if (name.isBlank()) name = option.title
                                                 crs = when {
-                                                    option.crs.any { it.equals("EPSG:3857", true) } -> "EPSG:3857"
                                                     option.crs.any { it.equals("EPSG:4326", true) } -> "EPSG:4326"
-                                                    else -> "EPSG:3857"
+                                                    option.crs.any { it.equals("EPSG:3857", true) } -> "EPSG:3857"
+                                                    else -> "EPSG:4326"
                                                 }
                                                 wmsMenuOpen = false
                                             }
