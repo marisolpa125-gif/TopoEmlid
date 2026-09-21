@@ -1766,29 +1766,43 @@ fun SurveyScreen(
                                             if (map == null) {
                                                 wmsDiagnostic = "El mapa aún no está listo."
                                             } else {
-                                                // No hacemos una prueba HTTP separada: el SIRI puede
-                                                // fallar aleatoriamente y esa prueba solo agrega más
-                                                // peticiones. Recargamos usando exactamente el mismo
-                                                // flujo que dibuja la capa en el mapa.
-                                                wmsLastSuccessfulUrl.remove(layer.id)
-                                                wmsRequestInFlight.remove(layer.id)
-                                                wmsTestingId = layer.id
-                                                wmsDiagnostic = "Recargando WMS en el mapa… SIRI puede tardar unos segundos."
-                                                refreshViewportWmsLayers(
-                                                    map = map,
-                                                    layers = listOf(layer),
-                                                    onLayerUpdated = {
-                                                        wmsDiagnostic = "WMS cargado correctamente en el mapa."
-                                                        wmsTestingId = null
-                                                        map.clear()
-                                                        redrawCommitted(map)
-                                                    },
-                                                    onLayerFailed = { reason ->
-                                                        wmsDiagnostic = reason +
-                                                            " Acerque el mapa al área de trabajo y vuelva a intentar."
-                                                        wmsTestingId = null
-                                                    }
+                                                val isSiri = layer.url.orEmpty().contains(
+                                                    "siri.snitcr.go.cr/Geoservicios/wms",
+                                                    ignoreCase = true
                                                 )
+                                                if (isSiri) {
+                                                    wmsTestingId = null
+                                                    wmsDiagnostic =
+                                                        "SIRI se carga ahora por mosaicos WMS de 256 px, como una capa de mapa. " +
+                                                        "Cierre este panel y haga zoom o mueva el mapa para forzar la carga."
+                                                    map.getStyle { style ->
+                                                        runCatching {
+                                                            style.removeLayer("project-layer-${layer.id}")
+                                                            style.removeSource("project-source-${layer.id}")
+                                                        }
+                                                        addProjectRasterLayers(style, listOf(layer))
+                                                        redrawCommitted(map)
+                                                    }
+                                                } else {
+                                                    wmsLastSuccessfulUrl.remove(layer.id)
+                                                    wmsRequestInFlight.remove(layer.id)
+                                                    wmsTestingId = layer.id
+                                                    wmsDiagnostic = "Recargando WMS en el mapa…"
+                                                    refreshViewportWmsLayers(
+                                                        map = map,
+                                                        layers = listOf(layer),
+                                                        onLayerUpdated = {
+                                                            wmsDiagnostic = "WMS cargado correctamente en el mapa."
+                                                            wmsTestingId = null
+                                                            map.clear()
+                                                            redrawCommitted(map)
+                                                        },
+                                                        onLayerFailed = { reason ->
+                                                            wmsDiagnostic = reason
+                                                            wmsTestingId = null
+                                                        }
+                                                    )
+                                                }
                                             }
                                         },
                                         modifier = Modifier
@@ -2216,9 +2230,16 @@ fun addProjectRasterLayers(
         .filter { it.visible }
         .sortedBy { it.order }
         .forEach { layer ->
-            val tileUrl = when (layer.type) {
-                LayerType.XYZ, LayerType.WMTS -> layer.url
-                LayerType.WMS -> null
+            val isSiriWms =
+                layer.type == LayerType.WMS &&
+                layer.url.orEmpty().contains(
+                    "siri.snitcr.go.cr/Geoservicios/wms",
+                    ignoreCase = true
+                )
+
+            val tileUrl = when {
+                layer.type == LayerType.XYZ || layer.type == LayerType.WMTS -> layer.url
+                isSiriWms -> buildWmsTileUrl(layer)
                 else -> null
             } ?: return@forEach
 
@@ -2265,7 +2286,14 @@ fun refreshViewportWmsLayers(
     )
 
     layers
-        .filter { it.visible && it.type == LayerType.WMS }
+        .filter {
+            it.visible &&
+            it.type == LayerType.WMS &&
+            !it.url.orEmpty().contains(
+                "siri.snitcr.go.cr/Geoservicios/wms",
+                ignoreCase = true
+            )
+        }
         .sortedBy { it.order }
         .forEach { layer ->
             val uri = buildViewportWmsUrl(layer, north, east, south, west) ?: return@forEach
@@ -2331,7 +2359,7 @@ private fun downloadWmsBitmapWithPersistentRetry(
     serviceUrl: String
 ): Bitmap? {
     val isSiri = serviceUrl.contains("siri.snitcr.go.cr/Geoservicios/wms", ignoreCase = true)
-    val attempts = if (isSiri) 12 else 2
+    val attempts = 2
 
     repeat(attempts) { attempt ->
         var conn: HttpURLConnection? = null
@@ -2484,11 +2512,17 @@ private fun buildViewportWmsUrl(
 
 private fun buildWmsTileUrl(layer: LayerItem): String? {
     val raw = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return null
-    val layerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val rawLayerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val isSiri = raw.contains("siri.snitcr.go.cr/Geoservicios/wms", ignoreCase = true)
 
-    if (raw.contains("{bbox-epsg-3857}", ignoreCase = true)) {
-        return raw
-    }
+    val layerName = if (isSiri) {
+        when (rawLayerName.trim().lowercase().replace(" ", "").replace("_", "")) {
+            "zona1", "catastro" -> "catastro"
+            "zona2", "catastroaldia" -> "catastro_aldia"
+            "viaspublicas", "viaspúblicas", "vias" -> "vias_publicas"
+            else -> rawLayerName
+        }
+    } else rawLayerName
 
     val base = sanitizeWmsBaseUrl(raw)
     val separator = if (base.contains("?")) {
@@ -2501,23 +2535,12 @@ private fun buildWmsTileUrl(layer: LayerItem): String? {
     val encodedStyle = java.net.URLEncoder.encode(layer.styleName.orEmpty(), "UTF-8")
     val encodedFormat = java.net.URLEncoder.encode(layer.imageFormat, "UTF-8")
 
-    // MapLibre supplies tile bounds in Web Mercator. SNIT / Registro
-    // services publish WMS 1.3.0, which uses CRS instead of SRS. Keep 1.1.1
-    // compatibility for other WMS endpoints.
-    val institutional = base.contains("snitcr.go.cr", ignoreCase = true) ||
-        base.contains("rnp.go.cr", ignoreCase = true) ||
-        base.contains("registro", ignoreCase = true)
-
-    val version = if (institutional) "1.3.0" else "1.1.1"
-    val crsParameter = if (institutional) "crs" else "srs"
-
     return buildString {
         append(base)
         append(separator)
         append("service=WMS")
         append("&request=GetMap")
-        append("&version=")
-        append(version)
+        append("&version=1.1.1")
         append("&layers=")
         append(encodedLayer)
         append("&styles=")
@@ -2526,13 +2549,10 @@ private fun buildWmsTileUrl(layer: LayerItem): String? {
         append(encodedFormat)
         append("&transparent=")
         append(layer.transparent)
-        append("&")
-        append(crsParameter)
-        append("=EPSG:3857")
+        append("&srs=EPSG:3857")
         append("&bbox={bbox-epsg-3857}")
         append("&width=256")
         append("&height=256")
-        append("&tiled=true")
     }
 }
 
