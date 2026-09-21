@@ -2440,20 +2440,30 @@ fun refreshViewportWmsLayers(
                 "snitcr.go.cr/servicios/cartografia/wms",
                 ignoreCase = true
             )
+            val isCurrentSnit = serviceUrl.contains(
+                "geos.snitcr.go.cr/be/",
+                ignoreCase = true
+            )
 
-            if (isSiri || isSnitCartography) {
+            if (isSiri || isSnitCartography || isCurrentSnit) {
                 // Use the original MapLibre direct ImageSource route. This deliberately
                 // avoids making our own HTTP download a prerequisite for rendering.
-                val uri = if (isSiri) {
-                    buildLegacyWorkingSiriUrl(
+                val uri = when {
+                    isSiri -> buildLegacyWorkingSiriUrl(
                         layer = layer,
                         north = north,
                         east = east,
                         south = south,
                         west = west
                     )
-                } else {
-                    buildLegacyDirectSnitUrl(
+                    isSnitCartography -> buildLegacyDirectSnitUrl(
+                        layer = layer,
+                        north = north,
+                        east = east,
+                        south = south,
+                        west = west
+                    )
+                    else -> buildViewportWmsUrl(
                         layer = layer,
                         north = north,
                         east = east,
@@ -2489,10 +2499,14 @@ fun refreshViewportWmsLayers(
                 if (attached) {
                     wmsLastSuccessfulUrl[layer.id] = uri
                     siriWinningStrategy[layer.id] =
-                        if (isSiri)
-                            "RUTA DIRECTA MAPLIBRE • WMS 1.1.1 • EPSG:4326 • 1024 px"
-                        else
-                            "RUTA DIRECTA MAPLIBRE SNIT • WMS 1.1.1 • EPSG:4326 • 1024 px"
+                        when {
+                            isSiri ->
+                                "RUTA DIRECTA MAPLIBRE • SIRI • WMS 1.1.1 • EPSG:4326"
+                            isSnitCartography ->
+                                "RUTA DIRECTA MAPLIBRE • SNIT legado • WMS 1.1.1 • EPSG:4326"
+                            else ->
+                                "RUTA DIRECTA MAPLIBRE • SNIT actual geos.snitcr.go.cr • WMS 1.1.1 • EPSG:4326"
+                        }
 
                     // Let the map render immediately; the probe below is diagnostic only.
                     onLayerUpdated?.invoke()
