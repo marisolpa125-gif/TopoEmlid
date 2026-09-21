@@ -2294,22 +2294,36 @@ fun refreshViewportWmsLayers(
         .filter { it.type == LayerType.WMS }
         .sortedBy { it.order }
         .forEach { layer ->
-            val isSiri = layer.url.orEmpty().contains(
+            val serviceUrl = layer.url.orEmpty()
+            val isSiri = serviceUrl.contains(
                 "siri.snitcr.go.cr/Geoservicios/wms",
                 ignoreCase = true
             )
+            val isSnitCartography = serviceUrl.contains(
+                "snitcr.go.cr/servicios/cartografia/wms",
+                ignoreCase = true
+            )
 
-            if (isSiri) {
-                // Restauración exacta del método que sí mostró las capas al inicio
-                // del proyecto: MapLibre carga directamente el GetMap como ImageSource,
-                // WMS 1.1.1 + EPSG:4326 + BBOX lon/lat + 1024x1024.
-                val uri = buildLegacyWorkingSiriUrl(
-                    layer = layer,
-                    north = north,
-                    east = east,
-                    south = south,
-                    west = west
-                ) ?: return@forEach
+            if (isSiri || isSnitCartography) {
+                // Use the original MapLibre direct ImageSource route. This deliberately
+                // avoids making our own HTTP download a prerequisite for rendering.
+                val uri = if (isSiri) {
+                    buildLegacyWorkingSiriUrl(
+                        layer = layer,
+                        north = north,
+                        east = east,
+                        south = south,
+                        west = west
+                    )
+                } else {
+                    buildLegacyDirectSnitUrl(
+                        layer = layer,
+                        north = north,
+                        east = east,
+                        south = south,
+                        west = west
+                    )
+                } ?: return@forEach
 
                 val sourceId = "project-wms-image-source-${layer.id}"
                 val layerId = "project-wms-image-layer-${layer.id}"
@@ -2317,31 +2331,58 @@ fun refreshViewportWmsLayers(
                     style.getSourceAs<ImageSource>(sourceId)
                 }.getOrNull()
 
-                if (existing != null) {
-                    runCatching {
+                val attached = runCatching {
+                    if (existing != null) {
                         existing.setCoordinates(quad)
                         existing.setUri(uri)
                         style.getLayerAs<RasterLayer>(layerId)?.setProperties(
                             PropertyFactory.rasterOpacity(layer.opacity)
                         )
-                        wmsLastSuccessfulUrl[layer.id] = uri
-                        siriWinningStrategy[layer.id] =
-                            "MÉTODO ORIGINAL • WMS 1.1.1 • EPSG:4326 • 1024 px"
-                        onLayerUpdated?.invoke()
-                    }
-                } else {
-                    runCatching {
+                    } else {
                         style.addSource(ImageSource(sourceId, quad, URI.create(uri)))
                         style.addLayer(
                             RasterLayer(layerId, sourceId).withProperties(
                                 PropertyFactory.rasterOpacity(layer.opacity)
                             )
                         )
-                        wmsLastSuccessfulUrl[layer.id] = uri
-                        siriWinningStrategy[layer.id] =
-                            "MÉTODO ORIGINAL • WMS 1.1.1 • EPSG:4326 • 1024 px"
-                        onLayerUpdated?.invoke()
                     }
+                    true
+                }.getOrDefault(false)
+
+                if (attached) {
+                    wmsLastSuccessfulUrl[layer.id] = uri
+                    siriWinningStrategy[layer.id] =
+                        if (isSiri)
+                            "RUTA DIRECTA MAPLIBRE • WMS 1.1.1 • EPSG:4326 • 1024 px"
+                        else
+                            "RUTA DIRECTA MAPLIBRE SNIT • WMS 1.1.1 • EPSG:4326 • 1024 px"
+
+                    // Let the map render immediately; the probe below is diagnostic only.
+                    onLayerUpdated?.invoke()
+
+                    Thread {
+                        val probeBitmap = downloadSingleWmsBitmap(
+                            url = uri,
+                            serviceUrl = serviceUrl,
+                            qgisLikeHeaders = false
+                        )
+                        val detail = wmsAttemptDiagnostics[uri] ?: "sin diagnóstico"
+                        wmsLayerDiagnostics[layer.id] =
+                            "Prueba HTTP paralela (no bloquea MapLibre) → $detail"
+                        if (probeBitmap == null) {
+                            // A failed probe does NOT remove or replace the direct MapLibre source.
+                            // It only reports what our Java HTTP stack sees on this device.
+                        }
+                        Handler(Looper.getMainLooper()).post {
+                            onLayerUpdated?.invoke()
+                        }
+                    }.start()
+                } else {
+                    wmsLayerDiagnostics[layer.id] =
+                        "No se pudo adjuntar el ImageSource WMS al estilo de MapLibre."
+                    onLayerFailed?.invoke(
+                        "No se pudo crear la capa WMS dentro del mapa."
+                    )
                 }
                 return@forEach
             }
@@ -2781,6 +2822,51 @@ private fun buildLegacyWorkingSiriUrl(
         else -> rawLayerName
     }
 
+    val base = sanitizeWmsBaseUrl(raw)
+    val separator = if (base.contains("?")) {
+        if (base.endsWith("?") || base.endsWith("&")) "" else "&"
+    } else "?"
+
+    val encodedLayer = java.net.URLEncoder.encode(layerName, "UTF-8")
+    val encodedStyle = java.net.URLEncoder.encode(layer.styleName.orEmpty(), "UTF-8")
+    val encodedFormat = java.net.URLEncoder.encode(layer.imageFormat, "UTF-8")
+
+    return buildString {
+        append(base)
+        append(separator)
+        append("service=WMS")
+        append("&request=GetMap")
+        append("&version=1.1.1")
+        append("&layers=")
+        append(encodedLayer)
+        append("&styles=")
+        append(encodedStyle)
+        append("&format=")
+        append(encodedFormat)
+        append("&transparent=")
+        append(layer.transparent)
+        append("&srs=EPSG:4326")
+        append("&bbox=")
+        append(
+            "%.8f,%.8f,%.8f,%.8f".format(
+                java.util.Locale.US,
+                west, south, east, north
+            )
+        )
+        append("&width=1024")
+        append("&height=1024")
+    }
+}
+
+private fun buildLegacyDirectSnitUrl(
+    layer: LayerItem,
+    north: Double,
+    east: Double,
+    south: Double,
+    west: Double
+): String? {
+    val raw = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val layerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
     val base = sanitizeWmsBaseUrl(raw)
     val separator = if (base.contains("?")) {
         if (base.endsWith("?") || base.endsWith("&")) "" else "&"
