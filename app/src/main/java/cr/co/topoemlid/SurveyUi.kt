@@ -2294,6 +2294,58 @@ fun refreshViewportWmsLayers(
         .filter { it.type == LayerType.WMS }
         .sortedBy { it.order }
         .forEach { layer ->
+            val isSiri = layer.url.orEmpty().contains(
+                "siri.snitcr.go.cr/Geoservicios/wms",
+                ignoreCase = true
+            )
+
+            if (isSiri) {
+                // Restauración exacta del método que sí mostró las capas al inicio
+                // del proyecto: MapLibre carga directamente el GetMap como ImageSource,
+                // WMS 1.1.1 + EPSG:4326 + BBOX lon/lat + 1024x1024.
+                val uri = buildLegacyWorkingSiriUrl(
+                    layer = layer,
+                    north = north,
+                    east = east,
+                    south = south,
+                    west = west
+                ) ?: return@forEach
+
+                val sourceId = "project-wms-image-source-${layer.id}"
+                val layerId = "project-wms-image-layer-${layer.id}"
+                val existing = runCatching {
+                    style.getSourceAs<ImageSource>(sourceId)
+                }.getOrNull()
+
+                if (existing != null) {
+                    runCatching {
+                        existing.setCoordinates(quad)
+                        existing.setUri(uri)
+                        style.getLayerAs<RasterLayer>(layerId)?.setProperties(
+                            PropertyFactory.rasterOpacity(layer.opacity)
+                        )
+                        wmsLastSuccessfulUrl[layer.id] = uri
+                        siriWinningStrategy[layer.id] =
+                            "MÉTODO ORIGINAL • WMS 1.1.1 • EPSG:4326 • 1024 px"
+                        onLayerUpdated?.invoke()
+                    }
+                } else {
+                    runCatching {
+                        style.addSource(ImageSource(sourceId, quad, URI.create(uri)))
+                        style.addLayer(
+                            RasterLayer(layerId, sourceId).withProperties(
+                                PropertyFactory.rasterOpacity(layer.opacity)
+                            )
+                        )
+                        wmsLastSuccessfulUrl[layer.id] = uri
+                        siriWinningStrategy[layer.id] =
+                            "MÉTODO ORIGINAL • WMS 1.1.1 • EPSG:4326 • 1024 px"
+                        onLayerUpdated?.invoke()
+                    }
+                }
+                return@forEach
+            }
+
             if (wmsRequestInFlight.putIfAbsent(layer.id, true) != null) return@forEach
 
             Thread {
@@ -2710,6 +2762,60 @@ private fun downloadSingleWmsBitmap(
     }
 }
 
+
+private fun buildLegacyWorkingSiriUrl(
+    layer: LayerItem,
+    north: Double,
+    east: Double,
+    south: Double,
+    west: Double
+): String? {
+    val raw = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val rawLayerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val layerName = when (
+        rawLayerName.trim().lowercase().replace(" ", "").replace("_", "")
+    ) {
+        "zona1", "catastro" -> "catastro"
+        "zona2", "catastroaldia" -> "catastro_aldia"
+        "viaspublicas", "viaspúblicas", "vias" -> "vias_publicas"
+        else -> rawLayerName
+    }
+
+    val base = sanitizeWmsBaseUrl(raw)
+    val separator = if (base.contains("?")) {
+        if (base.endsWith("?") || base.endsWith("&")) "" else "&"
+    } else "?"
+
+    val encodedLayer = java.net.URLEncoder.encode(layerName, "UTF-8")
+    val encodedStyle = java.net.URLEncoder.encode(layer.styleName.orEmpty(), "UTF-8")
+    val encodedFormat = java.net.URLEncoder.encode(layer.imageFormat, "UTF-8")
+
+    return buildString {
+        append(base)
+        append(separator)
+        append("service=WMS")
+        append("&request=GetMap")
+        append("&version=1.1.1")
+        append("&layers=")
+        append(encodedLayer)
+        append("&styles=")
+        append(encodedStyle)
+        append("&format=")
+        append(encodedFormat)
+        append("&transparent=")
+        append(layer.transparent)
+        append("&srs=EPSG:4326")
+        append("&bbox=")
+        append(
+            "%.8f,%.8f,%.8f,%.8f".format(
+                java.util.Locale.US,
+                west, south, east, north
+            )
+        )
+        append("&width=1024")
+        append("&height=1024")
+    }
+}
 
 private fun buildViewportWmsUrl(
     layer: LayerItem,
