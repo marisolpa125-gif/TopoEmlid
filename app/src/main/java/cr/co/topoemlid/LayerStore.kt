@@ -10,6 +10,9 @@ private const val SIRI_WMS =
 private const val CATASTRO_CARTOGRAFIA_WMS =
     "https://www.snitcr.go.cr/servicios/cartografia/wms?"
 
+private const val SNIT_CURRENT_IGN5_WMS =
+    "https://geos.snitcr.go.cr/be/IGN_5/wms?"
+
 private fun builtInNationalCadastreLayers(): List<LayerItem> = listOf(
     LayerItem(
         id = "builtin-catastro-zona1",
@@ -62,6 +65,19 @@ private fun builtInNationalCadastreLayers(): List<LayerItem> = listOf(
         transparent = true,
         crs = "EPSG:4326",
         order = 3
+    ),
+    LayerItem(
+        id = "builtin-snit-current-ign5-test",
+        name = "SNIT actual • Prueba IGN 1:5 mil",
+        type = LayerType.WMS,
+        visible = false,
+        opacity = 1f,
+        url = SNIT_CURRENT_IGN5_WMS,
+        layerName = "cordon_cano",
+        imageFormat = "image/png",
+        transparent = true,
+        crs = "EPSG:4326",
+        order = 4
     )
 )
 
