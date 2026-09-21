@@ -14,19 +14,23 @@ data class WmsLayerOption(
 object WmsCapabilitiesClient {
     fun load(serviceUrl: String, timeoutMs: Int = 8000): Result<List<WmsLayerOption>> = runCatching {
         val isSiri = serviceUrl.contains("siri.snitcr.go.cr/Geoservicios/wms", ignoreCase = true)
-        val attempts = if (isSiri) 4 else 1
+        val isCurrentSnit = serviceUrl.contains("geos.snitcr.go.cr/be/", ignoreCase = true)
+        val attempts = if (isSiri) 4 else if (isCurrentSnit) 2 else 1
         var lastError: Throwable? = null
 
         repeat(attempts) { attempt ->
             try {
-                val capabilitiesUrl = buildCapabilitiesUrl(serviceUrl, isSiri)
+                val capabilitiesUrl = buildCapabilitiesUrl(serviceUrl, isSiri || isCurrentSnit)
                 val conn = (URL(capabilitiesUrl).openConnection() as HttpURLConnection).apply {
                     connectTimeout = timeoutMs
                     readTimeout = timeoutMs
                     requestMethod = "GET"
                     instanceFollowRedirects = true
                     useCaches = false
-                    setRequestProperty("User-Agent", "TopoEmlid/0.3")
+                    setRequestProperty(
+                        "User-Agent",
+                        if (isCurrentSnit) "Mozilla/5.0 QGIS/3.40 TopoEmlid/0.3" else "TopoEmlid/0.3"
+                    )
                     setRequestProperty("Accept", "application/xml,text/xml,*/*")
                     setRequestProperty("Cache-Control", "no-cache")
                 }
@@ -94,8 +98,8 @@ object WmsCapabilitiesClient {
                 }
             } catch (t: Throwable) {
                 lastError = t
-                if (attempt < attempts - 1 && isSiri) {
-                    Thread.sleep(1500)
+                if (attempt < attempts - 1 && (isSiri || isCurrentSnit)) {
+                    Thread.sleep(1200)
                 }
             }
         }
