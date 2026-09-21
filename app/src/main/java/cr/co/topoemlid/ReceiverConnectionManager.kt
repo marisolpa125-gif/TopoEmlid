@@ -60,6 +60,16 @@ class ReceiverConnectionManager(context: Context) {
                 }
                 ReceiverConnectionMode.BLE -> connectBle(profile, allowFallback = false)
                 ReceiverConnectionMode.BLUETOOTH_NMEA -> connectNmea(profile)
+                ReceiverConnectionMode.WIFI_AP -> prepareWifiMode(
+                    profile,
+                    transport = "Wi‑Fi AP",
+                    message = "Conecte la tablet a la red Wi‑Fi creada por el receptor. La comunicación por API local se habilitará cuando esté configurada la dirección del Reach."
+                )
+                ReceiverConnectionMode.WIFI_LOCAL -> prepareWifiMode(
+                    profile,
+                    transport = "Wi‑Fi Red local",
+                    message = "Conecte la tablet y el receptor a la misma red Wi‑Fi. La comunicación por API local se habilitará cuando esté configurada la dirección del Reach."
+                )
             }
         } catch (t: Throwable) {
             requestedProfileId = null
@@ -72,6 +82,19 @@ class ReceiverConnectionManager(context: Context) {
                 solution = "SIN SEÑAL"
             )
         }
+    }
+
+    private fun prepareWifiMode(profile: ReceiverProfile, transport: String, message: String) {
+        connecting = false
+        lastError = message
+        postStatus(
+            GnssStatus(
+                receiverName = profile.name,
+                connected = false,
+                connectionTransport = transport,
+                solution = "WI‑FI PREPARADO"
+            )
+        )
     }
 
     @SuppressLint("MissingPermission")
