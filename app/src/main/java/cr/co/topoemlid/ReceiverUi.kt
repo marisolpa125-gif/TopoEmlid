@@ -131,6 +131,8 @@ fun ReceiverSection(
                             ReceiverConnectionMode.AUTO -> "Automático"
                             ReceiverConnectionMode.BLE -> "BLE"
                             ReceiverConnectionMode.BLUETOOTH_NMEA -> "Bluetooth / NMEA"
+                            ReceiverConnectionMode.WIFI_AP -> "Wi‑Fi AP"
+                            ReceiverConnectionMode.WIFI_LOCAL -> "Wi‑Fi Red local"
                         }
                     )
                     detailReceiver = updated
@@ -485,6 +487,8 @@ private fun ReceiverDetailScreen(
                             ReceiverConnectionMode.AUTO -> "Prioriza Bluetooth/NMEA para mantener telemetría GNSS real; BLE queda como alternativa."
                             ReceiverConnectionMode.BLE -> "Bluetooth Low Energy. No requiere salida NMEA para establecer el enlace."
                             ReceiverConnectionMode.BLUETOOTH_NMEA -> "Bluetooth Classic con datos NMEA. Requiere NMEA activado en el receptor."
+                            ReceiverConnectionMode.WIFI_AP -> "La tablet se conecta directamente a la red Wi‑Fi creada por el receptor (modo punto de acceso)."
+                            ReceiverConnectionMode.WIFI_LOCAL -> "La tablet y el receptor están en la misma red Wi‑Fi. Este modo queda preparado para usar la API local del receptor."
                         },
                         style = MaterialTheme.typography.bodySmall
                     )
