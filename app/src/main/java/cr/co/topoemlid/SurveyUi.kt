@@ -1776,13 +1776,19 @@ fun SurveyScreen(
                                                 wmsDiagnostic = "Recargando WMS en el mapa… SIRI puede tardar unos segundos."
                                                 refreshViewportWmsLayers(
                                                     map = map,
-                                                    layers = listOf(layer)
-                                                ) {
-                                                    wmsDiagnostic = "WMS cargado correctamente en el mapa."
-                                                    wmsTestingId = null
-                                                    map.clear()
-                                                    redrawCommitted(map)
-                                                }
+                                                    layers = listOf(layer),
+                                                    onLayerUpdated = {
+                                                        wmsDiagnostic = "WMS cargado correctamente en el mapa."
+                                                        wmsTestingId = null
+                                                        map.clear()
+                                                        redrawCommitted(map)
+                                                    },
+                                                    onLayerFailed = { reason ->
+                                                        wmsDiagnostic = reason +
+                                                            " Acerque el mapa al área de trabajo y vuelva a intentar."
+                                                        wmsTestingId = null
+                                                    }
+                                                )
                                             }
                                         },
                                         modifier = Modifier
@@ -2238,7 +2244,8 @@ private val wmsRequestInFlight = ConcurrentHashMap<String, Boolean>()
 fun refreshViewportWmsLayers(
     map: MapLibreMap,
     layers: List<LayerItem>,
-    onLayerUpdated: (() -> Unit)? = null
+    onLayerUpdated: (() -> Unit)? = null,
+    onLayerFailed: ((String) -> Unit)? = null
 ) {
     val style = map.style ?: return
     val bounds = runCatching { map.projection.visibleRegion.latLngBounds }.getOrNull() ?: return
@@ -2270,7 +2277,15 @@ fun refreshViewportWmsLayers(
                     val bitmap = downloadWmsBitmapWithPersistentRetry(
                         url = uri,
                         serviceUrl = layer.url.orEmpty()
-                    ) ?: return@Thread
+                    )
+                    if (bitmap == null) {
+                        Handler(Looper.getMainLooper()).post {
+                            onLayerFailed?.invoke(
+                                "No se obtuvo una imagen WMS válida después de varios intentos."
+                            )
+                        }
+                        return@Thread
+                    }
 
                     Handler(Looper.getMainLooper()).post {
                         val currentStyle = map.style ?: return@post
@@ -2399,8 +2414,8 @@ private fun buildViewportWmsUrl(
             else -> rawLayerName
         }
     } else rawLayerName
-    val base = sanitizeWmsBaseUrl(raw)
 
+    val base = sanitizeWmsBaseUrl(raw)
     val separator = if (base.contains("?")) {
         if (base.endsWith("?") || base.endsWith("&")) "" else "&"
     } else {
@@ -2411,8 +2426,39 @@ private fun buildViewportWmsUrl(
     val encodedStyle = java.net.URLEncoder.encode(layer.styleName.orEmpty(), "UTF-8")
     val encodedFormat = java.net.URLEncoder.encode(layer.imageFormat, "UTF-8")
 
-    // Restored from the WMS configuration that previously worked in run #157.
-    // WMS 1.1.1 + EPSG:4326 uses BBOX west,south,east,north.
+    fun mercatorX(lon: Double): Double =
+        6378137.0 * Math.toRadians(lon.coerceIn(-180.0, 180.0))
+
+    fun mercatorY(lat: Double): Double {
+        val clipped = lat.coerceIn(-85.05112878, 85.05112878)
+        return 6378137.0 * ln(
+            tan(Math.PI / 4.0 + Math.toRadians(clipped) / 2.0)
+        )
+    }
+
+    // QGIS normalmente negocia el WMS con el CRS del proyecto.
+    // Nuestros mapas base OSM/Esri trabajan en Web Mercator, por eso para
+    // SIRI pedimos EPSG:3857, que el servicio publica y evita una reproyección
+    // adicional del lado del cliente.
+    val requestedCrs = if (isSiri) "EPSG:3857" else {
+        if (layer.crs.equals("EPSG:4326", true)) "EPSG:4326" else "EPSG:3857"
+    }
+
+    val bbox = if (requestedCrs == "EPSG:3857") {
+        "%.3f,%.3f,%.3f,%.3f".format(
+            java.util.Locale.US,
+            mercatorX(west),
+            mercatorY(south),
+            mercatorX(east),
+            mercatorY(north)
+        )
+    } else {
+        "%.8f,%.8f,%.8f,%.8f".format(
+            java.util.Locale.US,
+            west, south, east, north
+        )
+    }
+
     return buildString {
         append(base)
         append(separator)
@@ -2427,18 +2473,12 @@ private fun buildViewportWmsUrl(
         append(encodedFormat)
         append("&transparent=")
         append(layer.transparent)
-        append("&srs=EPSG:4326")
+        append("&srs=")
+        append(requestedCrs)
         append("&bbox=")
-        append("%.8f,%.8f,%.8f,%.8f".format(
-            java.util.Locale.US,
-            west, south, east, north
-        ))
-        append("&width=1024")
-        append("&height=1024")
-        if (isSiri) {
-            append("&_topo=")
-            append(System.currentTimeMillis())
-        }
+        append(bbox)
+        append("&width=768")
+        append("&height=768")
     }
 }
 
