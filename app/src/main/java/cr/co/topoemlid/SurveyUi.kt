@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -606,7 +607,7 @@ fun SurveyScreen(
         Box(
             modifier = Modifier
                 .offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }
-                .size(46.dp)
+                .size(58.dp)
                 .onGloballyPositioned { buttonSize = it.size }
                 .pointerInput(parentSize, buttonSize, measuring) {
                     detectDragGesturesAfterLongPress(
@@ -627,7 +628,7 @@ fun SurveyScreen(
                 onClick = { startMeasurement() },
                 modifier = Modifier.fillMaxSize(),
                 shape = CircleShape,
-                containerColor = if (measuring) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+                containerColor = if (measuring) MaterialTheme.colorScheme.tertiary else Color.White
             ) {
                 if (measuring) {
                     Text(
@@ -636,101 +637,23 @@ fun SurveyScreen(
                         fontWeight = FontWeight.Bold
                     )
                 } else {
+                    val exactRtkIcon = androidx.compose.ui.graphics.ImageBitmap.imageResource(
+                        id = R.drawable.measure_rtk_reference
+                    )
                     androidx.compose.foundation.Canvas(
-                        modifier = Modifier.size(34.dp)
+                        modifier = Modifier.size(50.dp)
                     ) {
-                        val white = Color.White
-                        val sw = 2.0.dp.toPx()
-
-                        // Icono RTK inspirado en la referencia enviada:
-                        // antena GNSS sobre bastón + controlador/teléfono + ondas.
-                        val poleX = size.width * 0.42f
-
-                        drawOval(
-                            color = white,
-                            topLeft = Offset(size.width * 0.16f, size.height * 0.10f),
-                            size = androidx.compose.ui.geometry.Size(
-                                size.width * 0.52f,
-                                size.height * 0.16f
-                            )
-                        )
-                        drawOval(
-                            color = white,
-                            topLeft = Offset(size.width * 0.25f, size.height * 0.20f),
-                            size = androidx.compose.ui.geometry.Size(
-                                size.width * 0.34f,
-                                size.height * 0.09f
-                            )
-                        )
-
-                        drawLine(
-                            color = white,
-                            start = Offset(poleX, size.height * 0.27f),
-                            end = Offset(poleX, size.height * 0.85f),
-                            strokeWidth = sw * 1.8f
-                        )
-
-                        val tip = androidx.compose.ui.graphics.Path().apply {
-                            moveTo(poleX - size.width * 0.05f, size.height * 0.84f)
-                            lineTo(poleX + size.width * 0.05f, size.height * 0.84f)
-                            lineTo(poleX, size.height * 0.98f)
-                            close()
-                        }
-                        drawPath(tip, white)
-
-                        // Controlador / teléfono.
-                        val phoneLeft = size.width * 0.61f
-                        val phoneTop = size.height * 0.42f
-                        val phoneW = size.width * 0.22f
-                        val phoneH = size.height * 0.28f
-                        drawRoundRect(
-                            color = white,
-                            topLeft = Offset(phoneLeft, phoneTop),
-                            size = androidx.compose.ui.geometry.Size(phoneW, phoneH),
-                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(
-                                size.width * 0.035f,
-                                size.width * 0.035f
-                            ),
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(
-                                width = sw * 1.5f
-                            )
-                        )
-                        drawCircle(
-                            color = white,
-                            radius = size.width * 0.013f,
-                            center = Offset(
-                                phoneLeft + phoneW / 2f,
-                                phoneTop + phoneH * 0.88f
-                            )
-                        )
-
-                        // Ondas inalámbricas.
-                        drawArc(
-                            color = white,
-                            startAngle = 300f,
-                            sweepAngle = 60f,
-                            useCenter = false,
-                            topLeft = Offset(size.width * 0.49f, size.height * 0.02f),
-                            size = androidx.compose.ui.geometry.Size(
-                                size.width * 0.32f,
-                                size.height * 0.30f
-                            ),
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(
-                                width = sw * 1.4f
-                            )
-                        )
-                        drawArc(
-                            color = white,
-                            startAngle = 300f,
-                            sweepAngle = 60f,
-                            useCenter = false,
-                            topLeft = Offset(size.width * 0.53f, size.height * 0.08f),
-                            size = androidx.compose.ui.geometry.Size(
-                                size.width * 0.22f,
-                                size.height * 0.20f
-                            ),
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(
-                                width = sw * 1.4f
+                        // Use the exact pixels from the image supplied by the user.
+                        // Crop only the RTK antenna/controller symbol, excluding the
+                        // surrounding white margin and the Shutterstock footer.
+                        drawImage(
+                            image = exactRtkIcon,
+                            srcOffset = androidx.compose.ui.unit.IntOffset(112, 34),
+                            srcSize = androidx.compose.ui.unit.IntSize(126, 184),
+                            dstOffset = androidx.compose.ui.unit.IntOffset.Zero,
+                            dstSize = androidx.compose.ui.unit.IntSize(
+                                size.width.toInt(),
+                                size.height.toInt()
                             )
                         )
                     }
@@ -2288,6 +2211,7 @@ fun refreshViewportWmsLayers(
     layers: List<LayerItem>,
     onLayerUpdated: (() -> Unit)? = null
 ) {
+    val style = map.style ?: return
     val bounds = runCatching { map.projection.visibleRegion.latLngBounds }.getOrNull() ?: return
 
     val north = bounds.latitudeNorth.coerceIn(-89.0, 89.0)
@@ -2304,181 +2228,39 @@ fun refreshViewportWmsLayers(
         LatLng(south, west)
     )
 
-    // QGIS Desktop pide GetMap con un tamaño cercano al viewport real.
-    // Hacemos lo mismo en vez de forzar siempre una imagen cuadrada.
-    val nwScreen = runCatching { map.projection.toScreenLocation(LatLng(north, west)) }.getOrNull()
-    val seScreen = runCatching { map.projection.toScreenLocation(LatLng(south, east)) }.getOrNull()
-    val viewportWidthPx = if (nwScreen != null && seScreen != null) {
-        kotlin.math.abs(seScreen.x - nwScreen.x).toInt().coerceIn(256, 1200)
-    } else 768
-    val viewportHeightPx = if (nwScreen != null && seScreen != null) {
-        kotlin.math.abs(seScreen.y - nwScreen.y).toInt().coerceIn(256, 1200)
-    } else 768
-
     layers
         .filter { it.visible && it.type == LayerType.WMS }
         .sortedBy { it.order }
         .forEach { layer ->
-            val uri = buildViewportWmsUrl(
-                layer, north, east, south, west,
-                viewportWidthPx, viewportHeightPx
-            ) ?: return@forEach
-
+            val uri = buildViewportWmsUrl(layer, north, east, south, west) ?: return@forEach
             val sourceId = "project-wms-image-source-${layer.id}"
             val layerId = "project-wms-image-layer-${layer.id}"
-            val styleNow = map.style
-            val isActuallyRendered = runCatching {
-                styleNow?.getSourceAs<ImageSource>(sourceId) != null &&
-                    styleNow.getLayer(layerId) != null
-            }.getOrDefault(false)
 
-            // Do not trust the URL cache by itself. The Compose/MapLibre screen can
-            // recreate its Style while this process-level cache survives. In that
-            // case the bitmap is gone even though the cache says it was loaded.
-            if (wmsLastSuccessfulUrl[layer.id] == uri && isActuallyRendered) return@forEach
+            val existing = runCatching {
+                style.getSourceAs<ImageSource>(sourceId)
+            }.getOrNull()
 
-            Thread {
-                val serviceUrl = layer.url.orEmpty()
-                val urls = mutableListOf(uri)
-
-                if (serviceUrl.contains("siri.snitcr.go.cr", ignoreCase = true)) {
-                    val alternateCrs = if (layer.crs.equals("EPSG:3857", true)) {
-                        "EPSG:4326"
-                    } else {
-                        "EPSG:3857"
-                    }
-                    buildViewportWmsUrl(
-                        layer.copy(crs = alternateCrs),
-                        north, east, south, west,
-                        viewportWidthPx, viewportHeightPx
-                    )?.let { alternate ->
-                        if (alternate !in urls) urls += alternate
-                    }
+            if (existing != null) {
+                runCatching {
+                    existing.setCoordinates(quad)
+                    existing.setUri(uri)
+                    style.getLayerAs<RasterLayer>(layerId)?.setProperties(
+                        PropertyFactory.rasterOpacity(layer.opacity)
+                    )
+                    onLayerUpdated?.invoke()
                 }
-
-                var successfulUrl: String? = null
-                var bitmap: Bitmap? = null
-
-                for (candidateUrl in urls) {
-                    bitmap = downloadWmsBitmapWithRetry(candidateUrl, serviceUrl)
-                    if (bitmap != null) {
-                        successfulUrl = candidateUrl
-                        break
-                    }
-                }
-
-                if (bitmap != null && successfulUrl != null) {
-                    val loadedBitmap = bitmap
-                    val loadedUrl = successfulUrl
-                    Handler(Looper.getMainLooper()).post {
-                        val style = map.style ?: return@post
-
-                        val existing = runCatching {
-                            style.getSourceAs<ImageSource>(sourceId)
-                        }.getOrNull()
-
-                        if (existing != null) {
-                            runCatching {
-                                existing.setCoordinates(quad)
-                                existing.setImage(loadedBitmap)
-                                style.getLayerAs<RasterLayer>(layerId)?.setProperties(
-                                    PropertyFactory.rasterOpacity(layer.opacity)
-                                )
-                                wmsLastSuccessfulUrl[layer.id] = loadedUrl
-                                onLayerUpdated?.invoke()
-                            }
-                        } else {
-                            runCatching {
-                                style.addSource(ImageSource(sourceId, quad, loadedBitmap))
-                                style.addLayer(
-                                    RasterLayer(layerId, sourceId).withProperties(
-                                        PropertyFactory.rasterOpacity(layer.opacity)
-                                    )
-                                )
-                                wmsLastSuccessfulUrl[layer.id] = loadedUrl
-                                onLayerUpdated?.invoke()
-                            }
-                        }
-                    }
-                }
-            }.start()
-        }
-}
-
-private fun downloadWmsBitmapWithRetry(url: String, serviceUrl: String): Bitmap? {
-    val isSiri = serviceUrl.contains("siri.snitcr.go.cr", ignoreCase = true)
-    val attempts = if (isSiri) 8 else 2
-
-    repeat(attempts) { attempt ->
-        var conn: HttpURLConnection? = null
-        try {
-            val requestUrl = if (isSiri) {
-                val separator = if (url.contains("?")) "&" else "?"
-                url + separator + "_topo_retry=" + System.nanoTime()
             } else {
-                url
-            }
-
-            conn = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
-                connectTimeout = if (isSiri) 12000 else 10000
-                readTimeout = if (isSiri) 18000 else 12000
-                requestMethod = "GET"
-                instanceFollowRedirects = true
-                useCaches = false
-                setRequestProperty("User-Agent", "Mozilla/5.0 TopoEmlid/0.3")
-                setRequestProperty("Accept", "image/png,image/jpeg,*/*")
-                setRequestProperty("Accept-Language", "es-CR,es;q=0.9")
-                setRequestProperty("Cache-Control", "no-cache, no-store")
-                setRequestProperty("Pragma", "no-cache")
-                setRequestProperty("Connection", "close")
-                if (isSiri) {
-                    setRequestProperty("Referer", "https://siri.snitcr.go.cr/")
+                runCatching {
+                    style.addSource(ImageSource(sourceId, quad, URI.create(uri)))
+                    style.addLayer(
+                        RasterLayer(layerId, sourceId).withProperties(
+                            PropertyFactory.rasterOpacity(layer.opacity)
+                        )
+                    )
+                    onLayerUpdated?.invoke()
                 }
             }
-
-            val code = conn.responseCode
-            val finalUrl = conn.url.toString()
-
-            if (
-                code in 200..299 &&
-                !finalUrl.contains("/Geoservicios/error", ignoreCase = true)
-            ) {
-                val bytes = conn.inputStream.use { it.readBytes() }
-
-                // SIRI a veces no devuelve un Content-Type fiable. En vez de
-                // rechazar la respuesta solo por el encabezado, validamos los
-                // bytes reales de PNG/JPEG y después intentamos decodificarlos.
-                val looksLikePng =
-                    bytes.size >= 8 &&
-                    bytes[0] == 0x89.toByte() &&
-                    bytes[1] == 0x50.toByte() &&
-                    bytes[2] == 0x4E.toByte() &&
-                    bytes[3] == 0x47.toByte()
-
-                val looksLikeJpeg =
-                    bytes.size >= 3 &&
-                    bytes[0] == 0xFF.toByte() &&
-                    bytes[1] == 0xD8.toByte() &&
-                    bytes[2] == 0xFF.toByte()
-
-                if (looksLikePng || looksLikeJpeg) {
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let {
-                        return it
-                    }
-                }
-            }
-        } catch (_: Exception) {
-            // La red del SIRI es intermitente; reintentamos más abajo.
-        } finally {
-            runCatching { conn?.disconnect() }
         }
-
-        if (attempt < attempts - 1) {
-            Thread.sleep(if (isSiri) 1500L else 700L)
-        }
-    }
-
-    return null
 }
 
 private fun buildViewportWmsUrl(
@@ -2486,9 +2268,7 @@ private fun buildViewportWmsUrl(
     north: Double,
     east: Double,
     south: Double,
-    west: Double,
-    widthPx: Int = 768,
-    heightPx: Int = 768
+    west: Double
 ): String? {
     val raw = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return null
     val layerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
@@ -2504,35 +2284,8 @@ private fun buildViewportWmsUrl(
     val encodedStyle = java.net.URLEncoder.encode(layer.styleName.orEmpty(), "UTF-8")
     val encodedFormat = java.net.URLEncoder.encode(layer.imageFormat, "UTF-8")
 
-    fun mercatorX(lon: Double): Double =
-        6378137.0 * Math.toRadians(lon.coerceIn(-180.0, 180.0))
-
-    fun mercatorY(lat: Double): Double {
-        val clipped = lat.coerceIn(-85.05112878, 85.05112878)
-        return 6378137.0 * ln(tan(Math.PI / 4.0 + Math.toRadians(clipped) / 2.0))
-    }
-
-    val requestedCrs = if (layer.crs.trim().equals("EPSG:4326", true)) {
-        "EPSG:4326"
-    } else {
-        "EPSG:3857"
-    }
-
-    val bbox = if (requestedCrs == "EPSG:3857") {
-        "%.3f,%.3f,%.3f,%.3f".format(
-            java.util.Locale.US,
-            mercatorX(west),
-            mercatorY(south),
-            mercatorX(east),
-            mercatorY(north)
-        )
-    } else {
-        "%.8f,%.8f,%.8f,%.8f".format(
-            java.util.Locale.US,
-            west, south, east, north
-        )
-    }
-
+    // Restored from the WMS configuration that previously worked in run #157.
+    // WMS 1.1.1 + EPSG:4326 uses BBOX west,south,east,north.
     return buildString {
         append(base)
         append(separator)
@@ -2547,16 +2300,14 @@ private fun buildViewportWmsUrl(
         append(encodedFormat)
         append("&transparent=")
         append(layer.transparent)
-        append("&exceptions=application/vnd.ogc.se_inimage")
-        append("&tiled=false")
-        append("&srs=")
-        append(requestedCrs)
+        append("&srs=EPSG:4326")
         append("&bbox=")
-        append(bbox)
-        append("&width=")
-        append(widthPx)
-        append("&height=")
-        append(heightPx)
+        append("%.8f,%.8f,%.8f,%.8f".format(
+            java.util.Locale.US,
+            west, south, east, north
+        ))
+        append("&width=1024")
+        append("&height=1024")
     }
 }
 
