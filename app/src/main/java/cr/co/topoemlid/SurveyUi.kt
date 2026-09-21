@@ -377,6 +377,13 @@ fun SurveyScreen(
                                 )
 
                             map.setStyle(baseStyle) { style ->
+                                // A new MapLibre style starts with no WMS ImageSources.
+                                // Clear the per-layer URL cache so a previously loaded SNIT
+                                // layer is fetched and attached again after screen/style recreation.
+                                projectLayers
+                                    .filter { it.type == LayerType.WMS }
+                                    .forEach { wmsLastSuccessfulUrl.remove(it.id) }
+
                                 addSelectedBasemap(style, selectedBasemap)
                                 addProjectRasterLayers(style, projectLayers)
                                 refreshViewportWmsLayers(map, projectLayers) {
@@ -2312,7 +2319,19 @@ fun refreshViewportWmsLayers(
                 layer, north, east, south, west,
                 viewportWidthPx, viewportHeightPx
             ) ?: return@forEach
-            if (wmsLastSuccessfulUrl[layer.id] == uri) return@forEach
+
+            val sourceId = "project-wms-image-source-${layer.id}"
+            val layerId = "project-wms-image-layer-${layer.id}"
+            val styleNow = map.style
+            val isActuallyRendered = runCatching {
+                styleNow?.getSourceAs<ImageSource>(sourceId) != null &&
+                    styleNow.getLayer(layerId) != null
+            }.getOrDefault(false)
+
+            // Do not trust the URL cache by itself. The Compose/MapLibre screen can
+            // recreate its Style while this process-level cache survives. In that
+            // case the bitmap is gone even though the cache says it was loaded.
+            if (wmsLastSuccessfulUrl[layer.id] == uri && isActuallyRendered) return@forEach
 
             Thread {
                 val serviceUrl = layer.url.orEmpty()
@@ -2349,8 +2368,6 @@ fun refreshViewportWmsLayers(
                     val loadedUrl = successfulUrl
                     Handler(Looper.getMainLooper()).post {
                         val style = map.style ?: return@post
-                        val sourceId = "project-wms-image-source-${layer.id}"
-                        val layerId = "project-wms-image-layer-${layer.id}"
 
                         val existing = runCatching {
                             style.getSourceAs<ImageSource>(sourceId)
