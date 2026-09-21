@@ -1766,15 +1766,25 @@ fun SurveyScreen(
                                             if (map == null) {
                                                 wmsDiagnostic = "El mapa aún no está listo."
                                             } else {
+                                                val layerToLoad = if (layer.visible) {
+                                                    layer
+                                                } else {
+                                                    val updated = projectLayers.map {
+                                                        if (it.id == layer.id) it.copy(visible = true) else it
+                                                    }
+                                                    persistVisibleLayers(updated)
+                                                    updated.first { it.id == layer.id }
+                                                }
+
                                                 wmsLastSuccessfulUrl.remove(layer.id)
                                                 wmsRequestInFlight.remove(layer.id)
                                                 siriWinningStrategy.remove(layer.id)
                                                 wmsTestingId = layer.id
                                                 wmsDiagnostic =
-                                                    "Probando automáticamente versiones, CRS, orden de ejes, tamaño y formato WMS…"
+                                                    "Activando y probando automáticamente versiones, CRS, orden de ejes, tamaño y formato WMS…"
                                                 refreshViewportWmsLayers(
                                                     map = map,
-                                                    layers = listOf(layer),
+                                                    layers = listOf(layerToLoad),
                                                     onLayerUpdated = {
                                                         val strategy = siriWinningStrategy[layer.id]
                                                         wmsDiagnostic = if (strategy != null) {
@@ -2273,7 +2283,7 @@ fun refreshViewportWmsLayers(
     )
 
     layers
-        .filter { it.visible && it.type == LayerType.WMS }
+        .filter { it.type == LayerType.WMS }
         .sortedBy { it.order }
         .forEach { layer ->
             if (wmsRequestInFlight.putIfAbsent(layer.id, true) != null) return@forEach
