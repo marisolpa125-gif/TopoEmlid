@@ -2290,24 +2290,36 @@ fun refreshViewportWmsLayers(
 
             Thread {
                 try {
-                    val result = if (
-                        layer.url.orEmpty().contains(
+                    val serviceUrl = layer.url.orEmpty()
+                    val result = when {
+                        serviceUrl.contains(
                             "siri.snitcr.go.cr/Geoservicios/wms",
                             ignoreCase = true
-                        )
-                    ) {
-                        negotiateSiriWms(
+                        ) -> negotiateSiriWms(
                             layer = layer,
                             north = north,
                             east = east,
                             south = south,
                             west = west
                         )
-                    } else {
-                        val uri = buildViewportWmsUrl(layer, north, east, south, west)
-                        if (uri == null) null
-                        else downloadSingleWmsBitmap(uri, layer.url.orEmpty())?.let {
-                            WmsRenderResult(it, uri, "Configuración WMS guardada")
+
+                        serviceUrl.contains(
+                            "snitcr.go.cr/servicios/cartografia/wms",
+                            ignoreCase = true
+                        ) -> negotiateLegacySnitCartographyWms(
+                            layer = layer,
+                            north = north,
+                            east = east,
+                            south = south,
+                            west = west
+                        )
+
+                        else -> {
+                            val uri = buildViewportWmsUrl(layer, north, east, south, west)
+                            if (uri == null) null
+                            else downloadSingleWmsBitmap(uri, serviceUrl)?.let {
+                                WmsRenderResult(it, uri, "Configuración WMS guardada")
+                            }
                         }
                     }
 
@@ -2398,6 +2410,84 @@ private fun negotiateSiriWms(
 
     return null
 }
+
+private fun negotiateLegacySnitCartographyWms(
+    layer: LayerItem,
+    north: Double,
+    east: Double,
+    south: Double,
+    west: Double
+): WmsRenderResult? {
+    val raw = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val layerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val base = sanitizeWmsBaseUrl(raw)
+    val sep = if (base.contains("?")) {
+        if (base.endsWith("?") || base.endsWith("&")) "" else "&"
+    } else "?"
+
+    val encodedLayer = java.net.URLEncoder.encode(layerName, "UTF-8")
+    val encodedStyle = java.net.URLEncoder.encode(layer.styleName.orEmpty(), "UTF-8")
+
+    val bboxLatLon = "%.8f,%.8f,%.8f,%.8f".format(
+        java.util.Locale.US,
+        south, west, north, east
+    )
+    val bboxLonLat = "%.8f,%.8f,%.8f,%.8f".format(
+        java.util.Locale.US,
+        west, south, east, north
+    )
+
+    fun make(version: String, crsKey: String, bbox: String, size: Int): String =
+        buildString {
+            append(base)
+            append(sep)
+            append("SERVICE=WMS")
+            append("&REQUEST=GetMap")
+            append("&VERSION=")
+            append(version)
+            append("&LAYERS=")
+            append(encodedLayer)
+            append("&STYLES=")
+            append(encodedStyle)
+            append("&FORMAT=image/png")
+            append("&TRANSPARENT=TRUE")
+            append("&")
+            append(crsKey)
+            append("=EPSG:4326")
+            append("&BBOX=")
+            append(bbox)
+            append("&WIDTH=")
+            append(size)
+            append("&HEIGHT=")
+            append(size)
+            append("&EXCEPTIONS=XML")
+            append("&_topo=")
+            append(System.nanoTime())
+        }
+
+    val candidates = listOf(
+        "SNIT cartografía 1.3.0 / EPSG:4326 / eje lat-lon" to
+            make("1.3.0", "CRS", bboxLatLon, 512),
+        "SNIT cartografía 1.1.1 / EPSG:4326 / eje lon-lat" to
+            make("1.1.1", "SRS", bboxLonLat, 512),
+        "SNIT cartografía 1.3.0 / EPSG:4326 / 256 px" to
+            make("1.3.0", "CRS", bboxLatLon, 256)
+    )
+
+    candidates.forEach { (strategy, url) ->
+        val bitmap = downloadSingleWmsBitmap(
+            url = url,
+            serviceUrl = raw,
+            qgisLikeHeaders = true
+        )
+        if (bitmap != null) {
+            return WmsRenderResult(bitmap, url, strategy)
+        }
+    }
+
+    return null
+}
+
 
 private fun buildSiriCandidateRequests(
     layer: LayerItem,
