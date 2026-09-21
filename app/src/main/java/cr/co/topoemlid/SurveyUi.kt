@@ -1779,6 +1779,7 @@ fun SurveyScreen(
                                                 wmsLastSuccessfulUrl.remove(layer.id)
                                                 wmsRequestInFlight.remove(layer.id)
                                                 siriWinningStrategy.remove(layer.id)
+                                                wmsLayerDiagnostics.remove(layer.id)
                                                 wmsTestingId = layer.id
                                                 wmsDiagnostic =
                                                     "Activando y probando automáticamente versiones, CRS, orden de ejes, tamaño y formato WMS…"
@@ -1787,18 +1788,23 @@ fun SurveyScreen(
                                                     layers = listOf(layerToLoad),
                                                     onLayerUpdated = {
                                                         val strategy = siriWinningStrategy[layer.id]
+                                                        val details = wmsLayerDiagnostics[layer.id]
                                                         wmsDiagnostic = if (strategy != null) {
-                                                            "WMS cargado correctamente. Estrategia encontrada: $strategy"
+                                                            "WMS cargado correctamente. Estrategia encontrada: $strategy" +
+                                                                (details?.let { "\n\nDiagnóstico:\n$it" } ?: "")
                                                         } else {
-                                                            "WMS cargado correctamente."
+                                                            "WMS cargado correctamente." +
+                                                                (details?.let { "\n\nDiagnóstico:\n$it" } ?: "")
                                                         }
                                                         wmsTestingId = null
                                                         map.clear()
                                                         redrawCommitted(map)
                                                     },
                                                     onLayerFailed = { reason ->
+                                                        val details = wmsLayerDiagnostics[layer.id]
                                                         wmsDiagnostic =
-                                                            "$reason Se probaron automáticamente las combinaciones compatibles."
+                                                            "$reason Se probaron automáticamente las combinaciones compatibles." +
+                                                                (details?.let { "\n\nDiagnóstico:\n$it" } ?: "")
                                                         wmsTestingId = null
                                                     }
                                                 )
@@ -2252,6 +2258,8 @@ fun addProjectRasterLayers(
 private val wmsLastSuccessfulUrl = ConcurrentHashMap<String, String>()
 private val wmsRequestInFlight = ConcurrentHashMap<String, Boolean>()
 private val siriWinningStrategy = ConcurrentHashMap<String, String>()
+private val wmsAttemptDiagnostics = ConcurrentHashMap<String, String>()
+private val wmsLayerDiagnostics = ConcurrentHashMap<String, String>()
 
 private data class WmsRenderResult(
     val bitmap: Bitmap,
@@ -2396,18 +2404,24 @@ private fun negotiateSiriWms(
         candidates.sortedByDescending { it.first == preferred }
     }
 
+    val diagnostics = mutableListOf<String>()
+
     ordered.forEach { (strategy, url) ->
         val bitmap = downloadSingleWmsBitmap(
             url = url,
             serviceUrl = layer.url.orEmpty(),
             qgisLikeHeaders = true
         )
+        diagnostics += "$strategy → ${wmsAttemptDiagnostics[url] ?: "sin diagnóstico"}"
+
         if (bitmap != null) {
             siriWinningStrategy[layer.id] = strategy
+            wmsLayerDiagnostics[layer.id] = diagnostics.joinToString("\n")
             return WmsRenderResult(bitmap, url, strategy)
         }
     }
 
+    wmsLayerDiagnostics[layer.id] = diagnostics.joinToString("\n")
     return null
 }
 
@@ -2474,17 +2488,22 @@ private fun negotiateLegacySnitCartographyWms(
             make("1.3.0", "CRS", bboxLatLon, 256)
     )
 
+    val diagnostics = mutableListOf<String>()
+
     candidates.forEach { (strategy, url) ->
         val bitmap = downloadSingleWmsBitmap(
             url = url,
             serviceUrl = raw,
             qgisLikeHeaders = true
         )
+        diagnostics += "$strategy → ${wmsAttemptDiagnostics[url] ?: "sin diagnóstico"}"
         if (bitmap != null) {
+            wmsLayerDiagnostics[layer.id] = diagnostics.joinToString("\n")
             return WmsRenderResult(bitmap, url, strategy)
         }
     }
 
+    wmsLayerDiagnostics[layer.id] = diagnostics.joinToString("\n")
     return null
 }
 
@@ -2637,10 +2656,16 @@ private fun downloadSingleWmsBitmap(
 
         val code = conn.responseCode
         val finalUrl = conn.url.toString()
+        val contentType = conn.contentType ?: "sin Content-Type"
+
         if (
             code !in 200..299 ||
             finalUrl.contains("/Geoservicios/error", ignoreCase = true)
         ) {
+            val redirected = if (finalUrl.contains("/Geoservicios/error", true)) {
+                " • redirigido a /Geoservicios/error"
+            } else ""
+            wmsAttemptDiagnostics[url] = "HTTP $code • $contentType$redirected"
             null
         } else {
             val bytes = conn.inputStream.use { it.readBytes() }
@@ -2656,10 +2681,29 @@ private fun downloadSingleWmsBitmap(
                 bytes[1] == 0xD8.toByte() &&
                 bytes[2] == 0xFF.toByte()
 
-            if (!png && !jpeg) null
-            else BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            if (!png && !jpeg) {
+                wmsAttemptDiagnostics[url] =
+                    "HTTP $code • $contentType • respuesta no gráfica • ${bytes.size} bytes"
+                null
+            } else {
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                if (bitmap == null) {
+                    wmsAttemptDiagnostics[url] =
+                        "HTTP $code • $contentType • imagen no decodificable • ${bytes.size} bytes"
+                    null
+                } else {
+                    wmsAttemptDiagnostics[url] =
+                        "OK HTTP $code • $contentType • ${bytes.size} bytes"
+                    bitmap
+                }
+            }
         }
-    } catch (_: Exception) {
+    } catch (e: java.net.SocketTimeoutException) {
+        wmsAttemptDiagnostics[url] = "TIMEOUT • ${e.message ?: "sin respuesta"}"
+        null
+    } catch (e: Exception) {
+        wmsAttemptDiagnostics[url] =
+            "ERROR ${e.javaClass.simpleName} • ${e.message ?: "sin detalle"}"
         null
     } finally {
         runCatching { conn?.disconnect() }
