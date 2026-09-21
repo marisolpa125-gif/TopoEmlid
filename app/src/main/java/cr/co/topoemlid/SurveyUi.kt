@@ -1766,24 +1766,22 @@ fun SurveyScreen(
                                             if (map == null) {
                                                 wmsDiagnostic = "El mapa aún no está listo."
                                             } else {
-                                                val bounds = map.projection.visibleRegion.latLngBounds
-                                                val testUrl = buildViewportWmsUrl(
-                                                    layer,
-                                                    bounds.latitudeNorth.coerceIn(-89.0, 89.0),
-                                                    bounds.longitudeEast,
-                                                    bounds.latitudeSouth.coerceIn(-89.0, 89.0),
-                                                    bounds.longitudeWest
-                                                )
-                                                if (testUrl == null) {
-                                                    wmsDiagnostic = "Falta URL o nombre técnico de la capa WMS."
-                                                } else {
-                                                    wmsTestingId = layer.id
-                                                    surveyScope.launch {
-                                                        wmsDiagnostic = withContext(Dispatchers.IO) {
-                                                            probeWmsUrl(testUrl)
-                                                        }
-                                                        wmsTestingId = null
-                                                    }
+                                                // No hacemos una prueba HTTP separada: el SIRI puede
+                                                // fallar aleatoriamente y esa prueba solo agrega más
+                                                // peticiones. Recargamos usando exactamente el mismo
+                                                // flujo que dibuja la capa en el mapa.
+                                                wmsLastSuccessfulUrl.remove(layer.id)
+                                                wmsRequestInFlight.remove(layer.id)
+                                                wmsTestingId = layer.id
+                                                wmsDiagnostic = "Recargando WMS en el mapa… SIRI puede tardar unos segundos."
+                                                refreshViewportWmsLayers(
+                                                    map = map,
+                                                    layers = listOf(layer)
+                                                ) {
+                                                    wmsDiagnostic = "WMS cargado correctamente en el mapa."
+                                                    wmsTestingId = null
+                                                    map.clear()
+                                                    redrawCommitted(map)
                                                 }
                                             }
                                         },
@@ -1791,7 +1789,7 @@ fun SurveyScreen(
                                             .fillMaxWidth()
                                             .padding(horizontal = 12.dp, vertical = 4.dp)
                                     ) {
-                                        Text(if (wmsTestingId == layer.id) "Probando WMS…" else "Probar WMS")
+                                        Text(if (wmsTestingId == layer.id) "Recargando WMS…" else "Recargar WMS")
                                     }
                                 }
                             }
