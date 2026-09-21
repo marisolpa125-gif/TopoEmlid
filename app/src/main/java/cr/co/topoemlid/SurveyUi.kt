@@ -1892,50 +1892,89 @@ fun SurveyScreen(
                                                     val east = bounds.longitudeEast
                                                     val west = bounds.longitudeWest
                                                     val serviceUrl = layer.url.orEmpty()
-                                                    val uri = when {
-                                                        serviceUrl.contains(
-                                                            "siri.snitcr.go.cr/Geoservicios/wms",
-                                                            ignoreCase = true
-                                                        ) -> buildLegacyWorkingSiriUrl(
-                                                            layer, north, east, south, west
-                                                        )
-                                                        serviceUrl.contains(
-                                                            "snitcr.go.cr/servicios/cartografia/wms",
-                                                            ignoreCase = true
-                                                        ) -> buildLegacyDirectSnitUrl(
-                                                            layer, north, east, south, west
-                                                        )
-                                                        else -> buildViewportWmsUrl(
-                                                            layer, north, east, south, west
-                                                        )
-                                                    }
+                                                    wmsPreviewLoadingId = layer.id
+                                                    wmsDiagnostic =
+                                                        "Prueba A/B: consultando GetCapabilities y descargando fuera de MapLibre…"
 
-                                                    if (uri == null) {
-                                                        wmsDiagnostic = "No se pudo construir la solicitud WMS de prueba."
-                                                    } else {
-                                                        wmsPreviewLoadingId = layer.id
-                                                        wmsDiagnostic =
-                                                            "Prueba A/B: descargando la misma capa fuera de MapLibre…"
-                                                        surveyScope.launch {
-                                                            val bitmap = withContext(Dispatchers.IO) {
-                                                                downloadSingleWmsBitmap(
-                                                                    url = uri,
-                                                                    serviceUrl = serviceUrl,
-                                                                    qgisLikeHeaders = false
+                                                    surveyScope.launch {
+                                                        val isCurrentSnit = serviceUrl.contains(
+                                                            "geos.snitcr.go.cr/be/",
+                                                            ignoreCase = true
+                                                        )
+
+                                                        if (isCurrentSnit) {
+                                                            val result = withContext(Dispatchers.IO) {
+                                                                negotiateCurrentSnitWms(
+                                                                    layer = layer,
+                                                                    north = north,
+                                                                    east = east,
+                                                                    south = south,
+                                                                    west = west
                                                                 )
                                                             }
-                                                            val detail = wmsAttemptDiagnostics[uri]
+                                                            val details = wmsLayerDiagnostics[layer.id]
                                                                 ?: "sin diagnóstico"
                                                             wmsPreviewLoadingId = null
-                                                            wmsPreviewBitmap = bitmap
-                                                            wmsPreviewDetails = detail
+                                                            wmsPreviewBitmap = result?.bitmap
+                                                            wmsPreviewDetails = details
                                                             wmsPreviewTitle =
-                                                                if (bitmap != null)
+                                                                if (result?.bitmap != null)
                                                                     "Prueba A/B: imagen recibida"
                                                                 else
                                                                     "Prueba A/B: sin imagen"
                                                             wmsDiagnostic =
-                                                                "Prueba A/B fuera de MapLibre → $detail"
+                                                                if (result?.bitmap != null)
+                                                                    "Prueba A/B fuera de MapLibre → imagen válida recibida."
+                                                                else
+                                                                    "Prueba A/B fuera de MapLibre → sin imagen válida."
+                                                        } else {
+                                                            val uri = when {
+                                                                serviceUrl.contains(
+                                                                    "siri.snitcr.go.cr/Geoservicios/wms",
+                                                                    ignoreCase = true
+                                                                ) -> buildLegacyWorkingSiriUrl(
+                                                                    layer, north, east, south, west
+                                                                )
+                                                                serviceUrl.contains(
+                                                                    "snitcr.go.cr/servicios/cartografia/wms",
+                                                                    ignoreCase = true
+                                                                ) -> buildLegacyDirectSnitUrl(
+                                                                    layer, north, east, south, west
+                                                                )
+                                                                else -> buildViewportWmsUrl(
+                                                                    layer, north, east, south, west
+                                                                )
+                                                            }
+
+                                                            if (uri == null) {
+                                                                wmsPreviewLoadingId = null
+                                                                wmsPreviewBitmap = null
+                                                                wmsPreviewDetails =
+                                                                    "No se pudo construir la solicitud WMS de prueba."
+                                                                wmsPreviewTitle = "Prueba A/B: sin imagen"
+                                                                wmsDiagnostic =
+                                                                    "No se pudo construir la solicitud WMS de prueba."
+                                                            } else {
+                                                                val bitmap = withContext(Dispatchers.IO) {
+                                                                    downloadSingleWmsBitmap(
+                                                                        url = uri,
+                                                                        serviceUrl = serviceUrl,
+                                                                        qgisLikeHeaders = false
+                                                                    )
+                                                                }
+                                                                val detail = wmsAttemptDiagnostics[uri]
+                                                                    ?: "sin diagnóstico"
+                                                                wmsPreviewLoadingId = null
+                                                                wmsPreviewBitmap = bitmap
+                                                                wmsPreviewDetails = detail
+                                                                wmsPreviewTitle =
+                                                                    if (bitmap != null)
+                                                                        "Prueba A/B: imagen recibida"
+                                                                    else
+                                                                        "Prueba A/B: sin imagen"
+                                                                wmsDiagnostic =
+                                                                    "Prueba A/B fuera de MapLibre → $detail"
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -2445,7 +2484,7 @@ fun refreshViewportWmsLayers(
                 ignoreCase = true
             )
 
-            if (isSiri || isSnitCartography || isCurrentSnit) {
+            if (isSiri || isSnitCartography) {
                 // Use the original MapLibre direct ImageSource route. This deliberately
                 // avoids making our own HTTP download a prerequisite for rendering.
                 val uri = when {
@@ -2566,6 +2605,17 @@ fun refreshViewportWmsLayers(
                             west = west
                         )
 
+                        serviceUrl.contains(
+                            "geos.snitcr.go.cr/be/",
+                            ignoreCase = true
+                        ) -> negotiateCurrentSnitWms(
+                            layer = layer,
+                            north = north,
+                            east = east,
+                            south = south,
+                            west = west
+                        )
+
                         else -> {
                             val uri = buildViewportWmsUrl(layer, north, east, south, west)
                             if (uri == null) null
@@ -2668,6 +2718,131 @@ private fun negotiateSiriWms(
     wmsLayerDiagnostics[layer.id] = diagnostics.joinToString("\n")
     return null
 }
+
+private fun negotiateCurrentSnitWms(
+    layer: LayerItem,
+    north: Double,
+    east: Double,
+    south: Double,
+    west: Double
+): WmsRenderResult? {
+    val raw = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return null
+
+    val capabilities = WmsCapabilitiesClient.load(raw, timeoutMs = 9000)
+    val options = capabilities.getOrElse { error ->
+        wmsLayerDiagnostics[layer.id] =
+            "GetCapabilities falló → ${error.message ?: error.javaClass.simpleName}"
+        return null
+    }
+
+    if (options.isEmpty()) {
+        wmsLayerDiagnostics[layer.id] = "GetCapabilities respondió sin capas publicadas."
+        return null
+    }
+
+    val requested = layer.layerName.orEmpty().trim()
+    val selected = when {
+        requested.isNotBlank() &&
+            !requested.equals("AUTO_GETCAPABILITIES", true) ->
+            options.firstOrNull { it.name.equals(requested, true) }
+
+        else -> options.firstOrNull {
+            val haystack = (it.title + " " + it.name).lowercase()
+            haystack.contains("cordón") ||
+            haystack.contains("cordon") ||
+            haystack.contains("caño") ||
+            haystack.contains("cano") ||
+            haystack.contains("avenida") ||
+            haystack.contains("calle")
+        } ?: options.first()
+    } ?: options.first()
+
+    val base = sanitizeWmsBaseUrl(raw)
+    val separator = if (base.contains("?")) {
+        if (base.endsWith("?") || base.endsWith("&")) "" else "&"
+    } else "?"
+
+    val encodedLayer = java.net.URLEncoder.encode(selected.name, "UTF-8")
+
+    val bbox111 = "%.8f,%.8f,%.8f,%.8f".format(
+        java.util.Locale.US,
+        west, south, east, north
+    )
+    val bbox130 = "%.8f,%.8f,%.8f,%.8f".format(
+        java.util.Locale.US,
+        south, west, north, east
+    )
+
+    fun make111(swapxy: Boolean): String = buildString {
+        append(base)
+        append(separator)
+        append("SERVICE=WMS")
+        append("&REQUEST=GetMap")
+        append("&VERSION=1.1.1")
+        append("&LAYERS=")
+        append(encodedLayer)
+        append("&STYLES=")
+        append("&FORMAT=image/png")
+        append("&TRANSPARENT=TRUE")
+        append("&SRS=EPSG:4326")
+        append("&BBOX=")
+        append(bbox111)
+        append("&WIDTH=1024")
+        append("&HEIGHT=1024")
+        append("&EXCEPTIONS=application/vnd.ogc.se_xml")
+        if (swapxy) append("&SWAPXY=TRUE")
+    }
+
+    fun make130(): String = buildString {
+        append(base)
+        append(separator)
+        append("SERVICE=WMS")
+        append("&REQUEST=GetMap")
+        append("&VERSION=1.3.0")
+        append("&LAYERS=")
+        append(encodedLayer)
+        append("&STYLES=")
+        append("&FORMAT=image/png")
+        append("&TRANSPARENT=TRUE")
+        append("&CRS=EPSG:4326")
+        append("&BBOX=")
+        append(bbox130)
+        append("&WIDTH=1024")
+        append("&HEIGHT=1024")
+        append("&EXCEPTIONS=XML")
+    }
+
+    val candidates = listOf(
+        "SNIT actual • ${selected.title} • 1.1.1 • EPSG:4326 • SWAPXY=TRUE" to make111(true),
+        "SNIT actual • ${selected.title} • 1.1.1 • EPSG:4326" to make111(false),
+        "SNIT actual • ${selected.title} • 1.3.0 • EPSG:4326" to make130()
+    )
+
+    val diagnostics = mutableListOf<String>()
+    candidates.forEach { (strategy, url) ->
+        val bitmap = downloadSingleWmsBitmap(
+            url = url,
+            serviceUrl = raw,
+            qgisLikeHeaders = true
+        )
+        diagnostics += "$strategy → ${wmsAttemptDiagnostics[url] ?: "sin diagnóstico"}"
+
+        if (bitmap != null) {
+            wmsLayerDiagnostics[layer.id] =
+                "GetCapabilities detectó ${options.size} capas. " +
+                "Seleccionada: ${selected.title} [${selected.name}]\n" +
+                diagnostics.joinToString("\n")
+            return WmsRenderResult(bitmap, url, strategy)
+        }
+    }
+
+    wmsLayerDiagnostics[layer.id] =
+        "GetCapabilities detectó ${options.size} capas. " +
+        "Seleccionada: ${selected.title} [${selected.name}]\n" +
+        diagnostics.joinToString("\n")
+    return null
+}
+
 
 private fun negotiateLegacySnitCartographyWms(
     layer: LayerItem,
