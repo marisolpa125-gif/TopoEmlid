@@ -27,12 +27,65 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.UUID
+import java.util.Calendar
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MapLibre.getInstance(this)
-        setContent { MaterialTheme { TopoEmlidApp() } }
+        setContent { TopoEmlidRoot() }
+    }
+}
+
+private enum class AppViewMode(val label: String) {
+    DAY("Día"),
+    NIGHT("Noche"),
+    AUTO("Automático")
+}
+
+private val LocalAppViewMode = compositionLocalOf { AppViewMode.AUTO }
+private val LocalSetAppViewMode = compositionLocalOf<(AppViewMode) -> Unit> { {} }
+
+@Composable
+private fun TopoEmlidRoot() {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("app_settings", android.content.Context.MODE_PRIVATE) }
+    var mode by remember {
+        mutableStateOf(
+            runCatching {
+                AppViewMode.valueOf(prefs.getString("view_mode", AppViewMode.AUTO.name)!!)
+            }.getOrDefault(AppViewMode.AUTO)
+        )
+    }
+    var currentHour by remember { mutableIntStateOf(Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) }
+
+    LaunchedEffect(mode) {
+        if (mode == AppViewMode.AUTO) {
+            while (true) {
+                currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+                kotlinx.coroutines.delay(60_000)
+            }
+        }
+    }
+
+    val useDark = when (mode) {
+        AppViewMode.DAY -> false
+        AppViewMode.NIGHT -> true
+        AppViewMode.AUTO -> currentHour < 6 || currentHour >= 18
+    }
+
+    val scheme = if (useDark) darkColorScheme() else lightColorScheme()
+
+    CompositionLocalProvider(
+        LocalAppViewMode provides mode,
+        LocalSetAppViewMode provides { newMode ->
+            mode = newMode
+            prefs.edit().putString("view_mode", newMode.name).apply()
+        }
+    ) {
+        MaterialTheme(colorScheme = scheme) {
+            TopoEmlidApp()
+        }
     }
 }
 
@@ -165,11 +218,22 @@ fun TopoEmlidApp() {
         topBar = { GnssBar(gnss, ntripStatus, activeProject?.name) },
         bottomBar = {
             NavigationBar {
-                listOf("Receptores", "Proyecto", "Capas", "Levantamiento", "Replanteo").forEach { item ->
+                listOf("Receptores", "Proyecto", "Capas", "Levantamiento", "Replanteo", "Configuración").forEach { item ->
                     NavigationBarItem(
                         selected = page == item,
                         onClick = { page = item },
-                        icon = { Text(if (item == "Receptores") "◉" else if (item == "Proyecto") "▣" else if (item == "Capas") "▱" else if (item == "Levantamiento") "⌖" else "⇢") },
+                        icon = {
+                            Text(
+                                when (item) {
+                                    "Receptores" -> "◉"
+                                    "Proyecto" -> "▣"
+                                    "Capas" -> "▱"
+                                    "Levantamiento" -> "⌖"
+                                    "Replanteo" -> "⇢"
+                                    else -> "⚙"
+                                }
+                            )
+                        },
                         label = { Text(item) }
                     )
                 }
@@ -204,6 +268,13 @@ fun TopoEmlidApp() {
                     onDisconnect = { receiverConnection.disconnect() }
                 )
                 "Replanteo" -> StakeoutScreen(activeProject, gnss)
+                "Configuración" -> AppSettingsScreen(
+                    onExitApp = {
+                        ntripConnection.disconnect()
+                        receiverConnection.disconnect()
+                        (context as? MainActivity)?.finishAndRemoveTask()
+                    }
+                )
                 "Capas" -> ProjectLayersScreen(activeProject)
                 "Proyecto" -> {
                     val selected = projects.firstOrNull { it.id == selectedProjectId }
@@ -251,6 +322,108 @@ fun TopoEmlidApp() {
     }
 }
 
+
+@Composable
+private fun AppSettingsScreen(
+    onExitApp: () -> Unit
+) {
+    val mode = LocalAppViewMode.current
+    val setMode = LocalSetAppViewMode.current
+    var confirmExit by remember { mutableStateOf(false) }
+
+    if (confirmExit) {
+        AlertDialog(
+            onDismissRequest = { confirmExit = false },
+            title = { Text("Cerrar TopoEmlid") },
+            text = {
+                Text(
+                    "Se cerrarán las conexiones NTRIP y Bluetooth/NMEA activas antes de salir."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirmExit = false
+                        onExitApp()
+                    }
+                ) { Text("Cerrar aplicación") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { confirmExit = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        Text(
+            "Configuración",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(Modifier.height(16.dp))
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Vista de la aplicación", fontWeight = FontWeight.Bold)
+                Text(
+                    "Cambia únicamente la interfaz de TopoEmlid. El mapa de Levantamiento y Replanteo conserva siempre sus colores y mapa base.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                AppViewMode.entries.forEach { option ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { setMode(option) }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = mode == option,
+                            onClick = { setMode(option) }
+                        )
+                        Column {
+                            Text(option.label)
+                            if (option == AppViewMode.AUTO) {
+                                Text(
+                                    "Día de 6:00 a. m. a 6:00 p. m. • Noche el resto del tiempo",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Aplicación", fontWeight = FontWeight.Bold)
+                Text(
+                    "Cierre ordenadamente TopoEmlid y sus conexiones activas.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = { confirmExit = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Cerrar TopoEmlid")
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun GnssBar(status: GnssStatus, ntrip: NtripLiveStatus, projectName: String?) {
