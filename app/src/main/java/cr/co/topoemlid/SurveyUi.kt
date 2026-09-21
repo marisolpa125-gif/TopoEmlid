@@ -2235,6 +2235,7 @@ fun addProjectRasterLayers(
 
 
 private val wmsLastSuccessfulUrl = ConcurrentHashMap<String, String>()
+private val wmsRequestInFlight = ConcurrentHashMap<String, Boolean>()
 
 fun refreshViewportWmsLayers(
     map: MapLibreMap,
@@ -2263,34 +2264,123 @@ fun refreshViewportWmsLayers(
         .sortedBy { it.order }
         .forEach { layer ->
             val uri = buildViewportWmsUrl(layer, north, east, south, west) ?: return@forEach
-            val sourceId = "project-wms-image-source-${layer.id}"
-            val layerId = "project-wms-image-layer-${layer.id}"
+            if (wmsLastSuccessfulUrl[layer.id] == uri) return@forEach
+            if (wmsRequestInFlight.putIfAbsent(layer.id, true) != null) return@forEach
 
-            val existing = runCatching {
-                style.getSourceAs<ImageSource>(sourceId)
-            }.getOrNull()
+            Thread {
+                try {
+                    val bitmap = downloadWmsBitmapWithPersistentRetry(
+                        url = uri,
+                        serviceUrl = layer.url.orEmpty()
+                    ) ?: return@Thread
 
-            if (existing != null) {
-                runCatching {
-                    existing.setCoordinates(quad)
-                    existing.setUri(uri)
-                    style.getLayerAs<RasterLayer>(layerId)?.setProperties(
-                        PropertyFactory.rasterOpacity(layer.opacity)
-                    )
-                    onLayerUpdated?.invoke()
+                    Handler(Looper.getMainLooper()).post {
+                        val currentStyle = map.style ?: return@post
+                        val sourceId = "project-wms-image-source-${layer.id}"
+                        val layerId = "project-wms-image-layer-${layer.id}"
+
+                        val existing = runCatching {
+                            currentStyle.getSourceAs<ImageSource>(sourceId)
+                        }.getOrNull()
+
+                        if (existing != null) {
+                            runCatching {
+                                existing.setCoordinates(quad)
+                                existing.setImage(bitmap)
+                                currentStyle.getLayerAs<RasterLayer>(layerId)?.setProperties(
+                                    PropertyFactory.rasterOpacity(layer.opacity)
+                                )
+                                wmsLastSuccessfulUrl[layer.id] = uri
+                                onLayerUpdated?.invoke()
+                            }
+                        } else {
+                            runCatching {
+                                currentStyle.addSource(ImageSource(sourceId, quad, bitmap))
+                                currentStyle.addLayer(
+                                    RasterLayer(layerId, sourceId).withProperties(
+                                        PropertyFactory.rasterOpacity(layer.opacity)
+                                    )
+                                )
+                                wmsLastSuccessfulUrl[layer.id] = uri
+                                onLayerUpdated?.invoke()
+                            }
+                        }
+                    }
+                } finally {
+                    wmsRequestInFlight.remove(layer.id)
                 }
-            } else {
-                runCatching {
-                    style.addSource(ImageSource(sourceId, quad, URI.create(uri)))
-                    style.addLayer(
-                        RasterLayer(layerId, sourceId).withProperties(
-                            PropertyFactory.rasterOpacity(layer.opacity)
-                        )
-                    )
-                    onLayerUpdated?.invoke()
+            }.start()
+        }
+}
+
+private fun downloadWmsBitmapWithPersistentRetry(
+    url: String,
+    serviceUrl: String
+): Bitmap? {
+    val isSiri = serviceUrl.contains("siri.snitcr.go.cr/Geoservicios/wms", ignoreCase = true)
+    val attempts = if (isSiri) 12 else 2
+
+    repeat(attempts) { attempt ->
+        var conn: HttpURLConnection? = null
+        try {
+            val requestUrl = if (isSiri) {
+                val sep = if (url.contains("?")) "&" else "?"
+                url + sep + "_render_retry=" + System.nanoTime()
+            } else url
+
+            conn = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
+                connectTimeout = if (isSiri) 12000 else 10000
+                readTimeout = if (isSiri) 18000 else 12000
+                requestMethod = "GET"
+                instanceFollowRedirects = true
+                useCaches = false
+                setRequestProperty("User-Agent", "TopoEmlid/0.3")
+                setRequestProperty("Accept", "image/png,image/jpeg,*/*")
+                setRequestProperty("Cache-Control", "no-cache, no-store")
+                setRequestProperty("Pragma", "no-cache")
+                setRequestProperty("Connection", "close")
+            }
+
+            val code = conn.responseCode
+            val finalUrl = conn.url.toString()
+
+            if (
+                code in 200..299 &&
+                !finalUrl.contains("/Geoservicios/error", ignoreCase = true)
+            ) {
+                val bytes = conn.inputStream.use { it.readBytes() }
+
+                val looksLikePng =
+                    bytes.size >= 8 &&
+                    bytes[0] == 0x89.toByte() &&
+                    bytes[1] == 0x50.toByte() &&
+                    bytes[2] == 0x4E.toByte() &&
+                    bytes[3] == 0x47.toByte()
+
+                val looksLikeJpeg =
+                    bytes.size >= 3 &&
+                    bytes[0] == 0xFF.toByte() &&
+                    bytes[1] == 0xD8.toByte() &&
+                    bytes[2] == 0xFF.toByte()
+
+                if (looksLikePng || looksLikeJpeg) {
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let {
+                        return it
+                    }
                 }
             }
+        } catch (_: Exception) {
+            // SIRI es intermitente. Se vuelve a intentar abajo.
+        } finally {
+            runCatching { conn?.disconnect() }
         }
+
+        if (attempt < attempts - 1) {
+            Thread.sleep(if (isSiri) 1800L else 700L)
+        }
+    }
+
+    return null
 }
 
 private fun buildViewportWmsUrl(
