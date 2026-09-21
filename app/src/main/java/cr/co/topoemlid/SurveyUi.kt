@@ -642,92 +642,96 @@ fun SurveyScreen(
                         val white = Color.White
                         val sw = 2.0.dp.toPx()
 
-                        val poleX = size.width * 0.72f
+                        // Icono RTK inspirado en la referencia enviada:
+                        // antena GNSS sobre bastón + controlador/teléfono + ondas.
+                        val poleX = size.width * 0.42f
+
                         drawOval(
                             color = white,
-                            topLeft = Offset(size.width * 0.61f, size.height * 0.08f),
-                            size = androidx.compose.ui.geometry.Size(size.width * 0.22f, size.height * 0.12f)
+                            topLeft = Offset(size.width * 0.16f, size.height * 0.10f),
+                            size = androidx.compose.ui.geometry.Size(
+                                size.width * 0.52f,
+                                size.height * 0.16f
+                            )
                         )
-                        drawLine(
+                        drawOval(
                             color = white,
-                            start = Offset(size.width * 0.59f, size.height * 0.22f),
-                            end = Offset(size.width * 0.85f, size.height * 0.22f),
-                            strokeWidth = sw
-                        )
-                        drawLine(
-                            color = white,
-                            start = Offset(poleX, size.height * 0.20f),
-                            end = Offset(poleX, size.height * 0.95f),
-                            strokeWidth = sw
+                            topLeft = Offset(size.width * 0.25f, size.height * 0.20f),
+                            size = androidx.compose.ui.geometry.Size(
+                                size.width * 0.34f,
+                                size.height * 0.09f
+                            )
                         )
 
-                        drawCircle(
-                            color = white,
-                            radius = size.width * 0.09f,
-                            center = Offset(size.width * 0.31f, size.height * 0.23f)
-                        )
                         drawLine(
                             color = white,
-                            start = Offset(size.width * 0.20f, size.height * 0.15f),
-                            end = Offset(size.width * 0.41f, size.height * 0.15f),
-                            strokeWidth = sw
+                            start = Offset(poleX, size.height * 0.27f),
+                            end = Offset(poleX, size.height * 0.85f),
+                            strokeWidth = sw * 1.8f
                         )
 
-                        val torso = androidx.compose.ui.graphics.Path().apply {
-                            moveTo(size.width * 0.24f, size.height * 0.34f)
-                            lineTo(size.width * 0.40f, size.height * 0.34f)
-                            lineTo(size.width * 0.45f, size.height * 0.63f)
-                            lineTo(size.width * 0.20f, size.height * 0.63f)
+                        val tip = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(poleX - size.width * 0.05f, size.height * 0.84f)
+                            lineTo(poleX + size.width * 0.05f, size.height * 0.84f)
+                            lineTo(poleX, size.height * 0.98f)
                             close()
                         }
-                        drawPath(torso, white)
+                        drawPath(tip, white)
 
-                        drawLine(
+                        // Controlador / teléfono.
+                        val phoneLeft = size.width * 0.61f
+                        val phoneTop = size.height * 0.42f
+                        val phoneW = size.width * 0.22f
+                        val phoneH = size.height * 0.28f
+                        drawRoundRect(
                             color = white,
-                            start = Offset(size.width * 0.39f, size.height * 0.40f),
-                            end = Offset(size.width * 0.58f, size.height * 0.50f),
-                            strokeWidth = sw * 1.5f
-                        )
-                        drawLine(
-                            color = white,
-                            start = Offset(size.width * 0.58f, size.height * 0.50f),
-                            end = Offset(poleX, size.height * 0.50f),
-                            strokeWidth = sw * 1.5f
+                            topLeft = Offset(phoneLeft, phoneTop),
+                            size = androidx.compose.ui.geometry.Size(phoneW, phoneH),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(
+                                size.width * 0.035f,
+                                size.width * 0.035f
+                            ),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                width = sw * 1.5f
+                            )
                         )
                         drawCircle(
                             color = white,
-                            radius = size.width * 0.035f,
-                            center = Offset(poleX, size.height * 0.50f)
+                            radius = size.width * 0.013f,
+                            center = Offset(
+                                phoneLeft + phoneW / 2f,
+                                phoneTop + phoneH * 0.88f
+                            )
                         )
 
-                        drawLine(
+                        // Ondas inalámbricas.
+                        drawArc(
                             color = white,
-                            start = Offset(size.width * 0.27f, size.height * 0.62f),
-                            end = Offset(size.width * 0.17f, size.height * 0.92f),
-                            strokeWidth = sw * 1.6f
+                            startAngle = 300f,
+                            sweepAngle = 60f,
+                            useCenter = false,
+                            topLeft = Offset(size.width * 0.49f, size.height * 0.02f),
+                            size = androidx.compose.ui.geometry.Size(
+                                size.width * 0.32f,
+                                size.height * 0.30f
+                            ),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                width = sw * 1.4f
+                            )
                         )
-                        drawLine(
+                        drawArc(
                             color = white,
-                            start = Offset(size.width * 0.37f, size.height * 0.62f),
-                            end = Offset(size.width * 0.48f, size.height * 0.92f),
-                            strokeWidth = sw * 1.6f
-                        )
-                        drawLine(
-                            color = white,
-                            start = Offset(size.width * 0.13f, size.height * 0.92f),
-                            end = Offset(size.width * 0.22f, size.height * 0.92f),
-                            strokeWidth = sw
-                        )
-                        drawLine(
-                            color = white,
-                            start = Offset(size.width * 0.44f, size.height * 0.92f),
-                            end = Offset(size.width * 0.53f, size.height * 0.92f),
-                            strokeWidth = sw
-                        )
-                        drawCircle(
-                            color = white,
-                            radius = size.width * 0.025f,
-                            center = Offset(poleX, size.height * 0.95f)
+                            startAngle = 300f,
+                            sweepAngle = 60f,
+                            useCenter = false,
+                            topLeft = Offset(size.width * 0.53f, size.height * 0.08f),
+                            size = androidx.compose.ui.geometry.Size(
+                                size.width * 0.22f,
+                                size.height * 0.20f
+                            ),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                width = sw * 1.4f
+                            )
                         )
                     }
                 }
