@@ -1766,43 +1766,32 @@ fun SurveyScreen(
                                             if (map == null) {
                                                 wmsDiagnostic = "El mapa aún no está listo."
                                             } else {
-                                                val isSiri = layer.url.orEmpty().contains(
-                                                    "siri.snitcr.go.cr/Geoservicios/wms",
-                                                    ignoreCase = true
-                                                )
-                                                if (isSiri) {
-                                                    wmsTestingId = null
-                                                    wmsDiagnostic =
-                                                        "SIRI se carga ahora por mosaicos WMS de 256 px, como una capa de mapa. " +
-                                                        "Cierre este panel y haga zoom o mueva el mapa para forzar la carga."
-                                                    map.getStyle { style ->
-                                                        runCatching {
-                                                            style.removeLayer("project-layer-${layer.id}")
-                                                            style.removeSource("project-source-${layer.id}")
+                                                wmsLastSuccessfulUrl.remove(layer.id)
+                                                wmsRequestInFlight.remove(layer.id)
+                                                siriWinningStrategy.remove(layer.id)
+                                                wmsTestingId = layer.id
+                                                wmsDiagnostic =
+                                                    "Probando automáticamente versiones, CRS, orden de ejes, tamaño y formato WMS…"
+                                                refreshViewportWmsLayers(
+                                                    map = map,
+                                                    layers = listOf(layer),
+                                                    onLayerUpdated = {
+                                                        val strategy = siriWinningStrategy[layer.id]
+                                                        wmsDiagnostic = if (strategy != null) {
+                                                            "WMS cargado correctamente. Estrategia encontrada: $strategy"
+                                                        } else {
+                                                            "WMS cargado correctamente."
                                                         }
-                                                        addProjectRasterLayers(style, listOf(layer))
+                                                        wmsTestingId = null
+                                                        map.clear()
                                                         redrawCommitted(map)
+                                                    },
+                                                    onLayerFailed = { reason ->
+                                                        wmsDiagnostic =
+                                                            "$reason Se probaron automáticamente las combinaciones compatibles."
+                                                        wmsTestingId = null
                                                     }
-                                                } else {
-                                                    wmsLastSuccessfulUrl.remove(layer.id)
-                                                    wmsRequestInFlight.remove(layer.id)
-                                                    wmsTestingId = layer.id
-                                                    wmsDiagnostic = "Recargando WMS en el mapa…"
-                                                    refreshViewportWmsLayers(
-                                                        map = map,
-                                                        layers = listOf(layer),
-                                                        onLayerUpdated = {
-                                                            wmsDiagnostic = "WMS cargado correctamente en el mapa."
-                                                            wmsTestingId = null
-                                                            map.clear()
-                                                            redrawCommitted(map)
-                                                        },
-                                                        onLayerFailed = { reason ->
-                                                            wmsDiagnostic = reason
-                                                            wmsTestingId = null
-                                                        }
-                                                    )
-                                                }
+                                                )
                                             }
                                         },
                                         modifier = Modifier
@@ -2230,16 +2219,8 @@ fun addProjectRasterLayers(
         .filter { it.visible }
         .sortedBy { it.order }
         .forEach { layer ->
-            val isSiriWms =
-                layer.type == LayerType.WMS &&
-                layer.url.orEmpty().contains(
-                    "siri.snitcr.go.cr/Geoservicios/wms",
-                    ignoreCase = true
-                )
-
-            val tileUrl = when {
-                layer.type == LayerType.XYZ || layer.type == LayerType.WMTS -> layer.url
-                isSiriWms -> buildWmsTileUrl(layer)
+            val tileUrl = when (layer.type) {
+                LayerType.XYZ, LayerType.WMTS -> layer.url
                 else -> null
             } ?: return@forEach
 
@@ -2258,9 +2239,15 @@ fun addProjectRasterLayers(
         }
 }
 
-
 private val wmsLastSuccessfulUrl = ConcurrentHashMap<String, String>()
 private val wmsRequestInFlight = ConcurrentHashMap<String, Boolean>()
+private val siriWinningStrategy = ConcurrentHashMap<String, String>()
+
+private data class WmsRenderResult(
+    val bitmap: Bitmap,
+    val requestUrl: String,
+    val strategy: String
+)
 
 fun refreshViewportWmsLayers(
     map: MapLibreMap,
@@ -2286,30 +2273,38 @@ fun refreshViewportWmsLayers(
     )
 
     layers
-        .filter {
-            it.visible &&
-            it.type == LayerType.WMS &&
-            !it.url.orEmpty().contains(
-                "siri.snitcr.go.cr/Geoservicios/wms",
-                ignoreCase = true
-            )
-        }
+        .filter { it.visible && it.type == LayerType.WMS }
         .sortedBy { it.order }
         .forEach { layer ->
-            val uri = buildViewportWmsUrl(layer, north, east, south, west) ?: return@forEach
-            if (wmsLastSuccessfulUrl[layer.id] == uri) return@forEach
             if (wmsRequestInFlight.putIfAbsent(layer.id, true) != null) return@forEach
 
             Thread {
                 try {
-                    val bitmap = downloadWmsBitmapWithPersistentRetry(
-                        url = uri,
-                        serviceUrl = layer.url.orEmpty()
-                    )
-                    if (bitmap == null) {
+                    val result = if (
+                        layer.url.orEmpty().contains(
+                            "siri.snitcr.go.cr/Geoservicios/wms",
+                            ignoreCase = true
+                        )
+                    ) {
+                        negotiateSiriWms(
+                            layer = layer,
+                            north = north,
+                            east = east,
+                            south = south,
+                            west = west
+                        )
+                    } else {
+                        val uri = buildViewportWmsUrl(layer, north, east, south, west)
+                        if (uri == null) null
+                        else downloadSingleWmsBitmap(uri, layer.url.orEmpty())?.let {
+                            WmsRenderResult(it, uri, "Configuración WMS guardada")
+                        }
+                    }
+
+                    if (result == null) {
                         Handler(Looper.getMainLooper()).post {
                             onLayerFailed?.invoke(
-                                "No se obtuvo una imagen WMS válida después de varios intentos."
+                                "No se encontró una combinación WMS válida para esta vista."
                             )
                         }
                         return@Thread
@@ -2327,22 +2322,24 @@ fun refreshViewportWmsLayers(
                         if (existing != null) {
                             runCatching {
                                 existing.setCoordinates(quad)
-                                existing.setImage(bitmap)
+                                existing.setImage(result.bitmap)
                                 currentStyle.getLayerAs<RasterLayer>(layerId)?.setProperties(
                                     PropertyFactory.rasterOpacity(layer.opacity)
                                 )
-                                wmsLastSuccessfulUrl[layer.id] = uri
+                                wmsLastSuccessfulUrl[layer.id] = result.requestUrl
                                 onLayerUpdated?.invoke()
                             }
                         } else {
                             runCatching {
-                                currentStyle.addSource(ImageSource(sourceId, quad, bitmap))
+                                currentStyle.addSource(
+                                    ImageSource(sourceId, quad, result.bitmap)
+                                )
                                 currentStyle.addLayer(
                                     RasterLayer(layerId, sourceId).withProperties(
                                         PropertyFactory.rasterOpacity(layer.opacity)
                                     )
                                 )
-                                wmsLastSuccessfulUrl[layer.id] = uri
+                                wmsLastSuccessfulUrl[layer.id] = result.requestUrl
                                 onLayerUpdated?.invoke()
                             }
                         }
@@ -2354,75 +2351,221 @@ fun refreshViewportWmsLayers(
         }
 }
 
-private fun downloadWmsBitmapWithPersistentRetry(
-    url: String,
-    serviceUrl: String
-): Bitmap? {
-    val isSiri = serviceUrl.contains("siri.snitcr.go.cr/Geoservicios/wms", ignoreCase = true)
-    val attempts = 2
+private fun negotiateSiriWms(
+    layer: LayerItem,
+    north: Double,
+    east: Double,
+    south: Double,
+    west: Double
+): WmsRenderResult? {
+    val candidates = buildSiriCandidateRequests(
+        layer = layer,
+        north = north,
+        east = east,
+        south = south,
+        west = west
+    )
+    if (candidates.isEmpty()) return null
 
-    repeat(attempts) { attempt ->
-        var conn: HttpURLConnection? = null
-        try {
-            val requestUrl = if (isSiri) {
-                val sep = if (url.contains("?")) "&" else "?"
-                url + sep + "_render_retry=" + System.nanoTime()
-            } else url
+    val preferred = siriWinningStrategy[layer.id]
+    val ordered = if (preferred == null) {
+        candidates
+    } else {
+        candidates.sortedByDescending { it.first == preferred }
+    }
 
-            conn = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
-                connectTimeout = if (isSiri) 12000 else 10000
-                readTimeout = if (isSiri) 18000 else 12000
-                requestMethod = "GET"
-                instanceFollowRedirects = true
-                useCaches = false
-                setRequestProperty("User-Agent", "TopoEmlid/0.3")
-                setRequestProperty("Accept", "image/png,image/jpeg,*/*")
-                setRequestProperty("Cache-Control", "no-cache, no-store")
-                setRequestProperty("Pragma", "no-cache")
-                setRequestProperty("Connection", "close")
-            }
-
-            val code = conn.responseCode
-            val finalUrl = conn.url.toString()
-
-            if (
-                code in 200..299 &&
-                !finalUrl.contains("/Geoservicios/error", ignoreCase = true)
-            ) {
-                val bytes = conn.inputStream.use { it.readBytes() }
-
-                val looksLikePng =
-                    bytes.size >= 8 &&
-                    bytes[0] == 0x89.toByte() &&
-                    bytes[1] == 0x50.toByte() &&
-                    bytes[2] == 0x4E.toByte() &&
-                    bytes[3] == 0x47.toByte()
-
-                val looksLikeJpeg =
-                    bytes.size >= 3 &&
-                    bytes[0] == 0xFF.toByte() &&
-                    bytes[1] == 0xD8.toByte() &&
-                    bytes[2] == 0xFF.toByte()
-
-                if (looksLikePng || looksLikeJpeg) {
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let {
-                        return it
-                    }
-                }
-            }
-        } catch (_: Exception) {
-            // SIRI es intermitente. Se vuelve a intentar abajo.
-        } finally {
-            runCatching { conn?.disconnect() }
-        }
-
-        if (attempt < attempts - 1) {
-            Thread.sleep(if (isSiri) 1800L else 700L)
+    ordered.forEach { (strategy, url) ->
+        val bitmap = downloadSingleWmsBitmap(
+            url = url,
+            serviceUrl = layer.url.orEmpty(),
+            qgisLikeHeaders = true
+        )
+        if (bitmap != null) {
+            siriWinningStrategy[layer.id] = strategy
+            return WmsRenderResult(bitmap, url, strategy)
         }
     }
 
     return null
 }
+
+private fun buildSiriCandidateRequests(
+    layer: LayerItem,
+    north: Double,
+    east: Double,
+    south: Double,
+    west: Double
+): List<Pair<String, String>> {
+    val raw = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
+    val rawLayerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
+    val layerName = when (
+        rawLayerName.trim().lowercase().replace(" ", "").replace("_", "")
+    ) {
+        "zona1", "catastro" -> "catastro"
+        "zona2", "catastroaldia" -> "catastro_aldia"
+        "viaspublicas", "viaspúblicas", "vias" -> "vias_publicas"
+        else -> rawLayerName
+    }
+
+    val base = sanitizeWmsBaseUrl(raw)
+    val separator = if (base.contains("?")) {
+        if (base.endsWith("?") || base.endsWith("&")) "" else "&"
+    } else "?"
+
+    val encodedLayer = java.net.URLEncoder.encode(layerName, "UTF-8")
+    val encodedStyle = java.net.URLEncoder.encode(layer.styleName.orEmpty(), "UTF-8")
+
+    fun mx(lon: Double): Double =
+        6378137.0 * Math.toRadians(lon.coerceIn(-180.0, 180.0))
+
+    fun my(lat: Double): Double {
+        val clipped = lat.coerceIn(-85.05112878, 85.05112878)
+        return 6378137.0 * ln(
+            tan(Math.PI / 4.0 + Math.toRadians(clipped) / 2.0)
+        )
+    }
+
+    val bbox3857 = "%.3f,%.3f,%.3f,%.3f".format(
+        java.util.Locale.US,
+        mx(west), my(south), mx(east), my(north)
+    )
+    val bbox4326LonLat = "%.8f,%.8f,%.8f,%.8f".format(
+        java.util.Locale.US,
+        west, south, east, north
+    )
+    val bbox4326LatLon = "%.8f,%.8f,%.8f,%.8f".format(
+        java.util.Locale.US,
+        south, west, north, east
+    )
+
+    fun make(
+        version: String,
+        crsKey: String,
+        crsValue: String,
+        bbox: String,
+        size: Int,
+        format: String,
+        transparent: Boolean,
+        qgisDpi: Boolean
+    ): String {
+        return buildString {
+            append(base)
+            append(separator)
+            append("SERVICE=WMS")
+            append("&REQUEST=GetMap")
+            append("&VERSION=")
+            append(version)
+            append("&LAYERS=")
+            append(encodedLayer)
+            append("&STYLES=")
+            append(encodedStyle)
+            append("&FORMAT=")
+            append(java.net.URLEncoder.encode(format, "UTF-8"))
+            append("&TRANSPARENT=")
+            append(if (transparent) "TRUE" else "FALSE")
+            append("&")
+            append(crsKey)
+            append("=")
+            append(crsValue)
+            append("&BBOX=")
+            append(bbox)
+            append("&WIDTH=")
+            append(size)
+            append("&HEIGHT=")
+            append(size)
+            append("&EXCEPTIONS=application/vnd.ogc.se_xml")
+            if (qgisDpi) {
+                append("&DPI=96")
+                append("&MAP_RESOLUTION=96")
+                append("&FORMAT_OPTIONS=dpi:96")
+            }
+            append("&_topo=")
+            append(System.nanoTime())
+        }
+    }
+
+    return listOf(
+        "QGIS 1.1.1 / EPSG:3857 / PNG 512" to
+            make("1.1.1", "SRS", "EPSG:3857", bbox3857, 512, "image/png", true, true),
+
+        "1.1.1 / EPSG:3857 / PNG 256" to
+            make("1.1.1", "SRS", "EPSG:3857", bbox3857, 256, "image/png", true, false),
+
+        "1.1.1 / EPSG:4326 / PNG 512" to
+            make("1.1.1", "SRS", "EPSG:4326", bbox4326LonLat, 512, "image/png", true, true),
+
+        "1.3.0 / EPSG:3857 / PNG 512" to
+            make("1.3.0", "CRS", "EPSG:3857", bbox3857, 512, "image/png", true, true),
+
+        "1.3.0 / EPSG:4326 eje oficial / PNG 512" to
+            make("1.3.0", "CRS", "EPSG:4326", bbox4326LatLon, 512, "image/png", true, true),
+
+        "1.1.1 / EPSG:3857 / JPEG 512" to
+            make("1.1.1", "SRS", "EPSG:3857", bbox3857, 512, "image/jpeg", false, true)
+    )
+}
+
+private fun downloadSingleWmsBitmap(
+    url: String,
+    serviceUrl: String,
+    qgisLikeHeaders: Boolean = false
+): Bitmap? {
+    var conn: HttpURLConnection? = null
+    return try {
+        conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 6500
+            readTimeout = 9000
+            requestMethod = "GET"
+            instanceFollowRedirects = true
+            useCaches = false
+            setRequestProperty(
+                "User-Agent",
+                if (qgisLikeHeaders)
+                    "Mozilla/5.0 QGIS/3.40 (Windows 10; TopoEmlid Android)"
+                else
+                    "TopoEmlid/0.3"
+            )
+            setRequestProperty("Accept", "image/png,image/jpeg,image/*,*/*;q=0.8")
+            setRequestProperty("Accept-Language", "es-CR,es;q=0.9,en;q=0.5")
+            setRequestProperty("Cache-Control", "no-cache")
+            setRequestProperty("Pragma", "no-cache")
+            setRequestProperty("Connection", "close")
+            if (qgisLikeHeaders) {
+                setRequestProperty("Referer", "https://siri.snitcr.go.cr/")
+            }
+        }
+
+        val code = conn.responseCode
+        val finalUrl = conn.url.toString()
+        if (
+            code !in 200..299 ||
+            finalUrl.contains("/Geoservicios/error", ignoreCase = true)
+        ) {
+            null
+        } else {
+            val bytes = conn.inputStream.use { it.readBytes() }
+            val png =
+                bytes.size >= 8 &&
+                bytes[0] == 0x89.toByte() &&
+                bytes[1] == 0x50.toByte() &&
+                bytes[2] == 0x4E.toByte() &&
+                bytes[3] == 0x47.toByte()
+            val jpeg =
+                bytes.size >= 3 &&
+                bytes[0] == 0xFF.toByte() &&
+                bytes[1] == 0xD8.toByte() &&
+                bytes[2] == 0xFF.toByte()
+
+            if (!png && !jpeg) null
+            else BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }
+    } catch (_: Exception) {
+        null
+    } finally {
+        runCatching { conn?.disconnect() }
+    }
+}
+
 
 private fun buildViewportWmsUrl(
     layer: LayerItem,
