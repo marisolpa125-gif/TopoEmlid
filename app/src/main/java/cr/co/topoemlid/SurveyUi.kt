@@ -161,6 +161,7 @@ fun SurveyScreen(
     var wmsTestingId by remember { mutableStateOf<String?>(null) }
     var wmsPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var wmsPreviewTitle by remember { mutableStateOf<String?>(null) }
+    var wmsPreviewDetails by remember { mutableStateOf<String?>(null) }
     var wmsPreviewLoadingId by remember { mutableStateOf<String?>(null) }
     val surveyScope = rememberCoroutineScope()
 
@@ -1625,6 +1626,7 @@ fun SurveyScreen(
             onDismissRequest = {
                 wmsPreviewBitmap = null
                 wmsPreviewTitle = null
+                wmsPreviewDetails = null
             },
             title = { Text(wmsPreviewTitle ?: "Prueba WMS fuera del mapa") },
             text = {
@@ -1647,12 +1649,25 @@ fun SurveyScreen(
                     } else {
                         Text("No se recibió una imagen válida.")
                     }
+
+                    wmsPreviewDetails?.let { details ->
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "Diagnóstico exacto:",
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            details,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(onClick = {
                     wmsPreviewBitmap = null
                     wmsPreviewTitle = null
+                    wmsPreviewDetails = null
                 }) { Text("Cerrar") }
             }
         )
@@ -1913,6 +1928,7 @@ fun SurveyScreen(
                                                                 ?: "sin diagnóstico"
                                                             wmsPreviewLoadingId = null
                                                             wmsPreviewBitmap = bitmap
+                                                            wmsPreviewDetails = detail
                                                             wmsPreviewTitle =
                                                                 if (bitmap != null)
                                                                     "Prueba A/B: imagen recibida"
