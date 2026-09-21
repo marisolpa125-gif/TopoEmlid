@@ -35,6 +35,103 @@ jobs:
           gradle-version: "8.13"
 
 
+      - name: Verificar Catastro Nacional antes de compilar
+        run: |
+          python3 - <<'PY'
+          import time
+          import urllib.parse
+          import urllib.request
+
+          UA = {"User-Agent": "QGIS/3.40 TopoEmlid-WMS-check"}
+
+          def fetch(url, timeout=20):
+              req = urllib.request.Request(url, headers=UA)
+              with urllib.request.urlopen(req, timeout=timeout) as r:
+                  return r.geturl(), r.headers.get("Content-Type", ""), r.read()
+
+          # 1) Confirmar que GetCapabilities realmente publica las 3 capas SIRI.
+          capabilities = (
+              "https://siri.snitcr.go.cr/Geoservicios/wms"
+              "?service=WMS&request=GetCapabilities&version=1.1.1"
+          )
+          cap_ok = False
+          cap_body = b""
+          for attempt in range(1, 9):
+              try:
+                  final_url, ctype, cap_body = fetch(
+                      capabilities + f"&_check={time.time_ns()}"
+                  )
+                  text = cap_body.decode("utf-8", "ignore")
+                  if (
+                      "/Geoservicios/error" not in final_url
+                      and "catastro" in text
+                      and "catastro_aldia" in text
+                      and "vias_publicas" in text
+                  ):
+                      print("OK GetCapabilities SIRI: catastro, catastro_aldia y vias_publicas detectadas.")
+                      cap_ok = True
+                      break
+                  print(f"Intento {attempt}: capabilities sin las 3 capas o redirigido: {final_url}")
+              except Exception as e:
+                  print(f"Intento {attempt}: error GetCapabilities: {e}")
+              time.sleep(1.5)
+
+          if not cap_ok:
+              raise SystemExit("ERROR: SIRI no publicó las tres capas durante la verificación previa.")
+
+          # 2) Confirmar que GetMap devuelve una imagen real antes de generar el APK.
+          # BBOX pequeño en San José, Web Mercator (EPSG:3857).
+          params = {
+              "service": "WMS",
+              "request": "GetMap",
+              "version": "1.1.1",
+              "layers": "catastro",
+              "styles": "",
+              "format": "image/png",
+              "transparent": "true",
+              "srs": "EPSG:3857",
+              "bbox": "-9381230,1102000,-9358970,1124500",
+              "width": "512",
+              "height": "512",
+          }
+          base = "https://siri.snitcr.go.cr/Geoservicios/wms?"
+          map_ok = False
+          for attempt in range(1, 13):
+              try:
+                  url = base + urllib.parse.urlencode(params) + f"&_check={time.time_ns()}"
+                  final_url, ctype, body = fetch(url)
+                  png = body.startswith(b"\x89PNG\r\n\x1a\n")
+                  jpg = body.startswith(b"\xff\xd8\xff")
+                  if "/Geoservicios/error" not in final_url and (png or jpg):
+                      print(f"OK GetMap SIRI: imagen válida recibida ({len(body)} bytes, {ctype}).")
+                      map_ok = True
+                      break
+                  print(f"Intento {attempt}: GetMap no devolvió imagen válida: {final_url} {ctype} {len(body)} bytes")
+              except Exception as e:
+                  print(f"Intento {attempt}: error GetMap: {e}")
+              time.sleep(1.5)
+
+          if not map_ok:
+              raise SystemExit("ERROR: no se obtuvo una imagen WMS válida de Catastro Nacional; no se genera APK.")
+
+          # 3) Probar también el mosaico histórico de zona_catastrada.
+          # Esta prueba es informativa porque el endpoint legado puede no estar disponible por HTTPS.
+          legacy = (
+              "https://www.snitcr.go.cr/servicios/cartografia/wms?"
+              "service=WMS&request=GetMap&version=1.1.1&layers=zona_catastrada"
+              "&styles=&format=image/png&transparent=true&srs=EPSG:4326"
+              "&bbox=-84.20,9.85,-84.00,10.05&width=512&height=512"
+          )
+          try:
+              final_url, ctype, body = fetch(legacy)
+              if body.startswith(b"\x89PNG") or body.startswith(b"\xff\xd8\xff"):
+                  print(f"OK mosaico zona_catastrada: imagen válida ({len(body)} bytes).")
+              else:
+                  print(f"AVISO mosaico zona_catastrada: respuesta no gráfica ({ctype}, {len(body)} bytes).")
+          except Exception as e:
+              print(f"AVISO mosaico zona_catastrada no disponible en esta prueba: {e}")
+          PY
+
       - name: Preparar sonidos de campo
         run: |
           python3 - <<'PY'

@@ -4,12 +4,115 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
+private const val SIRI_WMS =
+    "https://siri.snitcr.go.cr/Geoservicios/wms?request=GetCapabilities"
+
+private const val CATASTRO_CARTOGRAFIA_WMS =
+    "https://www.snitcr.go.cr/servicios/cartografia/wms?"
+
+private fun builtInNationalCadastreLayers(): List<LayerItem> = listOf(
+    LayerItem(
+        id = "builtin-catastro-zona1",
+        name = "Catastro Nacional • Zona 1",
+        type = LayerType.WMS,
+        visible = false,
+        opacity = 1f,
+        url = SIRI_WMS,
+        layerName = "catastro",
+        imageFormat = "image/png",
+        transparent = true,
+        crs = "EPSG:3857",
+        order = 0
+    ),
+    LayerItem(
+        id = "builtin-catastro-zona2",
+        name = "Catastro Nacional • Zona 2",
+        type = LayerType.WMS,
+        visible = false,
+        opacity = 1f,
+        url = SIRI_WMS,
+        layerName = "catastro_aldia",
+        imageFormat = "image/png",
+        transparent = true,
+        crs = "EPSG:3857",
+        order = 1
+    ),
+    LayerItem(
+        id = "builtin-catastro-vias",
+        name = "Catastro Nacional • Vías públicas",
+        type = LayerType.WMS,
+        visible = false,
+        opacity = 1f,
+        url = SIRI_WMS,
+        layerName = "vias_publicas",
+        imageFormat = "image/png",
+        transparent = true,
+        crs = "EPSG:3857",
+        order = 2
+    ),
+    LayerItem(
+        id = "builtin-catastro-zona-catastrada",
+        name = "Catastro Nacional • Mosaico de predios",
+        type = LayerType.WMS,
+        visible = false,
+        opacity = 1f,
+        url = CATASTRO_CARTOGRAFIA_WMS,
+        layerName = "zona_catastrada",
+        imageFormat = "image/png",
+        transparent = true,
+        crs = "EPSG:4326",
+        order = 3
+    )
+)
+
 class LayerStore(context: Context) {
     private val prefs = context.getSharedPreferences("project_layers", Context.MODE_PRIVATE)
 
-    fun loadLibrary(): List<LayerItem> = loadKey("global_library")
+    fun loadLibrary(): List<LayerItem> {
+        val saved = loadKey("global_library")
+        val builtIns = builtInNationalCadastreLayers()
+        val builtInIds = builtIns.map { it.id }.toSet()
 
-    fun saveLibrary(layers: List<LayerItem>) = saveKey("global_library", layers)
+        val merged = builtIns.map { builtIn ->
+            saved.firstOrNull { it.id == builtIn.id }?.copy(
+                // Keep official endpoint and technical layer protected from
+                // accidental edits while preserving visibility/opacity.
+                name = builtIn.name,
+                type = builtIn.type,
+                url = builtIn.url,
+                layerName = builtIn.layerName,
+                imageFormat = builtIn.imageFormat,
+                transparent = builtIn.transparent,
+                crs = builtIn.crs
+            ) ?: builtIn
+        } + saved.filterNot { it.id in builtInIds }
+
+        val ordered = merged.mapIndexed { index, item -> item.copy(order = index) }
+        if (ordered != saved) saveKey("global_library", ordered)
+        return ordered
+    }
+
+    fun saveLibrary(layers: List<LayerItem>) {
+        val builtIns = builtInNationalCadastreLayers()
+        val builtInIds = builtIns.map { it.id }.toSet()
+
+        val normalizedBuiltIns = builtIns.map { builtIn ->
+            layers.firstOrNull { it.id == builtIn.id }?.copy(
+                name = builtIn.name,
+                type = builtIn.type,
+                url = builtIn.url,
+                layerName = builtIn.layerName,
+                imageFormat = builtIn.imageFormat,
+                transparent = builtIn.transparent,
+                crs = builtIn.crs
+            ) ?: builtIn
+        }
+        val custom = layers.filterNot { it.id in builtInIds }
+        saveKey(
+            "global_library",
+            (normalizedBuiltIns + custom).mapIndexed { index, item -> item.copy(order = index) }
+        )
+    }
 
     fun load(projectId: String): List<LayerItem> {
         return loadKey("layers_$projectId")
