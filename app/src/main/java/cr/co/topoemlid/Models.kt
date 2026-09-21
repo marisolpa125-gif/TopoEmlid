@@ -123,7 +123,9 @@ data class TopoProject(
 enum class ReceiverConnectionMode(val label: String) {
     AUTO("Automático"),
     BLE("BLE"),
-    BLUETOOTH_NMEA("Bluetooth / NMEA")
+    BLUETOOTH_NMEA("Bluetooth / NMEA"),
+    WIFI_AP("Wi‑Fi · Punto de acceso (AP)"),
+    WIFI_LOCAL("Wi‑Fi · Red local")
 }
 
 data class ReceiverProfile(
