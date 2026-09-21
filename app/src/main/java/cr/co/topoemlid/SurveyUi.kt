@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -24,7 +25,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.imageResource
@@ -156,6 +159,9 @@ fun SurveyScreen(
     var pendingQuickMeasureCode by remember { mutableStateOf<String?>(null) }
     var wmsDiagnostic by remember { mutableStateOf<String?>(null) }
     var wmsTestingId by remember { mutableStateOf<String?>(null) }
+    var wmsPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var wmsPreviewTitle by remember { mutableStateOf<String?>(null) }
+    var wmsPreviewLoadingId by remember { mutableStateOf<String?>(null) }
     val surveyScope = rememberCoroutineScope()
 
     var dragOffset by remember { mutableStateOf(Offset(40f, 300f)) }
@@ -1614,6 +1620,44 @@ fun SurveyScreen(
         }
     }
 
+    if (wmsPreviewBitmap != null || wmsPreviewTitle != null) {
+        AlertDialog(
+            onDismissRequest = {
+                wmsPreviewBitmap = null
+                wmsPreviewTitle = null
+            },
+            title = { Text(wmsPreviewTitle ?: "Prueba WMS fuera del mapa") },
+            text = {
+                Column {
+                    val bmp = wmsPreviewBitmap
+                    if (bmp != null) {
+                        Text(
+                            "Esta imagen fue descargada por Android y se muestra fuera de MapLibre.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = "Vista previa WMS",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 180.dp, max = 420.dp),
+                            contentScale = ContentScale.Fit
+                        )
+                    } else {
+                        Text("No se recibió una imagen válida.")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    wmsPreviewBitmap = null
+                    wmsPreviewTitle = null
+                }) { Text("Cerrar") }
+            }
+        )
+    }
+
     if (showLayersPanel) {
         ModalBottomSheet(onDismissRequest = { showLayersPanel = false }) {
             Column(
@@ -1815,6 +1859,83 @@ fun SurveyScreen(
                                             .padding(horizontal = 12.dp, vertical = 4.dp)
                                     ) {
                                         Text(if (wmsTestingId == layer.id) "Recargando WMS…" else "Recargar WMS")
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            val map = mapRef
+                                            if (map == null) {
+                                                wmsDiagnostic = "El mapa aún no está listo."
+                                            } else {
+                                                val bounds = runCatching {
+                                                    map.projection.visibleRegion.latLngBounds
+                                                }.getOrNull()
+                                                if (bounds == null) {
+                                                    wmsDiagnostic = "No se pudo leer el área visible del mapa."
+                                                } else {
+                                                    val north = bounds.latitudeNorth.coerceIn(-89.0, 89.0)
+                                                    val south = bounds.latitudeSouth.coerceIn(-89.0, 89.0)
+                                                    val east = bounds.longitudeEast
+                                                    val west = bounds.longitudeWest
+                                                    val serviceUrl = layer.url.orEmpty()
+                                                    val uri = when {
+                                                        serviceUrl.contains(
+                                                            "siri.snitcr.go.cr/Geoservicios/wms",
+                                                            ignoreCase = true
+                                                        ) -> buildLegacyWorkingSiriUrl(
+                                                            layer, north, east, south, west
+                                                        )
+                                                        serviceUrl.contains(
+                                                            "snitcr.go.cr/servicios/cartografia/wms",
+                                                            ignoreCase = true
+                                                        ) -> buildLegacyDirectSnitUrl(
+                                                            layer, north, east, south, west
+                                                        )
+                                                        else -> buildViewportWmsUrl(
+                                                            layer, north, east, south, west
+                                                        )
+                                                    }
+
+                                                    if (uri == null) {
+                                                        wmsDiagnostic = "No se pudo construir la solicitud WMS de prueba."
+                                                    } else {
+                                                        wmsPreviewLoadingId = layer.id
+                                                        wmsDiagnostic =
+                                                            "Prueba A/B: descargando la misma capa fuera de MapLibre…"
+                                                        surveyScope.launch {
+                                                            val bitmap = withContext(Dispatchers.IO) {
+                                                                downloadSingleWmsBitmap(
+                                                                    url = uri,
+                                                                    serviceUrl = serviceUrl,
+                                                                    qgisLikeHeaders = false
+                                                                )
+                                                            }
+                                                            val detail = wmsAttemptDiagnostics[uri]
+                                                                ?: "sin diagnóstico"
+                                                            wmsPreviewLoadingId = null
+                                                            wmsPreviewBitmap = bitmap
+                                                            wmsPreviewTitle =
+                                                                if (bitmap != null)
+                                                                    "Prueba A/B: imagen recibida"
+                                                                else
+                                                                    "Prueba A/B: sin imagen"
+                                                            wmsDiagnostic =
+                                                                "Prueba A/B fuera de MapLibre → $detail"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        enabled = wmsPreviewLoadingId != layer.id,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            if (wmsPreviewLoadingId == layer.id)
+                                                "Probando fuera del mapa…"
+                                            else
+                                                "Prueba A/B WMS fuera de MapLibre"
+                                        )
                                     }
                                 }
                             }
