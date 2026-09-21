@@ -499,7 +499,35 @@ private fun ReceiverDetailScreen(
         Spacer(Modifier.height(10.dp))
 
         if (gnss.connected && gnss.receiverName == receiver.name) {
-            Text("Datos en vivo", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Panel del receptor", fontWeight = FontWeight.Bold)
+                            Text(
+                                gnss.connectionTransport ?: receiver.preferredMode.label,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        AssistChip(
+                            onClick = {},
+                            label = { Text(gnss.solution) }
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Receptor conectado y disponible para trabajo de campo.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Text("Estado y posicionamiento", fontWeight = FontWeight.Bold)
             ReceiverMenuRow(
                 "Estado GNSS",
                 gnss.solution,
@@ -511,8 +539,19 @@ private fun ReceiverDetailScreen(
             ReceiverMenuRow("NTRIP / RTK", "Perfiles, caster y mountpoint") { onOpenNtrip() }
 
             Spacer(Modifier.height(10.dp))
-            Text("Configuración avanzada del receptor", fontWeight = FontWeight.Bold)
-            ReceiverMenuRow("Entradas y salidas", "LoRa, NTRIP, Bluetooth, TCP, RS-232, RTCM3") { page = ReceiverPage.ADVANCED }
+            Text("Receptor", fontWeight = FontWeight.Bold)
+            ReceiverMenuRow(
+                "Wi‑Fi del receptor",
+                "Punto de acceso, red local y estado"
+            ) { page = ReceiverPage.WIFI }
+            ReceiverMenuRow(
+                "Entradas y salidas",
+                "LoRa, NTRIP, Bluetooth, TCP, RS-232, RTCM3"
+            ) { page = ReceiverPage.ADVANCED }
+            ReceiverMenuRow(
+                "Información del receptor",
+                "Modelo, conexión y funciones del equipo"
+            ) { page = ReceiverPage.INFO }
 
             Spacer(Modifier.height(12.dp))
             Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) {
@@ -563,7 +602,7 @@ private fun ReceiverDetailScreen(
 }
 
 private enum class ReceiverPage {
-    HOME, STATUS, ADVANCED
+    HOME, STATUS, WIFI, INFO, ADVANCED
 }
 
 @Composable
@@ -744,6 +783,8 @@ private fun ReceiverSubPage(
                 )
             }
 
+            ReceiverPage.WIFI -> ReceiverWifiPlaceholder(receiver)
+            ReceiverPage.INFO -> ReceiverInfoPlaceholder(receiver, gnss)
             ReceiverPage.ADVANCED -> ReceiverAdvancedPlaceholder()
 
             ReceiverPage.HOME -> Unit
@@ -757,7 +798,7 @@ private fun ReceiverSubPage(
                 else
                     "Estos valores se actualizan únicamente con datos reales recibidos del receptor por NMEA. Si aparece ESPERANDO, Topo Emlid tiene Bluetooth pero todavía no está recibiendo tramas de posición."
             else
-                "Las opciones avanzadas se muestran separadas y marcadas como pendientes hasta que exista control real del receptor.",
+                "Estas pantallas organizan las funciones del receptor sin cambiar la conexión actual. Los controles pendientes solo se habilitarán cuando exista comunicación real con el equipo.",
             style = MaterialTheme.typography.bodySmall
         )
     }
@@ -806,6 +847,73 @@ private fun ReceiverAdminPlaceholder(title: String, rows: List<String>) {
 }
 
 @Composable
+private fun ReceiverWifiPlaceholder(receiver: ReceiverProfile) {
+    Text("Wi‑Fi del receptor", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Panel visual preparado para las funciones Wi‑Fi del Reach. No modifica la conexión activa ni cambia ningún ajuste del receptor.",
+        style = MaterialTheme.typography.bodySmall
+    )
+    Spacer(Modifier.height(12.dp))
+
+    listOf(
+        "Estado Wi‑Fi" to "Conexión actual del receptor",
+        "Punto de acceso (AP)" to "Red creada directamente por el receptor",
+        "Red local" to "Receptor y tablet dentro de la misma red",
+        "Redes disponibles" to "Exploración y selección cuando la API local esté habilitada"
+    ).forEach { (title, subtitle) ->
+        Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Column(Modifier.padding(14.dp)) {
+                Text(title, fontWeight = FontWeight.Bold)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Método seleccionado actualmente: ${receiver.preferredMode.label}",
+        style = MaterialTheme.typography.bodySmall,
+        fontWeight = FontWeight.Bold
+    )
+}
+
+@Composable
+private fun ReceiverInfoPlaceholder(receiver: ReceiverProfile, gnss: GnssStatus) {
+    Text("Información del receptor", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(12.dp))
+
+    StatusLine("Nombre", receiver.name)
+    StatusLine("Dirección", receiver.address)
+    StatusLine("Método seleccionado", receiver.preferredMode.label)
+    StatusLine("Transporte activo", gnss.connectionTransport ?: receiver.transport)
+    StatusLine("Estado", if (gnss.connected) "Conectado" else "Desconectado")
+
+    Spacer(Modifier.height(14.dp))
+    Text("Funciones del equipo", fontWeight = FontWeight.Bold)
+    listOf(
+        "Identificar receptor" to "Parpadeo de luces",
+        "Reiniciar receptor" to "Pendiente de API local",
+        "Apagar receptor" to "Pendiente de API local",
+        "Batería y sistema" to "Pendiente de lectura por API local"
+    ).forEach { (title, subtitle) ->
+        Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Row(
+                Modifier.fillMaxWidth().padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, fontWeight = FontWeight.Bold)
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall)
+                }
+                Text("Pendiente", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
 private fun ReceiverAdvancedPlaceholder() {
     Text("Configuración avanzada del receptor", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
     Spacer(Modifier.height(8.dp))
@@ -816,13 +924,14 @@ private fun ReceiverAdvancedPlaceholder() {
     Spacer(Modifier.height(12.dp))
 
     listOf(
-        "Entrada de correcciones" to "NTRIP a través del receptor / LoRa / apagado",
-        "Salida de base" to "LoRa / NTRIP / Bluetooth / TCP / RS-232",
+        "Entrada de correcciones" to "NTRIP, LoRa y fuentes compatibles",
+        "Salida de base" to "LoRa, NTRIP, Bluetooth, TCP y RS-232",
         "Mensajes RTCM3" to "Selección de mensajes y frecuencia",
         "Configuración de base" to "Coordenadas, altura y promedio",
-        "Registro" to "RINEX / LLH / RTCM3",
-        "Wi-Fi del receptor" to "Redes, hotspot y estado",
-        "Transmisión de posición" to "NMEA y otros formatos soportados"
+        "Registro" to "RINEX, LLH y RTCM3",
+        "Bluetooth del receptor" to "Estado y configuración",
+        "Transmisión de posición" to "NMEA y otros formatos soportados",
+        "Sonidos y avisos" to "Configuración interna del receptor"
     ).forEach { (title, subtitle) ->
         Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
             Row(
@@ -847,6 +956,8 @@ private fun ReceiverAdvancedPlaceholder() {
 
 private fun pageTitle(page: ReceiverPage): String = when (page) {
     ReceiverPage.STATUS -> "Estado GNSS"
+    ReceiverPage.WIFI -> "Wi‑Fi"
+    ReceiverPage.INFO -> "Información"
     ReceiverPage.ADVANCED -> "Configuración avanzada"
     ReceiverPage.HOME -> "Receptor"
 }
