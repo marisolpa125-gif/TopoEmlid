@@ -2120,31 +2120,61 @@ private fun incrementPointNumber(current: String): String {
 
 
 private fun probeWmsUrl(url: String): String {
-    return try {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 10000
-            readTimeout = 10000
-            requestMethod = "GET"
-            setRequestProperty("User-Agent", "TopoEmlid/0.3")
-            setRequestProperty("Accept", "image/png,image/jpeg,*/*")
+    val isSiri = url.contains("siri.snitcr.go.cr/Geoservicios/wms", ignoreCase = true)
+    val attempts = if (isSiri) 4 else 1
+    var lastMessage = "No hubo respuesta del WMS."
+
+    repeat(attempts) { attempt ->
+        try {
+            val requestUrl = if (isSiri) {
+                val sep = if (url.contains("?")) "&" else "?"
+                url + sep + "_probe=" + System.nanoTime()
+            } else url
+
+            val conn = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 10000
+                readTimeout = 12000
+                requestMethod = "GET"
+                instanceFollowRedirects = true
+                useCaches = false
+                setRequestProperty("User-Agent", "TopoEmlid/0.3")
+                setRequestProperty("Accept", "image/png,image/jpeg,*/*")
+                setRequestProperty("Cache-Control", "no-cache")
+            }
+
+            val code = conn.responseCode
+            val type = conn.contentType ?: "sin Content-Type"
+            val length = conn.contentLengthLong
+            val finalUrl = conn.url.toString()
+
+            lastMessage = when {
+                finalUrl.contains("/Geoservicios/error", ignoreCase = true) ->
+                    "SIRI redirigió temporalmente la solicitud a /Geoservicios/error."
+                code in 200..299 && type.startsWith("image/") ->
+                    "WMS responde correctamente: HTTP $code • $type • " +
+                        (if (length > 0) "$length bytes" else "tamaño desconocido") + "."
+                code in 200..299 ->
+                    "WMS respondió HTTP $code, pero devolvió $type en vez de una imagen."
+                else ->
+                    "WMS devolvió HTTP $code (" + (conn.responseMessage ?: "error") + ")."
+            }
+            conn.disconnect()
+
+            if (code in 200..299 && type.startsWith("image/") &&
+                !finalUrl.contains("/Geoservicios/error", ignoreCase = true)) {
+                return lastMessage
+            }
+
+            if (attempt < attempts - 1 && isSiri) Thread.sleep(1200)
+        } catch (e: Exception) {
+            lastMessage = "Error al consultar WMS: " + (e.message ?: e.javaClass.simpleName)
+            if (attempt < attempts - 1 && isSiri) Thread.sleep(1200)
         }
-        val code = conn.responseCode
-        val type = conn.contentType ?: "sin Content-Type"
-        val length = conn.contentLengthLong
-        val message = when {
-            code in 200..299 && type.startsWith("image/") ->
-                "WMS responde correctamente: HTTP " + code + " • " + type + " • " +
-                    (if (length > 0) length.toString() + " bytes" else "tamaño desconocido") + "."
-            code in 200..299 ->
-                "WMS respondió HTTP " + code + ", pero devolvió " + type + " en vez de una imagen. Revise layer/CRS/versión."
-            else ->
-                "WMS devolvió HTTP " + code + " (" + (conn.responseMessage ?: "error") + ")."
-        }
-        conn.disconnect()
-        message
-    } catch (e: Exception) {
-        "Error al consultar WMS: " + (e.message ?: e.javaClass.simpleName)
     }
+
+    return if (isSiri) {
+        lastMessage + " Se intentó 4 veces. Verifique que la capa técnica sea catastro, catastro_aldia o vias_publicas."
+    } else lastMessage
 }
 
 fun addSelectedBasemap(
@@ -2271,7 +2301,16 @@ private fun buildViewportWmsUrl(
     west: Double
 ): String? {
     val raw = layer.url?.trim()?.takeIf { it.isNotBlank() } ?: return null
-    val layerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val rawLayerName = layer.layerName?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val isSiri = raw.contains("siri.snitcr.go.cr/Geoservicios/wms", ignoreCase = true)
+    val layerName = if (isSiri) {
+        when (rawLayerName.trim().lowercase().replace(" ", "").replace("_", "")) {
+            "zona1", "catastro" -> "catastro"
+            "zona2", "catastroaldia" -> "catastro_aldia"
+            "viaspublicas", "viaspúblicas", "vias" -> "vias_publicas"
+            else -> rawLayerName
+        }
+    } else rawLayerName
     val base = sanitizeWmsBaseUrl(raw)
 
     val separator = if (base.contains("?")) {
@@ -2308,6 +2347,10 @@ private fun buildViewportWmsUrl(
         ))
         append("&width=1024")
         append("&height=1024")
+        if (isSiri) {
+            append("&_topo=")
+            append(System.currentTimeMillis())
+        }
     }
 }
 
