@@ -17,6 +17,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
+import org.maplibre.android.annotations.IconFactory
 import org.maplibre.android.annotations.MarkerOptions
 import org.maplibre.android.annotations.PolylineOptions
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -172,10 +173,25 @@ fun StakeoutScreen(
                 Modifier
                     .fillMaxWidth()
                     .padding(vertical = 4.dp)
-                    .clickable { mode = item }
+                    .clickable {
+                        if (mode != item) {
+                            showGuidance = false
+                            toneGenerator.stopTone()
+                        }
+                        mode = item
+                    }
             ) {
                 Row(Modifier.padding(12.dp)) {
-                    RadioButton(selected = mode == item, onClick = { mode = item })
+                    RadioButton(
+                        selected = mode == item,
+                        onClick = {
+                            if (mode != item) {
+                                showGuidance = false
+                                toneGenerator.stopTone()
+                            }
+                            mode = item
+                        }
+                    )
                     Column {
                         Text(item.label, fontWeight = FontWeight.Bold)
                         Text(item.description, style = MaterialTheme.typography.bodySmall)
@@ -293,11 +309,19 @@ fun StakeoutScreen(
 
         Spacer(Modifier.height(12.dp))
         Button(
-            onClick = { showGuidance = true },
-            enabled = project != null && gnss.connected,
+            onClick = {
+                if (showGuidance) {
+                    showGuidance = false
+                    toneGenerator.stopTone()
+                } else {
+                    showGuidance = true
+                }
+            },
+            enabled = project != null && gnss.connected &&
+                (mode != StakeoutMode.POINT || selectedTarget != null),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Iniciar replanteo")
+            Text(if (showGuidance) "Detener replanteo" else "Iniciar replanteo")
         }
 
         if (!gnss.connected) {
@@ -423,10 +447,41 @@ private fun StakeoutMapPreview(
         val current = if (lat != null && lon != null) LatLng(lat, lon) else null
         val objective = if (tLat != null && tLon != null) LatLng(tLat, tLon) else null
 
+        // Annotation markers are deliberately used in addition to the adaptive
+        // SymbolLayer labels. MapLibre annotations remain visually above raster
+        // basemaps/WMS, so neither the target nor the RTK can be hidden by a layer.
+        val iconFactory = IconFactory.getInstance(context)
+        val normalIcon = iconFactory.fromBitmap(
+            makeTopoPointBitmap(android.graphics.Color.rgb(255, 45, 45))
+        )
+        val targetIcon = iconFactory.fromBitmap(
+            makeTopoPointBitmap(android.graphics.Color.rgb(255, 214, 0))
+        )
+        val rtkIcon = iconFactory.fromBitmap(
+            makeTopoPointBitmap(android.graphics.Color.rgb(0, 188, 212))
+        )
+
+        points.forEach { point ->
+            val pLat = point.latitude ?: return@forEach
+            val pLon = point.longitude ?: return@forEach
+            map.addMarker(
+                MarkerOptions()
+                    .position(LatLng(pLat, pLon))
+                    .icon(if (point.id == target?.id) targetIcon else normalIcon)
+                    .title(
+                        if (point.id == target?.id)
+                            "OBJETIVO • Punto ${point.pointNumber}"
+                        else
+                            "Punto ${point.pointNumber}"
+                    )
+            )
+        }
+
         current?.let {
             map.addMarker(
                 MarkerOptions()
                     .position(it)
+                    .icon(rtkIcon)
                     .title("RTK • posición actual")
             )
         }
