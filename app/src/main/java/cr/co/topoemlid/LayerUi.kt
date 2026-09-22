@@ -22,7 +22,10 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ProjectLayersScreen(project: TopoProject?) {
+fun ProjectLayersScreen(
+    project: TopoProject?,
+    onClose: (() -> Unit)? = null
+) {
     val context = LocalContext.current
 
     val store = remember { LayerStore(context) }
@@ -146,13 +149,30 @@ fun ProjectLayersScreen(project: TopoProject?) {
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column {
-                Text("Biblioteca de capas", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text(
-                    project?.let { "Proyecto activo: ${it.name}" } ?: "Biblioteca global • disponible sin abrir un proyecto",
-                    style = MaterialTheme.typography.bodySmall
-                )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                if (onClose != null) {
+                    OutlinedButton(
+                        onClick = onClose,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                    ) {
+                        Text("← Volver")
+                    }
+                    Spacer(Modifier.width(8.dp))
+                }
+                Column {
+                    Text("Biblioteca de capas", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        project?.let { "Proyecto activo: ${it.name}" } ?: "Biblioteca global • disponible sin abrir un proyecto",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
             Button(onClick = { creating = true }) { Text("+ Nueva capa") }
         }
