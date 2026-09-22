@@ -278,7 +278,10 @@ fun TopoEmlidApp() {
                         (context as? MainActivity)?.finishAndRemoveTask()
                     }
                 )
-                "Capas" -> ProjectLayersScreen(activeProject)
+                "Capas" -> ProjectLayersScreen(
+                    project = activeProject,
+                    onClose = { page = "Levantamiento" }
+                )
                 "Importar/Exportar" -> ActiveProjectTransferScreen(activeProject)
                 "Proyecto" -> {
                     val selected = projects.firstOrNull { it.id == selectedProjectId }
