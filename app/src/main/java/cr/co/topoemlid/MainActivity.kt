@@ -896,6 +896,12 @@ private fun ProjectDetails(
     var geoidFileUri by remember(project.id, project.geoidFileUri) { mutableStateOf(project.geoidFileUri) }
     var crsName by remember(project.id, project.crsName) { mutableStateOf(project.crsName) }
     val context = LocalContext.current
+    var showExportDialog by remember(project.id) { mutableStateOf(false) }
+    var exportFormat by remember(project.id) { mutableStateOf(ProjectExportFormat.CSV) }
+    var exportContent by remember(project.id) { mutableStateOf(ProjectExportContent.ALL) }
+    var textLayout by remember(project.id) { mutableStateOf(TextPointLayout.POINT_LAT_LON_ELEV_DESC) }
+    var textSeparator by remember(project.id) { mutableStateOf(TextSeparator.COMMA) }
+    var exportMessage by remember(project.id) { mutableStateOf<String?>(null) }
 
     val geoidPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
@@ -908,6 +914,126 @@ private fun ProjectDetails(
             geoidFileUri = uri.toString()
             geoidFileName = displayName
         }
+    }
+
+    if (showExportDialog) {
+        AlertDialog(
+            onDismissRequest = { showExportDialog = false },
+            title = { Text("Exportar trabajo") },
+            text = {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 520.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text("Formato", fontWeight = FontWeight.Bold)
+                    ProjectExportFormat.entries.forEach { option ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { exportFormat = option }
+                                .padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = exportFormat == option,
+                                onClick = { exportFormat = option }
+                            )
+                            Text(option.label)
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    Text("Contenido", fontWeight = FontWeight.Bold)
+                    ProjectExportContent.entries.forEach { option ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { exportContent = option }
+                                .padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = exportContent == option,
+                                onClick = { exportContent = option }
+                            )
+                            Text(option.label)
+                        }
+                    }
+
+                    if (exportFormat == ProjectExportFormat.TXT || exportFormat == ProjectExportFormat.CSV) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Orden de campos", fontWeight = FontWeight.Bold)
+                        TextPointLayout.entries.forEach { option ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { textLayout = option }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = textLayout == option,
+                                    onClick = { textLayout = option }
+                                )
+                                Text(option.label, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+                        Text("Separador", fontWeight = FontWeight.Bold)
+                        TextSeparator.entries.forEach { option ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { textSeparator = option }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = textSeparator == option,
+                                    onClick = { textSeparator = option }
+                                )
+                                Text(option.label, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Los archivos se guardan en Documentos/TopoEmlid/Trabajos/[proyecto]. " +
+                            "Por seguridad, Norte/Este CRTM05 no se exporta todavía hasta validar la transformación geodésica oficial; " +
+                            "TXT/CSV usan latitud/longitud WGS84.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val result = ProjectExportManager.export(
+                            context = context,
+                            project = project,
+                            options = ProjectExportOptions(
+                                format = exportFormat,
+                                content = exportContent,
+                                textLayout = textLayout,
+                                separator = textSeparator
+                            )
+                        )
+                        exportMessage = result.fold(
+                            onSuccess = { "Guardado en $it" },
+                            onFailure = { it.message ?: "No se pudo exportar el trabajo." }
+                        )
+                        showExportDialog = false
+                    }
+                ) { Text("Exportar") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showExportDialog = false }) { Text("Cancelar") }
+            }
+        )
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
@@ -967,6 +1093,28 @@ private fun ProjectDetails(
         }
 
         OutlinedButton(onClick = onDelete, modifier = Modifier.padding(top = 8.dp)) { Text("Eliminar proyecto") }
+
+        Spacer(Modifier.height(12.dp))
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Exportar / Guardar trabajo", fontWeight = FontWeight.Bold)
+                Text(
+                    "Exporte solo puntos, solo figuras o todo el trabajo en TXT, CSV, GeoJSON, KML, DXF o respaldo TOPO EMLID.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { showExportDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Exportar trabajo")
+                }
+                exportMessage?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
 
         Spacer(Modifier.height(16.dp))
         SettingsCard("Datos guardados", "CRS: ${crsName}", "Geoide: ${geoidFileName ?: project.geoidModel.label} • Altura antena: ${antennaText} m")
