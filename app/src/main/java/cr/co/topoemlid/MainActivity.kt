@@ -683,7 +683,18 @@ private fun AppSettingsScreen(
                             preferredInternetSource = "REACH"
                             saveConnectivityProfile()
                         },
-                        label = { Text("SIM del Reach") }
+                        label = {
+                            Text(
+                                if (preferredInternetSource == "REACH")
+                                    "✓ SIM del Reach"
+                                else
+                                    "SIM del Reach"
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                        )
                     )
                     FilterChip(
                         selected = preferredInternetSource == "TABLET",
@@ -691,7 +702,18 @@ private fun AppSettingsScreen(
                             preferredInternetSource = "TABLET"
                             saveConnectivityProfile()
                         },
-                        label = { Text("SIM de la tablet") }
+                        label = {
+                            Text(
+                                if (preferredInternetSource == "TABLET")
+                                    "✓ SIM de la tablet"
+                                else
+                                    "SIM de la tablet"
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                        )
                     )
                 }
 
@@ -733,11 +755,19 @@ private fun AppSettingsScreen(
                 Spacer(Modifier.height(8.dp))
                 Text(
                     if (preferredInternetSource == "REACH")
-                        "Principal: SIM del Reach • Respaldo: SIM de la tablet"
+                        "Fuente seleccionada: SIM del Reach"
                     else
-                        "Principal: SIM de la tablet • Respaldo: SIM del Reach",
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Bold
+                        "Fuente seleccionada: SIM de la tablet",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    if (preferredInternetSource == "REACH")
+                        "Respaldo configurado: SIM de la tablet"
+                    else
+                        "Respaldo configurado: SIM del Reach",
+                    style = MaterialTheme.typography.bodySmall
                 )
                 Text(
                     "La conmutación automática entre ambas conexiones queda pendiente de la prueba real con las dos SIM y del comportamiento del hotspot de la tablet.",
