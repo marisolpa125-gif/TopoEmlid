@@ -60,10 +60,9 @@ private fun TopoEmlidRoot() {
 
     val startupImage = remember {
         runCatching {
-            val encoded = (0..2).joinToString(separator = "") { index ->
-                val name = "splash/chunk_%02d.txt".format(index)
-                context.assets.open(name).bufferedReader().use { it.readText() }
-            }
+            val encoded = context.assets.open("splash/chunk_00.txt")
+                .bufferedReader()
+                .use { it.readText() }
             val bytes = Base64.decode(encoded, Base64.DEFAULT)
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
         }.getOrNull()
