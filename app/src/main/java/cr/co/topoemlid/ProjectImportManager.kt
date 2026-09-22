@@ -220,19 +220,23 @@ object ProjectImportManager {
             val secondNum = parts.getOrNull(1)?.trim()?.toDoubleOrNull()
             val thirdNum = parts.getOrNull(2)?.trim()?.toDoubleOrNull()
 
-            val (pointName, lat, lon, zStart) = if (
-                firstNum == null && secondNum != null && thirdNum != null
-            ) {
-                arrayOf(parts[0].trim(), secondNum, thirdNum, 3)
+            val pName: String
+            val pLat: Double
+            val pLon: Double
+            val idx: Int
+            if (firstNum == null && secondNum != null && thirdNum != null) {
+                pName = parts[0].trim()
+                pLat = secondNum
+                pLon = thirdNum
+                idx = 3
             } else if (firstNum != null && secondNum != null) {
-                arrayOf((out.size + 1).toString(), firstNum, secondNum, 2)
-            } else return@forEach
-
-            @Suppress("UNCHECKED_CAST")
-            val pName = pointName as String
-            val pLat = lat as Double
-            val pLon = lon as Double
-            val idx = zStart as Int
+                pName = (out.size + 1).toString()
+                pLat = firstNum
+                pLon = secondNum
+                idx = 2
+            } else {
+                return@forEach
+            }
             if (pLat !in -90.0..90.0 || pLon !in -180.0..180.0) return@forEach
             val z = parts.getOrNull(idx)?.trim()?.toDoubleOrNull()
             val desc = parts.drop(idx + if (z != null) 1 else 0).joinToString(" ").trim()
