@@ -41,6 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.annotations.IconFactory
 import org.maplibre.android.annotations.MarkerOptions
 import org.maplibre.android.annotations.PolylineOptions
@@ -152,6 +153,7 @@ fun SurveyScreen(
     var pointPhoto by remember { mutableStateOf<Uri?>(null) }
     var followReceiver by remember { mutableStateOf(false) }
     var initialAutoZoomDone by remember(project?.id) { mutableStateOf(false) }
+    var savedMapCamera by remember(project?.id) { mutableStateOf<CameraPosition?>(null) }
 
     var measuring by remember { mutableStateOf(false) }
     var secondsRemaining by remember { mutableIntStateOf(0) }
@@ -354,9 +356,17 @@ fun SurveyScreen(
                         getMapAsync { map ->
                             mapRef = map
 
-                            // If there is no live GNSS yet, start over Costa Rica instead of
-                            // the whole world. This also keeps viewport WMS requests local.
-                            if (gnss.latitude == null || gnss.longitude == null) {
+                            // Conserve exactamente la cámara que el usuario dejó (centro,
+                            // zoom, inclinación y orientación) cuando el mapa se recrea por
+                            // cambios de capas/estilo. Esto evita saltos al volver a una
+                            // posición inicial mientras se trabaja con WMS.
+                            val rememberedCamera = savedMapCamera
+                            if (rememberedCamera != null) {
+                                map.moveCamera(
+                                    CameraUpdateFactory.newCameraPosition(rememberedCamera)
+                                )
+                            } else if (gnss.latitude == null || gnss.longitude == null) {
+                                // Si aún no existe una vista previa, iniciar sobre Costa Rica.
                                 map.moveCamera(
                                     CameraUpdateFactory.newLatLngZoom(
                                         LatLng(9.93, -84.08),
@@ -402,6 +412,9 @@ fun SurveyScreen(
                             }
 
                             map.addOnCameraIdleListener {
+                                // Guardar la vista final después de cada gesto/zoom para que
+                                // una actualización WMS o recomposición nunca la restablezca.
+                                savedMapCamera = map.cameraPosition
                                 refreshViewportWmsLayers(map, projectLayers) {
                                     map.clear()
                                     redrawCommitted(map)
