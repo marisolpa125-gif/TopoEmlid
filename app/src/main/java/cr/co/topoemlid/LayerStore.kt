@@ -7,12 +7,6 @@ import org.json.JSONObject
 private const val SIRI_WMS =
     "https://siri.snitcr.go.cr/Geoservicios/wms?request=GetCapabilities"
 
-private const val CATASTRO_CARTOGRAFIA_WMS =
-    "https://www.snitcr.go.cr/servicios/cartografia/wms?"
-
-private const val SNIT_CURRENT_IGN5_WMS =
-    "https://geos.snitcr.go.cr/be/IGN_5/wms?"
-
 private fun builtInNationalCadastreLayers(): List<LayerItem> = listOf(
     LayerItem(
         id = "builtin-catastro-zona1",
@@ -53,39 +47,22 @@ private fun builtInNationalCadastreLayers(): List<LayerItem> = listOf(
         crs = "EPSG:3857",
         order = 2
     ),
-    LayerItem(
-        id = "builtin-catastro-zona-catastrada",
-        name = "Catastro Nacional • Mosaico de predios",
-        type = LayerType.WMS,
-        visible = false,
-        opacity = 1f,
-        url = CATASTRO_CARTOGRAFIA_WMS,
-        layerName = "zona_catastrada",
-        imageFormat = "image/png",
-        transparent = true,
-        crs = "EPSG:4326",
-        order = 3
-    ),
-    LayerItem(
-        id = "builtin-snit-current-ign5-test",
-        name = "SNIT actual • Prueba IGN 1:5 mil",
-        type = LayerType.WMS,
-        visible = false,
-        opacity = 1f,
-        url = SNIT_CURRENT_IGN5_WMS,
-        layerName = "AUTO_GETCAPABILITIES",
-        imageFormat = "image/png",
-        transparent = true,
-        crs = "EPSG:4326",
-        order = 4
-    )
+
 )
 
 class LayerStore(context: Context) {
     private val prefs = context.getSharedPreferences("project_layers", Context.MODE_PRIVATE)
 
+    // Capas que se usaron únicamente durante las pruebas de compatibilidad WMS.
+    // Se eliminan también de bibliotecas ya guardadas para que no sigan
+    // apareciendo como capas personalizadas después de una actualización.
+    private val deprecatedBuiltInIds = setOf(
+        "builtin-catastro-zona-catastrada",
+        "builtin-snit-current-ign5-test"
+    )
+
     fun loadLibrary(): List<LayerItem> {
-        val saved = loadKey("global_library")
+        val saved = loadKey("global_library").filterNot { it.id in deprecatedBuiltInIds }
         val builtIns = builtInNationalCadastreLayers()
         val builtInIds = builtIns.map { it.id }.toSet()
 
@@ -123,7 +100,7 @@ class LayerStore(context: Context) {
                 crs = builtIn.crs
             ) ?: builtIn
         }
-        val custom = layers.filterNot { it.id in builtInIds }
+        val custom = layers.filterNot { it.id in builtInIds || it.id in deprecatedBuiltInIds }
         saveKey(
             "global_library",
             (normalizedBuiltIns + custom).mapIndexed { index, item -> item.copy(order = index) }
