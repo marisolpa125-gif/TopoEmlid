@@ -2690,19 +2690,21 @@ fun refreshViewportWmsLayers(
 
                 val attached = runCatching {
                     if (existing != null) {
-                        existing.setCoordinates(quad)
-                        existing.setUri(uri)
-                        style.getLayerAs<RasterLayer>(layerId)?.setProperties(
+                        // Al cambiar el encuadre no reutilizamos la imagen anterior.
+                        // MapLibre puede estirar temporalmente el bitmap viejo sobre el
+                        // nuevo quad mientras descarga el URI nuevo, creando parcelas
+                        // gigantes y franjas fuera de Costa Rica. Se elimina y recrea
+                        // la fuente para que la capa quede en blanco hasta recibir la
+                        // imagen correspondiente al nuevo BBOX.
+                        runCatching { style.removeLayer(layerId) }
+                        runCatching { style.removeSource(sourceId) }
+                    }
+                    style.addSource(ImageSource(sourceId, quad, URI.create(uri)))
+                    style.addLayer(
+                        RasterLayer(layerId, sourceId).withProperties(
                             PropertyFactory.rasterOpacity(layer.opacity)
                         )
-                    } else {
-                        style.addSource(ImageSource(sourceId, quad, URI.create(uri)))
-                        style.addLayer(
-                            RasterLayer(layerId, sourceId).withProperties(
-                                PropertyFactory.rasterOpacity(layer.opacity)
-                            )
-                        )
-                    }
+                    )
                     true
                 }.getOrDefault(false)
 
