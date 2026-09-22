@@ -487,7 +487,7 @@ fun SurveyScreen(
                             }
 
                             map.addOnMapClickListener { latLng ->
-                                val hitIndex = findGeometryAt(latLng, committedGeometries)
+                                val hitIndex = findGeometryAtScreen(map, latLng, committedGeometries)
 
                                 if (activeMapTool == MapFieldTool.NONE || activeMapTool == MapFieldTool.SELECT) {
                                     if (hitIndex != null) {
@@ -3894,6 +3894,61 @@ private fun distanceText(geometry: CommittedGeometry): String {
     }
 }
 
+private fun findGeometryAtScreen(
+    map: MapLibreMap,
+    point: LatLng,
+    geometries: List<CommittedGeometry>,
+    tolerancePx: Double = 36.0
+): Int? {
+    val tap = map.projection.toScreenLocation(point)
+    var bestIndex: Int? = null
+    var bestDistance = Double.POSITIVE_INFINITY
+
+    geometries.forEachIndexed { index, geometry ->
+        val path = geometryPath(geometry)
+        if (path.isEmpty()) return@forEachIndexed
+        val testPath = if (geometrySupportsArea(geometry) && path.size >= 3) path + path.first() else path
+
+        if (testPath.size == 1) {
+            val p = map.projection.toScreenLocation(testPath.first())
+            val d = hypot((tap.x - p.x).toDouble(), (tap.y - p.y).toDouble())
+            if (d < bestDistance) {
+                bestDistance = d
+                bestIndex = index
+            }
+        } else {
+            for (i in 0 until testPath.lastIndex) {
+                val a = map.projection.toScreenLocation(testPath[i])
+                val b = map.projection.toScreenLocation(testPath[i + 1])
+                val dx = (b.x - a.x).toDouble()
+                val dy = (b.y - a.y).toDouble()
+                val denom = dx * dx + dy * dy
+                val t = if (denom <= 1e-9) 0.0 else (
+                    ((tap.x - a.x) * dx + (tap.y - a.y) * dy) / denom
+                ).coerceIn(0.0, 1.0)
+                val px = a.x + t * dx
+                val py = a.y + t * dy
+                val d = hypot((tap.x - px).toDouble(), (tap.y - py).toDouble())
+                if (d < bestDistance) {
+                    bestDistance = d
+                    bestIndex = index
+                }
+            }
+        }
+    }
+
+    if (bestIndex != null && bestDistance <= tolerancePx) return bestIndex
+
+    // Closed shapes can also be selected by tapping anywhere inside them.
+    for (index in geometries.indices.reversed()) {
+        val geometry = geometries[index]
+        val path = geometryPath(geometry)
+        if (geometrySupportsArea(geometry) && path.size >= 3 && pointInPolygon(point, path)) {
+            return index
+        }
+    }
+    return null
+}
 private fun findGeometryAt(point: LatLng, geometries: List<CommittedGeometry>): Int? {
     var nearestIndex: Int? = null
     var nearestDistance = Double.POSITIVE_INFINITY
