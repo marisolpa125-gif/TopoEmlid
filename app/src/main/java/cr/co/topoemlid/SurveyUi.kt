@@ -57,11 +57,13 @@ import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.RasterLayer
 import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
+import org.maplibre.geojson.LineString
 import org.maplibre.android.style.sources.ImageSource
 import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
@@ -216,6 +218,7 @@ fun SurveyScreen(
         }
         drawSavedSurveyPoints(m, savedPoints, context)
         drawLiveReceiverPosition(m, gnss, context)
+        ensureSurveyGeometryOverlayOnTop(m, committedGeometries)
         ensureSurveyPointOverlayOnTop(m, savedPoints, gnss)
     }
 
@@ -970,6 +973,7 @@ fun SurveyScreen(
                                                     }
                                                     drawSavedSurveyPoints(map, savedPoints, context)
                                                     drawLiveReceiverPosition(map, gnss, context)
+                                                    ensureSurveyGeometryOverlayOnTop(map, updatedGeometries)
                                                     ensureSurveyPointOverlayOnTop(map, savedPoints, gnss)
                                                 }
                                             }
@@ -2300,6 +2304,60 @@ private fun saveQuickCodes(context: Context, projectId: String?, codes: List<Str
         .apply()
 }
 
+private fun ensureSurveyGeometryOverlayOnTop(
+    map: MapLibreMap,
+    geometries: List<CommittedGeometry>
+) {
+    val style = map.style ?: return
+    val sourceId = "survey-geometries-top-source"
+    val layerId = "survey-geometries-top-layer"
+
+    val features = mutableListOf<Feature>()
+    geometries.forEach { geometry ->
+        when (geometry.tool) {
+            MapFieldTool.POINT, MapFieldTool.NONE, MapFieldTool.SELECT -> Unit
+            MapFieldTool.PARALLEL -> {
+                val base = geometryPath(geometry)
+                if (base.size >= 2) {
+                    val baseCoords = base.map { Point.fromLngLat(it.longitude, it.latitude) }
+                    features += Feature.fromGeometry(LineString.fromLngLats(baseCoords))
+                    val parallel = offsetPolyline(base, geometry.parallelOffsetM)
+                    if (parallel.size >= 2) {
+                        val parallelCoords = parallel.map { Point.fromLngLat(it.longitude, it.latitude) }
+                        features += Feature.fromGeometry(LineString.fromLngLats(parallelCoords))
+                    }
+                }
+            }
+            else -> {
+                val path = geometryPath(geometry)
+                if (path.size >= 2) {
+                    val closed = geometrySupportsArea(geometry) && path.size >= 3
+                    val drawPath = if (closed) path + path.first() else path
+                    val coords = drawPath.map { Point.fromLngLat(it.longitude, it.latitude) }
+                    features += Feature.fromGeometry(LineString.fromLngLats(coords))
+                }
+            }
+        }
+    }
+
+    val source = style.getSourceAs<GeoJsonSource>(sourceId)
+    if (source == null) {
+        style.addSource(GeoJsonSource(sourceId, FeatureCollection.fromFeatures(features)))
+    } else {
+        source.setGeoJson(FeatureCollection.fromFeatures(features))
+    }
+
+    // Recreate at the top of the style stack so WMS/WMTS/XYZ can never cover
+    // field drawings. This is independent of the old annotation layer order.
+    runCatching { style.removeLayer(layerId) }
+    style.addLayer(
+        LineLayer(layerId, sourceId).withProperties(
+            PropertyFactory.lineColor(android.graphics.Color.rgb(103, 58, 183)),
+            PropertyFactory.lineWidth(5f),
+            PropertyFactory.lineOpacity(1f)
+        )
+    )
+}
 private fun ensureSurveyPointOverlayOnTop(
     map: MapLibreMap,
     points: List<SurveyPoint>,
