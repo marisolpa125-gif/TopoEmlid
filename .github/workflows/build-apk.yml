@@ -252,7 +252,7 @@ jobs:
       - name: Verificar APK y firma
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
-          apksigner verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           ls -lh "$APK"
 
       - name: Preparar APK para descarga
