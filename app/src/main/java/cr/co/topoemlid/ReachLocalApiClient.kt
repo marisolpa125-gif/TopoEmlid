@@ -37,6 +37,24 @@ data class ReachWifiStatus(
     val mode: String? = null
 )
 
+data class ReachModemInfo(
+    val accessTechnology: String? = null,
+    val currentMode: String? = null,
+    val currentApn: String? = null,
+    val availableApns: List<String> = emptyList(),
+    val state: String? = null,
+    val usageMb: Double? = null,
+    val since: String? = null,
+    val unlockRetries: Int? = null
+)
+
+data class ReachModemSettings(
+    val dataSharing: Boolean? = null,
+    val gsmUpgrades: Boolean? = null,
+    val roaming: Boolean? = null,
+    val pinConfigured: Boolean? = null
+)
+
 enum class ReachLocalAction(val wireName: String) {
     FIND_REACH("find_reach"),
     REBOOT("reboot"),
@@ -111,6 +129,39 @@ class ReachLocalApiClient(
             security = current?.optString("security")?.takeIf { it.isNotBlank() },
             enabled = if (j.has("enabled")) j.optBoolean("enabled") else null,
             mode = j.optString("mode").takeIf { it.isNotBlank() }
+        )
+    }
+
+    suspend fun modemInfo(): ReachModemInfo {
+        val j = getJson("/modem/1/info")
+        val stats = j.optJSONObject("stats")
+        val apns = j.optJSONArray("available_apns")
+        return ReachModemInfo(
+            accessTechnology = j.optString("access_technology").takeIf { it.isNotBlank() },
+            currentMode = j.optString("current_mode").takeIf { it.isNotBlank() },
+            currentApn = j.optString("current_apn").takeIf { it.isNotBlank() },
+            availableApns = if (apns == null) emptyList() else
+                (0 until apns.length()).mapNotNull { i ->
+                    apns.optString(i).takeIf { it.isNotBlank() }
+                },
+            state = j.optString("state").takeIf { it.isNotBlank() },
+            usageMb = when {
+                stats?.has("usage_mb") == true -> stats.optDouble("usage_mb").takeUnless { it.isNaN() }
+                j.has("usage_mb") -> j.optDouble("usage_mb").takeUnless { it.isNaN() }
+                else -> null
+            },
+            since = stats?.optString("since")?.takeIf { it.isNotBlank() },
+            unlockRetries = if (j.has("unlock_retries")) j.optInt("unlock_retries") else null
+        )
+    }
+
+    suspend fun modemSettings(): ReachModemSettings {
+        val j = getJson("/modem/1/settings")
+        return ReachModemSettings(
+            dataSharing = if (j.has("data_sharing")) j.optBoolean("data_sharing") else null,
+            gsmUpgrades = if (j.has("gsm_upgrades")) j.optBoolean("gsm_upgrades") else null,
+            roaming = if (j.has("roaming")) j.optBoolean("roaming") else null,
+            pinConfigured = if (j.has("pin")) !j.isNull("pin") && j.optString("pin").isNotBlank() else null
         )
     }
 
