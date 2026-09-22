@@ -285,6 +285,13 @@ fun SurveyScreen(
         }
     }
 
+    LaunchedEffect(lastMessage) {
+        if (lastMessage != null) {
+            delay(1800)
+            lastMessage = null
+        }
+    }
+
     LaunchedEffect(gnss.latitude, gnss.longitude, followReceiver) {
         if (followReceiver) {
             val lat = gnss.latitude
@@ -638,6 +645,7 @@ fun SurveyScreen(
         Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
+                .offset(y = (-72).dp)
                 .padding(end = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -944,17 +952,26 @@ fun SurveyScreen(
                                                     points = toolPoints,
                                                     parallelOffsetM = parallelOffsetText.toDoubleOrNull() ?: 1.0
                                                 )
-                                                persistGeometries(committedGeometries + savedGeometry)
+                                                val updatedGeometries = committedGeometries + savedGeometry
+                                                persistGeometries(updatedGeometries)
                                                 editingOriginalGeometry = null
                                                 toolPoints = emptyList()
-                                                toolResult = if (project != null) {
+                                                activeMapTool = MapFieldTool.NONE
+                                                toolResult = null
+                                                lastMessage = if (project != null) {
                                                     "Elemento guardado en el proyecto."
                                                 } else {
                                                     "Elemento guardado temporalmente en el mapa."
                                                 }
-                                                activeMapTool = MapFieldTool.NONE
-                                                mapRef?.clear()
-                                                redrawCommitted(mapRef)
+                                                mapRef?.let { map ->
+                                                    map.clear()
+                                                    updatedGeometries.forEach { geometry ->
+                                                        drawCommittedGeometry(map, geometry)
+                                                    }
+                                                    drawSavedSurveyPoints(map, savedPoints, context)
+                                                    drawLiveReceiverPosition(map, gnss, context)
+                                                    ensureSurveyPointOverlayOnTop(map, savedPoints, gnss)
+                                                }
                                             }
                                         },
                                         enabled = toolPoints.isNotEmpty(),
@@ -3583,9 +3600,9 @@ private fun drawActiveGeometry(
 ) {
     when (tool) {
         MapFieldTool.POINT -> points.lastOrNull()?.let { map.addMarker(MarkerOptions().position(it)) }
-        MapFieldTool.LINE, MapFieldTool.DISTANCE -> if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points).width(4f))
+        MapFieldTool.LINE, MapFieldTool.DISTANCE -> if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
         MapFieldTool.AREA, MapFieldTool.PERIMETER, MapFieldTool.POLYGON -> {
-            if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points).width(4f))
+            if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
             if (points.size >= 3 && tool != MapFieldTool.LINE) drawTransparentPolygon(map, points)
         }
         MapFieldTool.RECTANGLE -> if (points.size >= 3) {
@@ -3598,12 +3615,12 @@ private fun drawActiveGeometry(
         }
         MapFieldTool.PARALLEL -> if (points.size >= 2) {
             val base = points.take(2)
-            map.addPolyline(PolylineOptions().addAll(base).width(4f))
-            map.addPolyline(PolylineOptions().addAll(parallelLine(base[0], base[1], parallelOffsetM)).width(4f))
+            map.addPolyline(PolylineOptions().addAll(base).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
+            map.addPolyline(PolylineOptions().addAll(parallelLine(base[0], base[1], parallelOffsetM)).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
         }
-        MapFieldTool.DIVIDE_LINE -> if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points.take(2)).width(4f))
+        MapFieldTool.DIVIDE_LINE -> if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points.take(2)).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
         MapFieldTool.DIVIDE -> {
-            if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points).width(4f))
+            if (points.size >= 2) map.addPolyline(PolylineOptions().addAll(points).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
             if (points.size >= 3) drawTransparentPolygon(map, points)
         }
         MapFieldTool.SELECT, MapFieldTool.NONE -> Unit
@@ -3617,7 +3634,7 @@ private fun drawTransparentPolygon(map: MapLibreMap, points: List<LatLng>) {
     map.addPolyline(
         PolylineOptions()
             .addAll(points + points.first())
-            .width(4f)
+            .width(6f)
             .color(android.graphics.Color.rgb(103, 58, 183))
     )
 }
@@ -4345,7 +4362,7 @@ private fun renderFieldTool(
         MapFieldTool.LINE -> {
             points.forEach { map.addMarker(MarkerOptions().position(it)) }
             if (points.size >= 2) {
-                map.addPolyline(PolylineOptions().addAll(points).width(4f))
+                map.addPolyline(PolylineOptions().addAll(points).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
                 return "Línea: %.2f m".format(polylineDistanceMeters(points))
             }
             return "Marque otro punto para continuar la línea."
@@ -4354,7 +4371,7 @@ private fun renderFieldTool(
         MapFieldTool.DISTANCE -> {
             points.forEach { map.addMarker(MarkerOptions().position(it)) }
             if (points.size >= 2) {
-                map.addPolyline(PolylineOptions().addAll(points).width(4f))
+                map.addPolyline(PolylineOptions().addAll(points).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
                 return "Distancia: %.2f m".format(polylineDistanceMeters(points))
             }
             return "Marque el siguiente punto."
@@ -4363,7 +4380,7 @@ private fun renderFieldTool(
         MapFieldTool.AREA -> {
             points.forEach { map.addMarker(MarkerOptions().position(it)) }
             if (points.size >= 2) {
-                map.addPolyline(PolylineOptions().addAll(points).width(4f))
+                map.addPolyline(PolylineOptions().addAll(points).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
             }
             if (points.size >= 3) {
                 drawTransparentPolygon(map, points)
@@ -4381,7 +4398,7 @@ private fun renderFieldTool(
             points.forEach { map.addMarker(MarkerOptions().position(it)) }
             if (points.size >= 2) {
                 val closed = if (points.size >= 3) points + points.first() else points
-                map.addPolyline(PolylineOptions().addAll(closed).width(4f))
+                map.addPolyline(PolylineOptions().addAll(closed).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
             }
             return if (points.size >= 3) {
                 val perimeter = polylineDistanceMeters(points + points.first())
@@ -4400,7 +4417,7 @@ private fun renderFieldTool(
                 return "Polígono: área %.2f m² • perímetro %.2f m".format(area, perimeter)
             }
             if (points.size >= 2) {
-                map.addPolyline(PolylineOptions().addAll(points).width(4f))
+                map.addPolyline(PolylineOptions().addAll(points).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
             }
             return "Marque al menos 3 vértices."
         }
@@ -4408,7 +4425,7 @@ private fun renderFieldTool(
         MapFieldTool.DIVIDE -> {
             points.forEach { map.addMarker(MarkerOptions().position(it)) }
             if (points.size >= 2) {
-                map.addPolyline(PolylineOptions().addAll(points).width(4f))
+                map.addPolyline(PolylineOptions().addAll(points).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
             }
             if (points.size >= 3) {
                 drawTransparentPolygon(map, points)
@@ -4420,7 +4437,7 @@ private fun renderFieldTool(
         MapFieldTool.DIVIDE_LINE -> {
             points.forEach { map.addMarker(MarkerOptions().position(it)) }
             if (points.size >= 2) {
-                map.addPolyline(PolylineOptions().addAll(points.take(2)).width(4f))
+                map.addPolyline(PolylineOptions().addAll(points.take(2)).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
                 return "Línea de división trazada. La vista muestra el corte manual."
             }
             return "Marque el segundo punto de la línea de división."
@@ -4429,7 +4446,7 @@ private fun renderFieldTool(
         MapFieldTool.RECTANGLE -> {
             points.forEach { map.addMarker(MarkerOptions().position(it)) }
             if (points.size >= 2) {
-                map.addPolyline(PolylineOptions().addAll(points.take(2)).width(4f))
+                map.addPolyline(PolylineOptions().addAll(points.take(2)).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
                 val width = haversineMeters(points[0], points[1])
                 if (points.size == 2) {
                     return "Ancho: %.2f m • Marque el tercer punto para definir el largo.".format(width)
@@ -4465,9 +4482,9 @@ private fun renderFieldTool(
             points.forEach { map.addMarker(MarkerOptions().position(it)) }
             if (points.size >= 2) {
                 val base = points.take(2)
-                map.addPolyline(PolylineOptions().addAll(base).width(4f))
+                map.addPolyline(PolylineOptions().addAll(base).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
                 val parallel = parallelLine(base[0], base[1], parallelOffsetM)
-                map.addPolyline(PolylineOptions().addAll(parallel).width(4f))
+                map.addPolyline(PolylineOptions().addAll(parallel).width(6f).color(android.graphics.Color.rgb(103, 58, 183)))
                 return "Paralela: separación %.2f m • longitud %.2f m".format(
                     parallelOffsetM,
                     haversineMeters(parallel[0], parallel[1])
