@@ -7,6 +7,8 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.net.URI
 import java.util.concurrent.TimeUnit
@@ -110,6 +112,27 @@ class ReachLocalApiClient(
             enabled = if (j.has("enabled")) j.optBoolean("enabled") else null,
             mode = j.optString("mode").takeIf { it.isNotBlank() }
         )
+    }
+
+    suspend fun setMobileDataSharing(enabled: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val payload = JSONObject()
+                .put("data_sharing", enabled)
+                .toString()
+                .toRequestBody("application/json".toMediaType())
+
+            val path = "/modem/1/settings"
+            val request = Request.Builder()
+                .url(baseUrl + path)
+                .post(payload)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .build()
+
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) error("HTTP ${response.code} en $path")
+            }
+        }
     }
 
     suspend fun sendAction(action: ReachLocalAction): Result<Unit> = withContext(Dispatchers.IO) {
