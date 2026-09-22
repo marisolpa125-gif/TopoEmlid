@@ -12,6 +12,8 @@ import android.os.Looper
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -77,7 +79,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 import kotlin.math.*
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SurveyScreen(
     project: TopoProject?,
@@ -159,6 +161,11 @@ fun SurveyScreen(
     var secondsRemaining by remember { mutableIntStateOf(0) }
     var lastMessage by remember { mutableStateOf<String?>(null) }
     var pendingQuickMeasureCode by remember { mutableStateOf<String?>(null) }
+    var quickCodes by remember(project?.id) {
+        mutableStateOf(loadQuickCodes(context, project?.id))
+    }
+    var editingQuickCodeIndex by remember(project?.id) { mutableStateOf<Int?>(null) }
+    var editingQuickCodeText by remember(project?.id) { mutableStateOf("") }
     var wmsDiagnostic by remember { mutableStateOf<String?>(null) }
     var wmsTestingId by remember { mutableStateOf<String?>(null) }
     var wmsPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -334,6 +341,55 @@ fun SurveyScreen(
             delay(1800)
             if (!measuring) lastMessage = null
         }
+    }
+
+    editingQuickCodeIndex?.let { index ->
+        AlertDialog(
+            onDismissRequest = { editingQuickCodeIndex = null },
+            title = { Text("Editar código rápido") },
+            text = {
+                Column {
+                    Text(
+                        "Cambie este código para adaptarlo al tipo de trabajo actual.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = editingQuickCodeText,
+                        onValueChange = { editingQuickCodeText = it.uppercase() },
+                        label = { Text("Código") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = editingQuickCodeText.isNotBlank(),
+                    onClick = {
+                        val updated = quickCodes.toMutableList()
+                        if (index in updated.indices) {
+                            updated[index] = editingQuickCodeText.trim().uppercase()
+                            quickCodes = updated
+                            saveQuickCodes(context, project?.id, updated)
+                        }
+                        editingQuickCodeIndex = null
+                    }
+                ) { Text("Guardar") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            quickCodes = defaultSurveyQuickCodes()
+                            saveQuickCodes(context, project?.id, quickCodes)
+                            editingQuickCodeIndex = null
+                        }
+                    ) { Text("Restaurar todos") }
+                    TextButton(onClick = { editingQuickCodeIndex = null }) { Text("Cancelar") }
+                }
+            }
+        )
     }
 
     Box(
@@ -2022,29 +2078,39 @@ fun SurveyScreen(
                 Spacer(Modifier.height(8.dp))
                 Text("Códigos frecuentes", style = MaterialTheme.typography.titleSmall)
 
-                val defaultCodes = listOf(
-                    "CALLE", "CORDÓN", "CUNETA", "CAÑO", "ASFALTO", "LASTRE",
-                    "POSTE", "LOTE", "LINDERO", "CERCA", "ACERA", "MURO",
-                    "EDIFICIO", "ESQUINA", "EJE", "ALCANTARILLA", "ÁRBOL",
-                    "HIDRANTE", "CAJA", "TAPA", "TALUD", "PIE TALUD",
-                    "CORONA", "QUEBRADA", "RÍO", "PUENTE", "PORTÓN",
-                    "PUNTO CONTROL"
+                Text(
+                    "Toque para usarlo. Mantenga presionado un código para editarlo.",
+                    style = MaterialTheme.typography.bodySmall
                 )
+                Spacer(Modifier.height(4.dp))
 
                 androidx.compose.foundation.layout.FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    defaultCodes.forEach { item ->
-                        AssistChip(
-                            onClick = {
-                                code = item
-                                pendingQuickMeasureCode = item
-                                showConfigPanel = false
-                            },
-                            label = { Text(item) }
-                        )
+                    quickCodes.forEachIndexed { index, item ->
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            tonalElevation = 1.dp,
+                            modifier = Modifier.combinedClickable(
+                                onClick = {
+                                    code = item
+                                    pendingQuickMeasureCode = item
+                                    showConfigPanel = false
+                                },
+                                onLongClick = {
+                                    editingQuickCodeIndex = index
+                                    editingQuickCodeText = item
+                                }
+                            )
+                        ) {
+                            Text(
+                                item,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
                     }
                 }
 
@@ -2093,6 +2159,39 @@ fun SurveyScreen(
     }
 }
 
+
+private fun defaultSurveyQuickCodes(): List<String> = listOf(
+    "CALLE", "CORDÓN", "CUNETA", "CAÑO", "ASFALTO", "LASTRE",
+    "POSTE", "LOTE", "LINDERO", "CERCA", "ACERA", "MURO",
+    "EDIFICIO", "ESQUINA", "EJE", "ALCANTARILLA", "ÁRBOL",
+    "HIDRANTE", "CAJA", "TAPA", "TALUD", "PIE TALUD",
+    "CORONA", "QUEBRADA", "RÍO", "PUENTE", "PORTÓN",
+    "PUNTO CONTROL"
+)
+
+private fun loadQuickCodes(context: Context, projectId: String?): List<String> {
+    val key = "quick_codes_" + (projectId ?: "global")
+    val prefs = context.getSharedPreferences("survey_quick_codes", Context.MODE_PRIVATE)
+    val raw = prefs.getString(key, null) ?: return defaultSurveyQuickCodes()
+    return runCatching {
+        val array = JSONArray(raw)
+        (0 until array.length())
+            .map { array.optString(it).trim().uppercase() }
+            .filter { it.isNotBlank() }
+            .takeIf { it.isNotEmpty() }
+            ?: defaultSurveyQuickCodes()
+    }.getOrDefault(defaultSurveyQuickCodes())
+}
+
+private fun saveQuickCodes(context: Context, projectId: String?, codes: List<String>) {
+    val key = "quick_codes_" + (projectId ?: "global")
+    val array = JSONArray()
+    codes.forEach { array.put(it.trim().uppercase()) }
+    context.getSharedPreferences("survey_quick_codes", Context.MODE_PRIVATE)
+        .edit()
+        .putString(key, array.toString())
+        .apply()
+}
 
 private fun ensureSurveyPointOverlayOnTop(
     map: MapLibreMap,
