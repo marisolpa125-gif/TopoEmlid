@@ -2,10 +2,25 @@ package cr.co.topoemlid
 
 object CoordinateCatalog {
     val profiles = listOf(
-        CrsProfile("CRTM05", null, "Costa Rica Transverse Mercator 2005 — validar EPSG/parámetros oficiales antes de cálculo productivo"),
-        CrsProfile("CR-SIRGAS", null, "Perfil SIRGAS para Costa Rica — seleccionar realización/parámetros oficiales del proyecto"),
-        CrsProfile("WGS 84 geográficas", "EPSG:4326", "Latitud / longitud")
+        CrsProfile(
+            "CRTM05",
+            "EPSG:5367",
+            "CR05 / CRTM05 — coordenadas Este/Norte en metros."
+        ),
+        CrsProfile(
+            "CR-SIRGAS",
+            "EPSG:8908",
+            "CR-SIRGAS época 2014.59 / CRTM05 — coordenadas Este/Norte en metros."
+        ),
+        CrsProfile(
+            "WGS 84 geográficas",
+            "EPSG:4326",
+            "Latitud / longitud"
+        )
     )
+
+    fun byName(name: String): CrsProfile =
+        profiles.firstOrNull { it.name == name } ?: profiles.last()
 }
 
 interface GeoidService {
