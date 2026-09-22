@@ -902,6 +902,10 @@ private fun ProjectDetails(
     var textLayout by remember(project.id) { mutableStateOf(TextPointLayout.POINT_LAT_LON_ELEV_DESC) }
     var textSeparator by remember(project.id) { mutableStateOf(TextSeparator.COMMA) }
     var exportMessage by remember(project.id) { mutableStateOf<String?>(null) }
+    var importMessage by remember(project.id) { mutableStateOf<String?>(null) }
+    var importSourceCrs by remember(project.id) { mutableStateOf(ImportSourceCrs.PROJECT) }
+    var pendingImportUri by remember(project.id) { mutableStateOf<Uri?>(null) }
+    var showImportDialog by remember(project.id) { mutableStateOf(false) }
 
     val geoidPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
@@ -914,6 +918,99 @@ private fun ProjectDetails(
             geoidFileUri = uri.toString()
             geoidFileName = displayName
         }
+    }
+
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            pendingImportUri = uri
+            showImportDialog = true
+        }
+    }
+
+    if (showImportDialog && pendingImportUri != null) {
+        AlertDialog(
+            onDismissRequest = {
+                showImportDialog = false
+                pendingImportUri = null
+            },
+            title = { Text("Importar archivo al proyecto") },
+            text = {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text("Sistema de coordenadas del archivo", fontWeight = FontWeight.Bold)
+                    ImportSourceCrs.entries.forEach { option ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { importSourceCrs = option }
+                                .padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = importSourceCrs == option,
+                                onClick = { importSourceCrs = option }
+                            )
+                            Text(option.label)
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Formatos preparados: TXT, CSV, GeoJSON y KML. DXF y Shapefile ZIP quedan visibles como formatos previstos, pero su lector especializado se completará aparte.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Si el archivo trae puntos, se agregan a este proyecto para replanteo. Si trae líneas o polígonos compatibles, también se agregan como figuras del proyecto.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val uri = pendingImportUri
+                        if (uri != null) {
+                            val result = ProjectImportManager.import(
+                                context = context,
+                                project = project,
+                                uri = uri,
+                                options = ProjectImportOptions(
+                                    format = ProjectImportFormat.AUTO,
+                                    sourceCrs = importSourceCrs,
+                                    importPoints = true,
+                                    importGeometries = true
+                                )
+                            )
+                            importMessage = result.fold(
+                                onSuccess = { it.message },
+                                onFailure = { it.message ?: "No se pudo importar el archivo." }
+                            )
+                        }
+                        showImportDialog = false
+                        pendingImportUri = null
+                    }
+                ) { Text("Importar") }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = {
+                        showImportDialog = false
+                        pendingImportUri = null
+                    }
+                ) { Text("Cancelar") }
+            }
+        )
     }
 
     if (showExportDialog) {
@@ -1113,6 +1210,46 @@ private fun ProjectDetails(
                     Spacer(Modifier.height(6.dp))
                     Text(it, style = MaterialTheme.typography.bodySmall)
                 }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Importar para trabajo / replanteo", fontWeight = FontWeight.Bold)
+                Text(
+                    "Importe puntos y, cuando el formato lo permita, líneas o polígonos desde archivos externos.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        importPicker.launch(
+                            arrayOf(
+                                "text/plain",
+                                "text/csv",
+                                "application/json",
+                                "application/geo+json",
+                                "application/vnd.google-earth.kml+xml",
+                                "application/dxf",
+                                "application/zip",
+                                "*/*"
+                            )
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Importar archivo")
+                }
+                importMessage?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Carpeta recomendada para organizar archivos: Documentos/TopoEmlid/Importar.",
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
 
