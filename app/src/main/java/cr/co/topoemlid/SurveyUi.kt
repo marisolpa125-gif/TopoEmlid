@@ -125,6 +125,9 @@ fun SurveyScreen(
     }
     var seconds by remember { mutableStateOf("5") }
     var showConfigPanel by remember { mutableStateOf(false) }
+    val pointDisplayStore = remember { PointDisplaySettingsStore(context) }
+    var pointDisplaySettings by remember { mutableStateOf(pointDisplayStore.load()) }
+    var showPointDisplayPanel by remember { mutableStateOf(false) }
     var showLayersPanel by remember { mutableStateOf(false) }
     var showPointsPanel by remember { mutableStateOf(false) }
     var showPointEditor by remember { mutableStateOf(false) }
@@ -137,6 +140,10 @@ fun SurveyScreen(
     var editPointHeight by remember { mutableStateOf("") }
     var showToolsPanel by remember { mutableStateOf(false) }
     var showDividePanel by remember { mutableStateOf(false) }
+    var showLineDividePanel by remember { mutableStateOf(false) }
+    var lineDivideByParts by remember { mutableStateOf(false) }
+    var lineDivideIntervalText by remember { mutableStateOf("20.00") }
+    var lineDividePartsText by remember { mutableStateOf("5") }
     var showCirclePanel by remember { mutableStateOf(false) }
     var showParallelPanel by remember { mutableStateOf(false) }
     var circleValueText by remember { mutableStateOf("8.00") }
@@ -216,10 +223,9 @@ fun SurveyScreen(
         committedGeometries.forEach { g ->
             drawCommittedGeometry(m, g)
         }
-        drawSavedSurveyPoints(m, savedPoints, context)
         drawLiveReceiverPosition(m, gnss, context)
         ensureSurveyGeometryOverlayOnTop(m, committedGeometries)
-        ensureSurveyPointOverlayOnTop(m, savedPoints, gnss)
+        ensureSurveyPointOverlayOnTop(m, savedPoints, gnss, pointDisplaySettings)
     }
 
     fun showGeometrySelection(index: Int?) {
@@ -554,7 +560,7 @@ fun SurveyScreen(
                                         MapFieldTool.AREA -> geometrySupportsArea(geometry)
                                         MapFieldTool.DISTANCE -> geometrySupportsDistance(geometry)
                                         MapFieldTool.PERIMETER -> geometrySupportsArea(geometry)
-                                        MapFieldTool.DIVIDE -> geometrySupportsArea(geometry)
+                                        MapFieldTool.DIVIDE -> geometrySupportsArea(geometry) || geometry.tool == MapFieldTool.LINE
                                         else -> false
                                     }
                                     if (acceptsSelection) {
@@ -563,8 +569,13 @@ fun SurveyScreen(
                                         if (activeMapTool == MapFieldTool.DIVIDE) {
                                             toolPoints = geometryPath(geometry)
                                             activeMapTool = MapFieldTool.NONE
-                                            toolResult = "Polígono seleccionado para dividir: " + areaText(geometry)
-                                            showDividePanel = true
+                                            if (geometrySupportsArea(geometry)) {
+                                                toolResult = "Polígono seleccionado para dividir: " + areaText(geometry)
+                                                showDividePanel = true
+                                            } else {
+                                                toolResult = "Línea seleccionada para dividir • %.2f m".format(polylineDistanceMeters(toolPoints))
+                                                showLineDividePanel = true
+                                            }
                                         } else {
                                             toolResult = when (activeMapTool) {
                                                 MapFieldTool.AREA -> areaText(geometry)
@@ -719,6 +730,10 @@ fun SurveyScreen(
                     showLayersPanel = true
                 }
             ) { Text("▱") }
+
+            SmallFloatingActionButton(
+                onClick = { showPointDisplayPanel = true }
+            ) { Text("👁") }
         }
 
         SmallFloatingActionButton(
@@ -1148,6 +1163,21 @@ fun SurveyScreen(
         }
     }
 
+    if (showPointDisplayPanel) {
+        PointDisplaySettingsSheet(
+            value = pointDisplaySettings,
+            onChange = { updated ->
+                pointDisplaySettings = updated
+                pointDisplayStore.save(updated)
+                mapRef?.let { map ->
+                    map.clear()
+                    redrawCommitted(map)
+                }
+            },
+            onDismiss = { showPointDisplayPanel = false }
+        )
+    }
+
     if (showToolsPanel) {
         ModalBottomSheet(onDismissRequest = { showToolsPanel = false }) {
             Column(
@@ -1224,7 +1254,7 @@ fun SurveyScreen(
                                         selectedGeometryIndex = null
                                         activeMapTool = MapFieldTool.DIVIDE
                                         toolPoints = emptyList()
-                                        toolResult = "Seleccione un polígono existente o marque sus vértices. Para dividir se necesita un polígono cerrado. Cuando termine de marcarlo, pulse Listo."
+                                        toolResult = "Seleccione una línea o un polígono existente. En líneas puede dividir cada cierta distancia o en partes iguales; en polígonos se mantienen las opciones de división actuales."
                                         mapRef?.clear()
                                         redrawCommitted(mapRef)
                                         showToolsPanel = false
@@ -1411,6 +1441,138 @@ fun SurveyScreen(
                         activeMapTool = MapFieldTool.NONE
                         toolPoints = emptyList()
                     },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Cancelar") }
+                Spacer(Modifier.height(20.dp))
+            }
+        }
+    }
+
+    if (showLineDividePanel) {
+        ModalBottomSheet(onDismissRequest = { showLineDividePanel = false }) {
+            Column(
+                Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState())
+            ) {
+                val totalLength = polylineDistanceMeters(toolPoints)
+                Text("Dividir línea", style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    "Longitud de la línea: %.3f m".format(totalLength),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(12.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(
+                        selected = !lineDivideByParts,
+                        onClick = { lineDivideByParts = false }
+                    )
+                    Column {
+                        Text("Cada cierta distancia")
+                        Text("Ejemplo: cada 20 m; el último punto siempre coincide con el final.", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (!lineDivideByParts) {
+                    OutlinedTextField(
+                        value = lineDivideIntervalText,
+                        onValueChange = { lineDivideIntervalText = it },
+                        label = { Text("Distancia entre puntos (m)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(
+                        selected = lineDivideByParts,
+                        onClick = { lineDivideByParts = true }
+                    )
+                    Column {
+                        Text("En partes iguales")
+                        Text("La app calcula automáticamente la distancia decimal de cada tramo.", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (lineDivideByParts) {
+                    OutlinedTextField(
+                        value = lineDividePartsText,
+                        onValueChange = { lineDividePartsText = it.filter(Char::isDigit) },
+                        label = { Text("Cantidad de divisiones") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                val previewDistances = if (lineDivideByParts) {
+                    val parts = lineDividePartsText.toIntOrNull()?.coerceIn(1, 500)
+                    if (parts != null && totalLength > 0.0) {
+                        (1..parts).map { totalLength * it.toDouble() / parts.toDouble() }
+                    } else emptyList()
+                } else {
+                    val interval = lineDivideIntervalText.replace(',', '.').toDoubleOrNull()
+                    lineDivisionDistances(totalLength, interval)
+                }
+
+                if (previewDistances.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        if (lineDivideByParts) {
+                            val step = totalLength / previewDistances.size.toDouble()
+                            "${previewDistances.size} divisiones • %.3f m por tramo".format(step)
+                        } else {
+                            "${previewDistances.size} puntos de división • final en %.3f m".format(totalLength)
+                        },
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(Modifier.height(14.dp))
+                Button(
+                    onClick = {
+                        val p = project
+                        if (p == null || toolPoints.size < 2 || totalLength <= 0.0) {
+                            toolResult = "Abra un proyecto y seleccione una línea válida."
+                        } else if (previewDistances.isEmpty()) {
+                            toolResult = "Indique una distancia o cantidad de divisiones válida."
+                        } else {
+                            var nextNumber = nextPointNumber(savedPoints).toIntOrNull()
+                                ?: ((savedPoints.mapNotNull { it.pointNumber.toIntOrNull() }.maxOrNull() ?: 0) + 1)
+                            val created = previewDistances.mapIndexedNotNull { index, distance ->
+                                val position = pointAlongPolyline(toolPoints, distance) ?: return@mapIndexedNotNull null
+                                SurveyPoint(
+                                    id = UUID.randomUUID().toString(),
+                                    projectId = p.id,
+                                    pointNumber = (nextNumber++).toString(),
+                                    description = "División línea ${index + 1}/${previewDistances.size}",
+                                    code = "DIV",
+                                    antennaHeightM = p.antennaHeightM,
+                                    occupationSeconds = 0,
+                                    latitude = position.latitude,
+                                    longitude = position.longitude,
+                                    solution = "CALCULADO"
+                                )
+                            }
+                            if (created.isNotEmpty()) {
+                                val updated = savedPoints + created
+                                savedPoints = updated
+                                pointStore.save(p.id, updated)
+                                pointNumber = nextPointNumber(updated)
+                                showLineDividePanel = false
+                                selectedGeometryIndex = null
+                                toolPoints = emptyList()
+                                toolResult = "${created.size} puntos de división guardados y disponibles para replanteo."
+                                mapRef?.let { map ->
+                                    map.clear()
+                                    redrawCommitted(map)
+                                }
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Crear puntos de división") }
+
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { showLineDividePanel = false },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Cancelar") }
                 Spacer(Modifier.height(20.dp))
@@ -2361,43 +2523,16 @@ private fun ensureSurveyGeometryOverlayOnTop(
 private fun ensureSurveyPointOverlayOnTop(
     map: MapLibreMap,
     points: List<SurveyPoint>,
-    gnss: GnssStatus
+    gnss: GnssStatus,
+    settings: PointDisplaySettings
 ) {
     val style = map.style ?: return
 
-    val savedFeatures = points.mapNotNull { p ->
-        val lat = p.latitude ?: return@mapNotNull null
-        val lon = p.longitude ?: return@mapNotNull null
-        Feature.fromGeometry(Point.fromLngLat(lon, lat)).apply {
-            addStringProperty("label", p.pointNumber)
-        }
-    }
-
-    val savedSourceId = "survey-points-top-source"
-    val savedLayerId = "survey-points-top-layer"
-
-    val savedSource = style.getSourceAs<GeoJsonSource>(savedSourceId)
-    if (savedSource == null) {
-        style.addSource(
-            GeoJsonSource(
-                savedSourceId,
-                FeatureCollection.fromFeatures(savedFeatures)
-            )
-        )
-    } else {
-        savedSource.setGeoJson(FeatureCollection.fromFeatures(savedFeatures))
-    }
-
-    // Siempre recreamos la capa al final del stack del estilo.
-    // Así queda por encima de mapa básico, satélite, WMS, WMTS y XYZ.
-    runCatching { style.removeLayer(savedLayerId) }
-    style.addLayer(
-        CircleLayer(savedLayerId, savedSourceId).withProperties(
-            PropertyFactory.circleColor(android.graphics.Color.WHITE),
-            PropertyFactory.circleStrokeColor(android.graphics.Color.rgb(30, 30, 30)),
-            PropertyFactory.circleStrokeWidth(3f),
-            PropertyFactory.circleRadius(7f)
-        )
+    ensureTopoSurveyPointLayers(
+        style = style,
+        prefix = "survey-points-top",
+        points = points,
+        settings = settings
     )
 
     val liveSourceId = "gnss-live-top-source"
@@ -2445,7 +2580,6 @@ private fun ensureSurveyPointOverlayOnTop(
         )
     )
 }
-
 
 private fun drawLiveReceiverPosition(
     map: MapLibreMap,
@@ -2533,6 +2667,43 @@ private fun drawSavedSurveyPoints(
                 .snippet(detail)
         )
     }
+}
+
+private fun lineDivisionDistances(totalLength: Double, interval: Double?): List<Double> {
+    if (totalLength <= 0.0 || interval == null || interval <= 0.0) return emptyList()
+    val result = mutableListOf<Double>()
+    var d = interval
+    while (d < totalLength - 1e-6 && result.size < 500) {
+        result += d
+        d += interval
+    }
+    if (result.isEmpty() || abs(result.last() - totalLength) > 1e-6) {
+        result += totalLength
+    }
+    return result
+}
+
+private fun pointAlongPolyline(points: List<LatLng>, distanceM: Double): LatLng? {
+    if (points.size < 2) return null
+    val total = polylineDistanceMeters(points)
+    if (total <= 0.0) return points.lastOrNull()
+    val wanted = distanceM.coerceIn(0.0, total)
+    var travelled = 0.0
+    for (i in 0 until points.lastIndex) {
+        val a = points[i]
+        val b = points[i + 1]
+        val segment = haversineMeters(a, b)
+        if (segment <= 1e-9) continue
+        if (travelled + segment >= wanted - 1e-9) {
+            val t = ((wanted - travelled) / segment).coerceIn(0.0, 1.0)
+            return LatLng(
+                a.latitude + (b.latitude - a.latitude) * t,
+                a.longitude + (b.longitude - a.longitude) * t
+            )
+        }
+        travelled += segment
+    }
+    return points.last()
 }
 
 private fun nextPointNumber(points: List<SurveyPoint>): String {
