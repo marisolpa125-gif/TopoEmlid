@@ -1823,62 +1823,6 @@ fun SurveyScreen(
                                         }
                                     }
 
-                                    Spacer(Modifier.height(6.dp))
-                                    OutlinedButton(
-                                        onClick = {
-                                            val map = mapRef
-                                            if (map == null) {
-                                                wmsDiagnostic = "El mapa aún no está listo."
-                                            } else {
-                                                val layerToLoad = if (layer.visible) {
-                                                    layer
-                                                } else {
-                                                    val updated = projectLayers.map {
-                                                        if (it.id == layer.id) it.copy(visible = true) else it
-                                                    }
-                                                    persistVisibleLayers(updated)
-                                                    updated.first { it.id == layer.id }
-                                                }
-
-                                                wmsLastSuccessfulUrl.remove(layer.id)
-                                                wmsRequestInFlight.remove(layer.id)
-                                                siriWinningStrategy.remove(layer.id)
-                                                wmsLayerDiagnostics.remove(layer.id)
-                                                wmsTestingId = layer.id
-                                                wmsDiagnostic =
-                                                    "Activando y probando automáticamente versiones, CRS, orden de ejes, tamaño y formato WMS…"
-                                                refreshViewportWmsLayers(
-                                                    map = map,
-                                                    layers = listOf(layerToLoad),
-                                                    onLayerUpdated = {
-                                                        val strategy = siriWinningStrategy[layer.id]
-                                                        val details = wmsLayerDiagnostics[layer.id]
-                                                        wmsDiagnostic = if (strategy != null) {
-                                                            "WMS cargado correctamente. Estrategia encontrada: $strategy" +
-                                                                (details?.let { "\n\nDiagnóstico:\n$it" } ?: "")
-                                                        } else {
-                                                            "WMS cargado correctamente." +
-                                                                (details?.let { "\n\nDiagnóstico:\n$it" } ?: "")
-                                                        }
-                                                        wmsTestingId = null
-                                                        map.clear()
-                                                        redrawCommitted(map)
-                                                    },
-                                                    onLayerFailed = { reason ->
-                                                        val details = wmsLayerDiagnostics[layer.id]
-                                                        wmsDiagnostic =
-                                                            "$reason Se probaron automáticamente las combinaciones compatibles." +
-                                                                (details?.let { "\n\nDiagnóstico:\n$it" } ?: "")
-                                                        wmsTestingId = null
-                                                    }
-                                                )
-                                            }
-                                        },
-                                        modifier = Modifier
-                                            .padding(horizontal = 12.dp, vertical = 2.dp)
-                                    ) {
-                                        Text(if (wmsTestingId == layer.id) "Recargando…" else "Recargar")
-                                    }
                                     /*
                                     OutlinedButton(
                                         onClick = {
