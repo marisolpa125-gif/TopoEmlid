@@ -128,6 +128,9 @@ private fun ensurePointImages(style: Style) {
     if (style.getImage("topo-point-yellow") == null) {
         style.addImage("topo-point-yellow", makePointBitmap(android.graphics.Color.rgb(255, 214, 0)))
     }
+    if (style.getImage("topo-rtk-cyan") == null) {
+        style.addImage("topo-rtk-cyan", makePointBitmap(android.graphics.Color.rgb(0, 188, 212)))
+    }
 }
 
 private fun makePointBitmap(color: Int): Bitmap {
@@ -242,4 +245,39 @@ private fun ensurePointGroup(
     )
     nearText.setMinZoom(17.5f)
     style.addLayer(nearText)
+}
+
+
+fun ensureTopoRtkLayer(
+    style: Style,
+    prefix: String,
+    latitude: Double?,
+    longitude: Double?
+) {
+    ensurePointImages(style)
+
+    val sourceId = "$prefix-source"
+    val layerId = "$prefix-layer"
+    val features = if (latitude != null && longitude != null) {
+        listOf(Feature.fromGeometry(Point.fromLngLat(longitude, latitude)))
+    } else {
+        emptyList()
+    }
+
+    val source = style.getSourceAs<GeoJsonSource>(sourceId)
+    if (source == null) {
+        style.addSource(GeoJsonSource(sourceId, FeatureCollection.fromFeatures(features)))
+    } else {
+        source.setGeoJson(FeatureCollection.fromFeatures(features))
+    }
+
+    runCatching { style.removeLayer(layerId) }
+    style.addLayer(
+        SymbolLayer(layerId, sourceId).withProperties(
+            PropertyFactory.iconImage("topo-rtk-cyan"),
+            PropertyFactory.iconSize(0.82f),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconIgnorePlacement(true)
+        )
+    )
 }
