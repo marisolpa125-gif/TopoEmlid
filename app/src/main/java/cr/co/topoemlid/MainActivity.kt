@@ -218,7 +218,7 @@ fun TopoEmlidApp() {
         topBar = { GnssBar(gnss, ntripStatus, activeProject?.name) },
         bottomBar = {
             NavigationBar {
-                listOf("Receptores", "Proyecto", "Capas", "Levantamiento", "Replanteo", "Configuración").forEach { item ->
+                listOf("Receptores", "Proyecto", "Importar/Exportar", "Capas", "Levantamiento", "Replanteo", "Configuración").forEach { item ->
                     NavigationBarItem(
                         selected = page == item,
                         onClick = { page = item },
@@ -227,6 +227,7 @@ fun TopoEmlidApp() {
                                 when (item) {
                                     "Receptores" -> "◉"
                                     "Proyecto" -> "▣"
+                                    "Importar/Exportar" -> "⇄"
                                     "Capas" -> "▱"
                                     "Levantamiento" -> "⌖"
                                     "Replanteo" -> "⇢"
@@ -234,7 +235,7 @@ fun TopoEmlidApp() {
                                 }
                             )
                         },
-                        label = { Text(item) }
+                        label = { Text(if (item == "Proyecto") "Proyectos" else item) }
                     )
                 }
             }
@@ -276,6 +277,7 @@ fun TopoEmlidApp() {
                     }
                 )
                 "Capas" -> ProjectLayersScreen(activeProject)
+                "Importar/Exportar" -> ActiveProjectTransferScreen(activeProject)
                 "Proyecto" -> {
                     val selected = projects.firstOrNull { it.id == selectedProjectId }
                     if (selected == null) {
@@ -1077,22 +1079,11 @@ private fun ProjectHub(
                     if (p.location.isNotBlank()) Text(p.location, style = MaterialTheme.typography.bodySmall)
                     Text("CRS: ${p.crsName} • Geoide: ${p.geoidFileName ?: p.geoidModel.label}", style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    OutlinedButton(
+                        onClick = { onEdit(p) },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        OutlinedButton(
-                            onClick = { onView(p) },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Importar / Exportar")
-                        }
-                        OutlinedButton(
-                            onClick = { onEdit(p) },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Configurar")
-                        }
+                        Text("Configurar")
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -1439,68 +1430,6 @@ private fun ProjectDetails(
 
         OutlinedButton(onClick = onDelete, modifier = Modifier.padding(top = 8.dp)) { Text("Eliminar proyecto") }
 
-        Spacer(Modifier.height(12.dp))
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp)) {
-                Text("Exportar trabajo existente", fontWeight = FontWeight.Bold)
-                Text(
-                    "Exporte solo puntos, solo figuras o todo el trabajo en TXT, CSV, GeoJSON, KML, DXF o respaldo TOPO EMLID.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = { showExportDialog = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Exportar trabajo")
-                }
-                exportMessage?.let {
-                    Spacer(Modifier.height(6.dp))
-                    Text(it, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp)) {
-                Text("Importar al trabajo existente", fontWeight = FontWeight.Bold)
-                Text(
-                    "Importe puntos y, cuando el formato lo permita, líneas o polígonos desde archivos externos.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        importPicker.launch(
-                            arrayOf(
-                                "text/plain",
-                                "text/csv",
-                                "application/json",
-                                "application/geo+json",
-                                "application/vnd.google-earth.kml+xml",
-                                "application/dxf",
-                                "application/zip",
-                                "*/*"
-                            )
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Importar archivo")
-                }
-                importMessage?.let {
-                    Spacer(Modifier.height(6.dp))
-                    Text(it, style = MaterialTheme.typography.bodySmall)
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Carpeta recomendada para organizar archivos: Documentos/TopoEmlid/Importar.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-        }
-
         Spacer(Modifier.height(16.dp))
         SettingsCard("Datos guardados", "CRS: ${crsName}", "Geoide: ${geoidFileName ?: project.geoidModel.label} • Altura antena: ${antennaText} m")
         Text("Perfil NTRIP", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
@@ -1528,6 +1457,197 @@ private fun ProjectDetails(
     }
 }
 
+@Composable
+private fun ActiveProjectTransferScreen(project: TopoProject?) {
+    val context = LocalContext.current
+
+    if (project == null) {
+        Column(Modifier.fillMaxSize().padding(16.dp)) {
+            Text("Importar / Exportar", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(12.dp))
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("No hay un proyecto activo", fontWeight = FontWeight.Bold)
+                    Text("Abra primero un proyecto desde Proyectos. Importar y exportar siempre trabaja únicamente con el proyecto que esté activo.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        return
+    }
+
+    var showExportDialog by remember(project.id) { mutableStateOf(false) }
+    var exportFormat by remember(project.id) { mutableStateOf(ProjectExportFormat.CSV) }
+    var exportContent by remember(project.id) { mutableStateOf(ProjectExportContent.ALL) }
+    var textLayout by remember(project.id) { mutableStateOf(TextPointLayout.POINT_LAT_LON_ELEV_DESC) }
+    var textSeparator by remember(project.id) { mutableStateOf(TextSeparator.COMMA) }
+    var exportMessage by remember(project.id) { mutableStateOf<String?>(null) }
+    var importMessage by remember(project.id) { mutableStateOf<String?>(null) }
+    var importSourceCrs by remember(project.id) { mutableStateOf(ImportSourceCrs.PROJECT) }
+    var pendingImportUri by remember(project.id) { mutableStateOf<Uri?>(null) }
+    var showImportDialog by remember(project.id) { mutableStateOf(false) }
+
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            pendingImportUri = uri
+            showImportDialog = true
+        }
+    }
+
+    if (showImportDialog && pendingImportUri != null) {
+        AlertDialog(
+            onDismissRequest = { showImportDialog = false; pendingImportUri = null },
+            title = { Text("Importar al proyecto activo") },
+            text = {
+                Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    Text("Proyecto activo", fontWeight = FontWeight.Bold)
+                    Text(project.name)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Sistema de coordenadas del archivo", fontWeight = FontWeight.Bold)
+                    ImportSourceCrs.entries.forEach { option ->
+                        Row(Modifier.fillMaxWidth().clickable { importSourceCrs = option }.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = importSourceCrs == option, onClick = { importSourceCrs = option })
+                            Text(option.label)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("TXT, CSV, GeoJSON y KML están habilitados. DXF y Shapefile ZIP siguen pendientes de su lector especializado.", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(6.dp))
+                    Text("Los datos compatibles se agregarán únicamente a " + project.name + ".", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val uri = pendingImportUri
+                    if (uri != null) {
+                        val result = ProjectImportManager.import(
+                            context = context,
+                            project = project,
+                            uri = uri,
+                            options = ProjectImportOptions(
+                                format = ProjectImportFormat.AUTO,
+                                sourceCrs = importSourceCrs,
+                                importPoints = true,
+                                importGeometries = true
+                            )
+                        )
+                        importMessage = result.fold(
+                            onSuccess = { it.message },
+                            onFailure = { it.message ?: "No se pudo importar el archivo." }
+                        )
+                    }
+                    showImportDialog = false
+                    pendingImportUri = null
+                }) { Text("Importar") }
+            },
+            dismissButton = { OutlinedButton(onClick = { showImportDialog = false; pendingImportUri = null }) { Text("Cancelar") } }
+        )
+    }
+
+    if (showExportDialog) {
+        AlertDialog(
+            onDismissRequest = { showExportDialog = false },
+            title = { Text("Exportar proyecto activo") },
+            text = {
+                Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
+                    Text("Proyecto activo", fontWeight = FontWeight.Bold)
+                    Text(project.name)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Formato", fontWeight = FontWeight.Bold)
+                    ProjectExportFormat.entries.forEach { option ->
+                        Row(Modifier.fillMaxWidth().clickable { exportFormat = option }.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = exportFormat == option, onClick = { exportFormat = option })
+                            Text(option.label)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Contenido", fontWeight = FontWeight.Bold)
+                    ProjectExportContent.entries.forEach { option ->
+                        Row(Modifier.fillMaxWidth().clickable { exportContent = option }.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = exportContent == option, onClick = { exportContent = option })
+                            Text(option.label)
+                        }
+                    }
+                    if (exportFormat == ProjectExportFormat.TXT || exportFormat == ProjectExportFormat.CSV) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Orden de campos", fontWeight = FontWeight.Bold)
+                        TextPointLayout.entries.forEach { option ->
+                            Row(Modifier.fillMaxWidth().clickable { textLayout = option }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = textLayout == option, onClick = { textLayout = option })
+                                Text(option.label, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text("Separador", fontWeight = FontWeight.Bold)
+                        TextSeparator.entries.forEach { option ->
+                            Row(Modifier.fillMaxWidth().clickable { textSeparator = option }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = textSeparator == option, onClick = { textSeparator = option })
+                                Text(option.label, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("El archivo se guardará dentro de Documentos/TopoEmlid/Trabajos/" + project.name + ".", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val result = ProjectExportManager.export(
+                        context = context,
+                        project = project,
+                        options = ProjectExportOptions(
+                            format = exportFormat,
+                            content = exportContent,
+                            textLayout = textLayout,
+                            separator = textSeparator
+                        )
+                    )
+                    exportMessage = result.fold(
+                        onSuccess = { "Guardado en $it" },
+                        onFailure = { it.message ?: "No se pudo exportar el trabajo." }
+                    )
+                    showExportDialog = false
+                }) { Text("Exportar") }
+            },
+            dismissButton = { OutlinedButton(onClick = { showExportDialog = false }) { Text("Cancelar") } }
+        )
+    }
+
+    Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
+        Text("Importar / Exportar", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Proyecto activo", fontWeight = FontWeight.Bold)
+                Text(project.name, style = MaterialTheme.typography.titleLarge)
+                if (project.location.isNotBlank()) Text(project.location, style = MaterialTheme.typography.bodySmall)
+                Text("Todo lo que importe o exporte aquí corresponde únicamente a este proyecto.", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Importar", fontWeight = FontWeight.Bold)
+                Text("Agregar puntos, líneas o polígonos al proyecto activo desde un archivo externo.", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = {
+                    importPicker.launch(arrayOf("text/plain","text/csv","application/json","application/geo+json","application/vnd.google-earth.kml+xml","application/dxf","application/zip","*/*"))
+                }, modifier = Modifier.fillMaxWidth()) { Text("Importar al proyecto activo") }
+                importMessage?.let { Spacer(Modifier.height(6.dp)); Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Exportar", fontWeight = FontWeight.Bold)
+                Text("Guardar puntos, figuras o el trabajo completo del proyecto activo.", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = { showExportDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("Exportar proyecto activo") }
+                exportMessage?.let { Spacer(Modifier.height(6.dp)); Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+    }
+}
 @Composable
 private fun SettingsCard(title: String, value: String, subtitle: String) {
     Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
