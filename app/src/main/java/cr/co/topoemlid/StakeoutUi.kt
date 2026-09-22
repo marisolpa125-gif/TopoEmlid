@@ -1,5 +1,7 @@
 package cr.co.topoemlid
 
+import android.media.AudioManager
+import android.media.ToneGenerator
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
@@ -51,6 +53,72 @@ fun StakeoutScreen(
     var bearingText by remember { mutableStateOf("") }
     var distanceText by remember { mutableStateOf("") }
     var showGuidance by remember { mutableStateOf(false) }
+
+    val selectedTarget = points.firstOrNull { it.id == selectedPointId }
+    val currentStakeoutDistanceM = run {
+        val lat = gnss.latitude
+        val lon = gnss.longitude
+        val tLat = selectedTarget?.latitude
+        val tLon = selectedTarget?.longitude
+        if (lat != null && lon != null && tLat != null && tLon != null) {
+            val north = (tLat - lat) * 111132.0
+            val east = (tLon - lon) * (111320.0 * cos(Math.toRadians(tLat)))
+            hypot(north, east)
+        } else null
+    }
+    val latestStakeoutDistance by rememberUpdatedState(currentStakeoutDistanceM)
+    val toneGenerator = remember {
+        ToneGenerator(AudioManager.STREAM_MUSIC, 85)
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            toneGenerator.stopTone()
+            toneGenerator.release()
+        }
+    }
+
+    LaunchedEffect(showGuidance, mode, selectedPointId) {
+        toneGenerator.stopTone()
+        if (!showGuidance || mode != StakeoutMode.POINT || selectedPointId == null) return@LaunchedEffect
+
+        while (true) {
+            val distance = latestStakeoutDistance
+            if (distance == null || !gnss.connected) {
+                delay(500)
+                continue
+            }
+
+            when {
+                distance <= 0.05 -> {
+                    // Punto alcanzado: tono largo. Si se aleja, el siguiente ciclo
+                    // vuelve automáticamente a pulsos cortos.
+                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP2, 700)
+                    delay(950)
+                }
+                distance <= 0.50 -> {
+                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 110)
+                    delay(230)
+                }
+                distance <= 2.0 -> {
+                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 110)
+                    delay(400)
+                }
+                distance <= 5.0 -> {
+                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 110)
+                    delay(650)
+                }
+                distance <= 20.0 -> {
+                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 110)
+                    delay(900)
+                }
+                else -> {
+                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
+                    delay(1250)
+                }
+            }
+        }
+    }
 
     Column(
         Modifier
@@ -161,11 +229,9 @@ fun StakeoutScreen(
         Spacer(Modifier.height(18.dp))
 
         if (showGuidance && mode == StakeoutMode.POINT) {
-            val target = points.firstOrNull { it.id == selectedPointId }
-
             StakeoutMapPreview(
                 project = project,
-                target = target,
+                target = selectedTarget,
                 gnss = gnss
             )
 
@@ -173,7 +239,7 @@ fun StakeoutScreen(
 
             // Este recuadro se mantiene compacto; la navegación principal
             // ocurre sobre el mapa y la guía siempre se dibuja por encima.
-            StakeoutGuidancePanel(target = target, gnss = gnss)
+            StakeoutGuidancePanel(target = selectedTarget, gnss = gnss)
 
             Spacer(Modifier.height(12.dp))
         }
