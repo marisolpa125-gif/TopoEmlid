@@ -1761,16 +1761,21 @@ fun SurveyScreen(
                                     Switch(
                                         checked = layer.visible,
                                         onCheckedChange = { checked ->
-                                            persistVisibleLayers(
-                                                projectLayers.map {
-                                                    if (it.id == layer.id) it.copy(visible = checked) else it
+                                            val updated = projectLayers.map {
+                                                if (it.id == layer.id) it.copy(visible = checked) else it
+                                            }
+                                            persistVisibleLayers(updated)
+                                            mapRef?.let { map ->
+                                                refreshViewportWmsLayers(map, updated) {
+                                                    map.clear()
+                                                    redrawCommitted(map)
                                                 }
-                                            )
+                                            }
                                         }
                                     )
                                 }
 
-                                if (layer.type == LayerType.WMS) {
+                                if (layer.type == LayerType.WMS && layer.visible) {
                                     Spacer(Modifier.height(8.dp))
                                     Text(
                                         "Transparencia WMS: ${(layer.opacity * 100).toInt()}%",
@@ -1870,11 +1875,11 @@ fun SurveyScreen(
                                             }
                                         },
                                         modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                                            .padding(horizontal = 12.dp, vertical = 2.dp)
                                     ) {
-                                        Text(if (wmsTestingId == layer.id) "Recargando WMS…" else "Recargar WMS")
+                                        Text(if (wmsTestingId == layer.id) "Recargando…" else "Recargar")
                                     }
+                                    /*
                                     OutlinedButton(
                                         onClick = {
                                             val map = mapRef
@@ -1992,6 +1997,7 @@ fun SurveyScreen(
                                                 "Prueba A/B WMS fuera de MapLibre"
                                         )
                                     }
+                                    */
                                 }
                             }
                         }
@@ -2436,6 +2442,7 @@ private val wmsRequestInFlight = ConcurrentHashMap<String, Boolean>()
 private val siriWinningStrategy = ConcurrentHashMap<String, String>()
 private val wmsAttemptDiagnostics = ConcurrentHashMap<String, String>()
 private val wmsLayerDiagnostics = ConcurrentHashMap<String, String>()
+private val wmsDesiredVisibility = ConcurrentHashMap<String, Boolean>()
 
 private data class WmsRenderResult(
     val bitmap: Bitmap,
@@ -2450,6 +2457,22 @@ fun refreshViewportWmsLayers(
     onLayerFailed: ((String) -> Unit)? = null
 ) {
     val style = map.style ?: return
+
+    // Visibility in the layer switch is authoritative. Remove hidden WMS overlays
+    // immediately and remember the desired state so an older background request
+    // cannot re-attach a layer after the user has turned it off.
+    layers.filter { it.type == LayerType.WMS }.forEach { layer ->
+        wmsDesiredVisibility[layer.id] = layer.visible
+        if (!layer.visible) {
+            val layerId = "project-wms-image-layer-${layer.id}"
+            val sourceId = "project-wms-image-source-${layer.id}"
+            runCatching { style.removeLayer(layerId) }
+            runCatching { style.removeSource(sourceId) }
+            wmsLastSuccessfulUrl.remove(layer.id)
+            wmsRequestInFlight.remove(layer.id)
+        }
+    }
+
     val bounds = runCatching { map.projection.visibleRegion.latLngBounds }.getOrNull() ?: return
 
     val north = bounds.latitudeNorth.coerceIn(-89.0, 89.0)
@@ -2467,7 +2490,7 @@ fun refreshViewportWmsLayers(
     )
 
     layers
-        .filter { it.type == LayerType.WMS }
+        .filter { it.type == LayerType.WMS && it.visible }
         .sortedBy { it.order }
         .forEach { layer ->
             val serviceUrl = layer.url.orEmpty()
@@ -2516,6 +2539,8 @@ fun refreshViewportWmsLayers(
                 val existing = runCatching {
                     style.getSourceAs<ImageSource>(sourceId)
                 }.getOrNull()
+
+                if (wmsDesiredVisibility[layer.id] != true) return@forEach
 
                 val attached = runCatching {
                     if (existing != null) {
@@ -2635,6 +2660,7 @@ fun refreshViewportWmsLayers(
                     }
 
                     Handler(Looper.getMainLooper()).post {
+                        if (wmsDesiredVisibility[layer.id] != true) return@post
                         val currentStyle = map.style ?: return@post
                         val sourceId = "project-wms-image-source-${layer.id}"
                         val layerId = "project-wms-image-layer-${layer.id}"
