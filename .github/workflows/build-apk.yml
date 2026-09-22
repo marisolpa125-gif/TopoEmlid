@@ -241,8 +241,19 @@ jobs:
               print("AVISO: no se pudo obtener la corredera real; se conserva fallback:", e)
           PY
 
+      - name: Preparar firma debug estable
+        run: |
+          mkdir -p .ci
+          base64 -d .ci/topoemlid-debug.jks.b64 > .ci/topoemlid-debug.jks
+
       - name: Compilar APK debug
         run: gradle --no-daemon :app:assembleDebug
+
+      - name: Verificar APK y firma
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          apksigner verify --verbose --print-certs "$APK"
+          ls -lh "$APK"
 
       - name: Preparar APK para descarga
         run: |
