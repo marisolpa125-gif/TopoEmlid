@@ -55,6 +55,9 @@ fun StakeoutScreen(
     var bearingText by remember { mutableStateOf("") }
     var distanceText by remember { mutableStateOf("") }
     var showGuidance by remember { mutableStateOf(false) }
+    val pointDisplayStore = remember { PointDisplaySettingsStore(context) }
+    var pointDisplaySettings by remember { mutableStateOf(pointDisplayStore.load()) }
+    var showPointDisplayPanel by remember { mutableStateOf(false) }
 
     val selectedTarget = points.firstOrNull { it.id == selectedPointId }
     val currentStakeoutDistanceM = run {
@@ -127,14 +130,39 @@ fun StakeoutScreen(
         }
     }
 
+    if (showPointDisplayPanel) {
+        PointDisplaySettingsSheet(
+            value = pointDisplaySettings,
+            onChange = { updated ->
+                pointDisplaySettings = updated
+                pointDisplayStore.save(updated)
+            },
+            onDismiss = { showPointDisplayPanel = false }
+        )
+    }
+
     Column(
         Modifier
             .fillMaxSize()
             .padding(16.dp)
             .verticalScroll(rememberScrollState())
     ) {
-        Text("Replanteo", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text(project?.name ?: "Sin proyecto activo", style = MaterialTheme.typography.bodySmall)
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Replanteo", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text(project?.name ?: "Sin proyecto activo", style = MaterialTheme.typography.bodySmall)
+            }
+            OutlinedButton(
+                onClick = { showPointDisplayPanel = true },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+            ) {
+                Text("👁 Visualización")
+            }
+        }
 
         Spacer(Modifier.height(12.dp))
         Text("Tipo de replanteo", fontWeight = FontWeight.Bold)
@@ -238,8 +266,10 @@ fun StakeoutScreen(
         if (showGuidance && mode == StakeoutMode.POINT) {
             StakeoutMapPreview(
                 project = project,
+                points = points,
                 target = selectedTarget,
-                gnss = gnss
+                gnss = gnss,
+                pointDisplaySettings = pointDisplaySettings
             )
 
             Spacer(Modifier.height(8.dp))
@@ -349,8 +379,10 @@ private fun PointPairSelector(
 @Composable
 private fun StakeoutMapPreview(
     project: TopoProject?,
+    points: List<SurveyPoint>,
     target: SurveyPoint?,
-    gnss: GnssStatus
+    gnss: GnssStatus,
+    pointDisplaySettings: PointDisplaySettings
 ) {
     val context = LocalContext.current
     val layerStore = remember(project?.id) { LayerStore(context) }
@@ -373,6 +405,16 @@ private fun StakeoutMapPreview(
     fun redrawGuidance(map: MapLibreMap) {
         map.clear()
 
+        map.style?.let { style ->
+            ensureTopoSurveyPointLayers(
+                style = style,
+                prefix = "stakeout-points",
+                points = points,
+                settings = pointDisplaySettings,
+                selectedPointId = target?.id
+            )
+        }
+
         val lat = gnss.latitude
         val lon = gnss.longitude
         val tLat = target?.latitude
@@ -386,14 +428,6 @@ private fun StakeoutMapPreview(
                 MarkerOptions()
                     .position(it)
                     .title("RTK • posición actual")
-            )
-        }
-
-        objective?.let {
-            map.addMarker(
-                MarkerOptions()
-                    .position(it)
-                    .title("OBJETIVO • Punto " + (target?.pointNumber ?: ""))
             )
         }
 
