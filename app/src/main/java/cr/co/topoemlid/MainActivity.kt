@@ -334,6 +334,10 @@ private fun AppSettingsScreen(
     var confirmExit by remember { mutableStateOf(false) }
     var soundVersion by remember { mutableIntStateOf(0) }
     var pendingSoundEvent by remember { mutableStateOf<FieldSoundEvent?>(null) }
+    val settingsScope = rememberCoroutineScope()
+    var shareMobileData by remember { mutableStateOf<Boolean?>(null) }
+    var shareMobileDataBusy by remember { mutableStateOf(false) }
+    var shareMobileDataMessage by remember { mutableStateOf<String?>(null) }
 
     val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         val event = pendingSoundEvent
@@ -510,11 +514,55 @@ private fun AppSettingsScreen(
                     "Control del módem celular del Reach",
                     "Permite activar o desactivar los datos móviles del receptor."
                 )
-                SettingsCard(
-                    "Compartir Internet por hotspot",
-                    "SIM del Reach → hotspot Wi‑Fi → tablet",
-                    "Equivale a “Share mobile data from Reach in hotspot mode”."
-                )
+                Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Compartir Internet por hotspot", fontWeight = FontWeight.Bold)
+                                Text(
+                                    "SIM del Reach → hotspot Wi‑Fi → tablet",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            Switch(
+                                checked = shareMobileData == true,
+                                enabled = !shareMobileDataBusy,
+                                onCheckedChange = { checked ->
+                                    shareMobileDataBusy = true
+                                    shareMobileDataMessage = null
+                                    settingsScope.launch {
+                                        val result = ReachLocalApiClient("192.168.42.1")
+                                            .setMobileDataSharing(checked)
+                                        result.onSuccess {
+                                            shareMobileData = checked
+                                            shareMobileDataMessage =
+                                                if (checked) "Compartir Internet activado" else "Compartir Internet desactivado"
+                                        }.onFailure {
+                                            shareMobileDataMessage = it.message ?: "No se pudo cambiar la opción"
+                                        }
+                                        shareMobileDataBusy = false
+                                    }
+                                }
+                            )
+                        }
+                        Text(
+                            when {
+                                shareMobileDataBusy -> "Aplicando cambio en el Reach…"
+                                shareMobileData == null -> "Estado no leído todavía. Al cambiarlo se enviará la orden directamente al Reach."
+                                shareMobileData == true -> "Compartir Internet: activado"
+                                else -> "Compartir Internet: desactivado"
+                            },
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        shareMobileDataMessage?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
                 SettingsCard(
                     "Roaming de datos",
                     "Desactivado por seguridad",
@@ -538,7 +586,7 @@ private fun AppSettingsScreen(
 
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Importante: ya confirmamos que el Reach puede compartir su Internet móvil por hotspot. Para activar estos interruptores desde Topo Emlid falta capturar una sola petición de Reach Panel (URL + método + payload) de esta pantalla de Datos móviles.",
+                    "La opción Compartir Internet ya usa la orden confirmada del Reach. Las demás opciones se habilitarán cuando capturemos sus peticiones exactas.",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
