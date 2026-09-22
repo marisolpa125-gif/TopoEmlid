@@ -327,9 +327,39 @@ fun TopoEmlidApp() {
 private fun AppSettingsScreen(
     onExitApp: () -> Unit
 ) {
+    val context = LocalContext.current
     val mode = LocalAppViewMode.current
     val setMode = LocalSetAppViewMode.current
+    val soundManager = remember { FieldSoundManager(context) }
     var confirmExit by remember { mutableStateOf(false) }
+    var soundVersion by remember { mutableIntStateOf(0) }
+    var pendingSoundEvent by remember { mutableStateOf<FieldSoundEvent?>(null) }
+
+    val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        val event = pendingSoundEvent
+        pendingSoundEvent = null
+        if (uri != null && event != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            var displayName = uri.lastPathSegment ?: "Sonido personalizado"
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (cursor.moveToFirst() && idx >= 0) {
+                    displayName = cursor.getString(idx) ?: displayName
+                }
+            }
+            soundManager.setCustomSound(event, uri, displayName)
+            soundVersion++
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { soundManager.release() }
+    }
 
     if (confirmExit) {
         AlertDialog(
@@ -397,6 +427,65 @@ private fun AppSettingsScreen(
                                     "Día de 6:00 a. m. a 6:00 p. m. • Noche el resto del tiempo",
                                     style = MaterialTheme.typography.bodySmall
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Sonidos", fontWeight = FontWeight.Bold)
+                Text(
+                    "Puede asignar un sonido distinto a cada evento. Para avisos cortos se recomiendan WAV u OGG; también puede cargar MP3 o M4A/AAC compatibles con Android.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(10.dp))
+
+                key(soundVersion) {
+                    FieldSoundEvent.entries.forEach { event ->
+                        val customName = soundManager.customSoundName(event)
+                        Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(event.label, fontWeight = FontWeight.Bold)
+                                Text(
+                                    customName ?: "Sonido predeterminado de Topo Emlid",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Spacer(Modifier.height(7.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            pendingSoundEvent = event
+                                            soundPicker.launch(arrayOf("audio/*"))
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(if (customName == null) "Cambiar" else "Reemplazar")
+                                    }
+                                    OutlinedButton(
+                                        onClick = { soundManager.play(event) },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("Probar")
+                                    }
+                                }
+                                if (customName != null) {
+                                    TextButton(
+                                        onClick = {
+                                            soundManager.clearCustomSound(event)
+                                            soundVersion++
+                                        }
+                                    ) {
+                                        Text("Restaurar predeterminado")
+                                    }
+                                }
                             }
                         }
                     }
