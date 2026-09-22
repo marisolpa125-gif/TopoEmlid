@@ -497,6 +497,57 @@ private fun AppSettingsScreen(
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp)) {
+                Text("SIM / Datos móviles del Reach", fontWeight = FontWeight.Bold)
+                Text(
+                    "Aquí se agruparán las opciones de la SIM del receptor y el uso de datos móviles. La interfaz queda preparada sin alterar Bluetooth/NMEA, BLE ni NTRIP.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                SettingsCard(
+                    "Usar datos móviles",
+                    "Control del módem celular del Reach",
+                    "Permite activar o desactivar los datos móviles del receptor."
+                )
+                SettingsCard(
+                    "Compartir Internet por hotspot",
+                    "SIM del Reach → hotspot Wi‑Fi → tablet",
+                    "Equivale a “Share mobile data from Reach in hotspot mode”."
+                )
+                SettingsCard(
+                    "Roaming de datos",
+                    "Desactivado por seguridad",
+                    "Úselo solo si su plan celular lo requiere."
+                )
+                SettingsCard(
+                    "Actualizaciones por datos móviles",
+                    "Control independiente",
+                    "Permite al Reach descargar actualizaciones usando la SIM cuando no hay Internet por Wi‑Fi."
+                )
+                SettingsCard(
+                    "APN / Credenciales",
+                    "Operador celular",
+                    "APN, usuario, contraseña y PIN cuando el proveedor lo requiera."
+                )
+                SettingsCard(
+                    "Uso de datos",
+                    "Estadísticas del módem",
+                    "Preparado para mostrar consumo de datos cuando terminemos de vincular la ruta local del módem."
+                )
+
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Importante: ya confirmamos que el Reach puede compartir su Internet móvil por hotspot. Para activar estos interruptores desde Topo Emlid falta capturar una sola petición de Reach Panel (URL + método + payload) de esta pantalla de Datos móviles.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
                 Text("Aplicación", fontWeight = FontWeight.Bold)
                 Text(
                     "Cierre ordenadamente TopoEmlid y sus conexiones activas.",
