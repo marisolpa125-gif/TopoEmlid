@@ -1,8 +1,6 @@
 package cr.co.topoemlid
 
 import android.content.Intent
-import android.graphics.BitmapFactory
-import android.util.Base64
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -11,8 +9,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import org.maplibre.android.MapLibre
-import androidx.compose.foundation.background
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -25,16 +21,12 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.UUID
 import java.util.Calendar
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,40 +48,6 @@ private val LocalSetAppViewMode = compositionLocalOf<(AppViewMode) -> Unit> { {}
 @Composable
 private fun TopoEmlidRoot() {
     val context = LocalContext.current
-    var showStartupSplash by rememberSaveable { mutableStateOf(true) }
-
-    val startupImage = remember {
-        runCatching {
-            val encoded = context.assets.open("splash/chunk_00.txt")
-                .bufferedReader()
-                .use { it.readText() }
-            val bytes = Base64.decode(encoded, Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-        }.getOrNull()
-    }
-
-    LaunchedEffect(Unit) {
-        delay(1600L)
-        showStartupSplash = false
-    }
-
-    if (showStartupSplash) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Color(0xFF020712))
-        ) {
-            startupImage?.let { image ->
-                Image(
-                    bitmap = image,
-                    contentDescription = "Pantalla de inicio TOPO EMLID",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            }
-        }
-        return
-    }
     val prefs = remember { context.getSharedPreferences("app_settings", android.content.Context.MODE_PRIVATE) }
     var mode by remember {
         mutableStateOf(
