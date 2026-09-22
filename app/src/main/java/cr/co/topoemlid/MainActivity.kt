@@ -339,6 +339,9 @@ private fun AppSettingsScreen(
     var shareMobileData by remember { mutableStateOf<Boolean?>(null) }
     var shareMobileDataBusy by remember { mutableStateOf(false) }
     var shareMobileDataMessage by remember { mutableStateOf<String?>(null) }
+    var mobileDataEnabled by remember { mutableStateOf<Boolean?>(null) }
+    var mobileDataEnabledBusy by remember { mutableStateOf(false) }
+    var mobileDataEnabledMessage by remember { mutableStateOf<String?>(null) }
     var mobileRoaming by remember { mutableStateOf<Boolean?>(null) }
     var mobileRoamingBusy by remember { mutableStateOf(false) }
     var mobileRoamingMessage by remember { mutableStateOf<String?>(null) }
@@ -516,11 +519,55 @@ private fun AppSettingsScreen(
 
                 Spacer(Modifier.height(10.dp))
 
-                SettingsCard(
-                    "Usar datos móviles",
-                    "Control del módem celular del Reach",
-                    "Permite activar o desactivar los datos móviles del receptor."
-                )
+                Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Usar datos móviles", fontWeight = FontWeight.Bold)
+                                Text(
+                                    "Activa o desactiva la conexión celular del Reach.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            Switch(
+                                checked = mobileDataEnabled == true,
+                                enabled = !mobileDataEnabledBusy,
+                                onCheckedChange = { checked ->
+                                    mobileDataEnabledBusy = true
+                                    mobileDataEnabledMessage = null
+                                    settingsScope.launch {
+                                        val result = ReachLocalApiClient("192.168.42.1")
+                                            .setMobileDataEnabled(checked)
+                                        result.onSuccess {
+                                            mobileDataEnabled = checked
+                                            mobileDataEnabledMessage =
+                                                if (checked) "Datos móviles activados" else "Datos móviles desactivados"
+                                        }.onFailure {
+                                            mobileDataEnabledMessage = it.message ?: "No se pudo cambiar el estado de datos móviles"
+                                        }
+                                        mobileDataEnabledBusy = false
+                                    }
+                                }
+                            )
+                        }
+                        Text(
+                            when {
+                                mobileDataEnabledBusy -> "Aplicando cambio en el Reach…"
+                                mobileDataEnabled == null -> "Estado no leído todavía."
+                                mobileDataEnabled == true -> "Datos móviles: activados"
+                                else -> "Datos móviles: desactivados"
+                            },
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        mobileDataEnabledMessage?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
                 Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
                     Column(Modifier.padding(14.dp)) {
                         Row(
@@ -679,7 +726,7 @@ private fun AppSettingsScreen(
 
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Compartir Internet, Roaming y Actualizaciones por datos móviles ya usan las órdenes confirmadas del Reach. Falta identificar la orden exacta de “Usar datos móviles” y, si se desea, APN.",
+                    "Usar datos móviles, Compartir Internet, Roaming y Actualizaciones por datos móviles ya usan las órdenes confirmadas del Reach. APN queda pendiente si luego desea configurarlo desde Topo Emlid.",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
