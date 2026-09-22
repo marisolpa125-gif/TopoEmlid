@@ -114,7 +114,7 @@ object ProjectExportManager {
     ): String {
         val sep = options.separator.value
         fun clean(value: String): String {
-            val escaped = value.replace(""", """")
+            val escaped = value.replace("\"", "\"\"")
             return if (sep == "," || sep == ";") ""$escaped"" else escaped.replace("\n", " ")
         }
         fun v(d: Double?, decimals: Int): String =
