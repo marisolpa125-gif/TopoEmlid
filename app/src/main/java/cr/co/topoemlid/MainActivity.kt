@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.UUID
 import java.util.Calendar
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -338,6 +339,12 @@ private fun AppSettingsScreen(
     var shareMobileData by remember { mutableStateOf<Boolean?>(null) }
     var shareMobileDataBusy by remember { mutableStateOf(false) }
     var shareMobileDataMessage by remember { mutableStateOf<String?>(null) }
+    var mobileRoaming by remember { mutableStateOf<Boolean?>(null) }
+    var mobileRoamingBusy by remember { mutableStateOf(false) }
+    var mobileRoamingMessage by remember { mutableStateOf<String?>(null) }
+    var mobileUpgrades by remember { mutableStateOf<Boolean?>(null) }
+    var mobileUpgradesBusy by remember { mutableStateOf(false) }
+    var mobileUpgradesMessage by remember { mutableStateOf<String?>(null) }
 
     val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         val event = pendingSoundEvent
@@ -563,16 +570,102 @@ private fun AppSettingsScreen(
                         }
                     }
                 }
-                SettingsCard(
-                    "Roaming de datos",
-                    "Desactivado por seguridad",
-                    "Úselo solo si su plan celular lo requiere."
-                )
-                SettingsCard(
-                    "Actualizaciones por datos móviles",
-                    "Control independiente",
-                    "Permite al Reach descargar actualizaciones usando la SIM cuando no hay Internet por Wi‑Fi."
-                )
+                Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Roaming de datos", fontWeight = FontWeight.Bold)
+                                Text(
+                                    "Úselo solo si su plan celular lo requiere.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            Switch(
+                                checked = mobileRoaming == true,
+                                enabled = !mobileRoamingBusy,
+                                onCheckedChange = { checked ->
+                                    mobileRoamingBusy = true
+                                    mobileRoamingMessage = null
+                                    settingsScope.launch {
+                                        val result = ReachLocalApiClient("192.168.42.1")
+                                            .setMobileRoaming(checked)
+                                        result.onSuccess {
+                                            mobileRoaming = checked
+                                            mobileRoamingMessage =
+                                                if (checked) "Roaming activado" else "Roaming desactivado"
+                                        }.onFailure {
+                                            mobileRoamingMessage = it.message ?: "No se pudo cambiar el roaming"
+                                        }
+                                        mobileRoamingBusy = false
+                                    }
+                                }
+                            )
+                        }
+                        Text(
+                            when {
+                                mobileRoamingBusy -> "Aplicando cambio en el Reach…"
+                                mobileRoaming == null -> "Estado no leído todavía."
+                                mobileRoaming == true -> "Roaming: activado"
+                                else -> "Roaming: desactivado"
+                            },
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        mobileRoamingMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
+
+                Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Actualizaciones por datos móviles", fontWeight = FontWeight.Bold)
+                                Text(
+                                    "Permite al Reach descargar actualizaciones usando la SIM cuando no hay Internet por Wi‑Fi.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            Switch(
+                                checked = mobileUpgrades == true,
+                                enabled = !mobileUpgradesBusy,
+                                onCheckedChange = { checked ->
+                                    mobileUpgradesBusy = true
+                                    mobileUpgradesMessage = null
+                                    settingsScope.launch {
+                                        val result = ReachLocalApiClient("192.168.42.1")
+                                            .setMobileGsmUpgrades(checked)
+                                        result.onSuccess {
+                                            mobileUpgrades = checked
+                                            mobileUpgradesMessage =
+                                                if (checked) "Actualizaciones por datos móviles activadas"
+                                                else "Actualizaciones por datos móviles desactivadas"
+                                        }.onFailure {
+                                            mobileUpgradesMessage = it.message ?: "No se pudo cambiar esta opción"
+                                        }
+                                        mobileUpgradesBusy = false
+                                    }
+                                }
+                            )
+                        }
+                        Text(
+                            when {
+                                mobileUpgradesBusy -> "Aplicando cambio en el Reach…"
+                                mobileUpgrades == null -> "Estado no leído todavía."
+                                mobileUpgrades == true -> "Actualizaciones móviles: activadas"
+                                else -> "Actualizaciones móviles: desactivadas"
+                            },
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        mobileUpgradesMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
                 SettingsCard(
                     "APN / Credenciales",
                     "Operador celular",
@@ -586,7 +679,7 @@ private fun AppSettingsScreen(
 
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "La opción Compartir Internet ya usa la orden confirmada del Reach. Las demás opciones se habilitarán cuando capturemos sus peticiones exactas.",
+                    "Compartir Internet, Roaming y Actualizaciones por datos móviles ya usan las órdenes confirmadas del Reach. Falta identificar la orden exacta de “Usar datos móviles” y, si se desea, APN.",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
