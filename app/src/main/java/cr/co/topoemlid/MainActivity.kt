@@ -371,6 +371,8 @@ private fun AppSettingsScreen(
     var modemInfo by remember { mutableStateOf<ReachModemInfo?>(null) }
     var modemInfoBusy by remember { mutableStateOf(false) }
     var modemInfoMessage by remember { mutableStateOf<String?>(null) }
+    var reachInternetBusy by remember { mutableStateOf(false) }
+    var reachInternetMessage by remember { mutableStateOf<String?>(null) }
 
     var tabletInternetAvailable by remember { mutableStateOf<Boolean?>(null) }
     var tabletNetworkTransport by remember { mutableStateOf("Sin red") }
@@ -424,6 +426,48 @@ private fun AppSettingsScreen(
             .putString("operator", reachSimOperator.name)
             .putString("phone_number", reachSimPhone.trim())
             .apply()
+    }
+
+    fun activateReachInternetForTablet() {
+        if (reachInternetBusy) return
+        reachInternetBusy = true
+        reachInternetMessage = "Activando datos móviles y compartiendo Internet desde el Reach…"
+        settingsScope.launch {
+            val client = ReachLocalApiClient("192.168.42.1")
+            val dataResult = client.setMobileDataEnabled(true)
+            if (dataResult.isFailure) {
+                reachInternetMessage = dataResult.exceptionOrNull()?.message
+                    ?: "No se pudo activar los datos móviles del Reach."
+                reachInternetBusy = false
+                return@launch
+            }
+
+            kotlinx.coroutines.delay(700)
+
+            val sharingResult = client.setMobileDataSharing(true)
+            if (sharingResult.isFailure) {
+                reachInternetMessage = sharingResult.exceptionOrNull()?.message
+                    ?: "No se pudo activar Compartir Internet."
+                reachInternetBusy = false
+                return@launch
+            }
+
+            mobileDataEnabled = true
+            shareMobileData = true
+            preferredInternetSource = "REACH"
+            saveConnectivityProfile()
+
+            kotlinx.coroutines.delay(1600)
+            refreshTabletInternetStatus()
+            reachInternetMessage =
+                if (tabletInternetAvailable == true)
+                    "Internet del Reach disponible en la tablet."
+                else
+                    "Reach configurado para compartir Internet. Si Android aún indica Sin Internet, reconecte el Wi‑Fi del Reach y pulse Comprobar."
+
+            readReachModem()
+            reachInternetBusy = false
+        }
     }
 
     fun readReachModem() {
@@ -682,6 +726,7 @@ private fun AppSettingsScreen(
                         onClick = {
                             preferredInternetSource = "REACH"
                             saveConnectivityProfile()
+                            activateReachInternetForTablet()
                         },
                         label = {
                             Text(
@@ -716,6 +761,35 @@ private fun AppSettingsScreen(
                         )
                     )
                 }
+
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = { activateReachInternetForTablet() },
+                    enabled = !reachInternetBusy,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (reachInternetBusy)
+                            "Restableciendo Internet…"
+                        else
+                            "Restablecer Internet: Reach → tablet"
+                    )
+                }
+                reachInternetMessage?.let {
+                    Spacer(Modifier.height(5.dp))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (tabletInternetAvailable == false && !reachInternetBusy)
+                            MaterialTheme.colorScheme.error
+                        else
+                            Color.Unspecified
+                    )
+                }
+                Text(
+                    "Este botón no modifica Bluetooth/NMEA. Solo activa los datos móviles del Reach y su opción de compartir Internet.",
+                    style = MaterialTheme.typography.bodySmall
+                )
 
                 Spacer(Modifier.height(10.dp))
                 Text("SIM de la tablet", fontWeight = FontWeight.Bold)
@@ -770,7 +844,7 @@ private fun AppSettingsScreen(
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(
-                    "La conmutación automática entre ambas conexiones queda pendiente de la prueba real con las dos SIM y del comportamiento del hotspot de la tablet.",
+                    "Al elegir SIM del Reach, Topo Emlid intenta activar los datos móviles y Compartir Internet. Para usar la SIM de la tablet, mantenga GNSS por Bluetooth/NMEA y use la conexión móvil de Android; la conexión del Reach como cliente del hotspot de la tablet seguirá tratándose aparte.",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
