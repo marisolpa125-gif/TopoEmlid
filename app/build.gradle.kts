@@ -18,6 +18,18 @@ android {
         versionName = "0.3.0"
     }
 
+    signingConfigs {
+        getByName("debug") {
+            val stableStore = rootProject.file(".ci/topoemlid-debug.jks")
+            if (stableStore.exists()) {
+                storeFile = stableStore
+                storePassword = "topoemlid-debug"
+                keyAlias = "topoemliddebug"
+                keyPassword = "topoemlid-debug"
+            }
+        }
+    }
+
     buildFeatures { compose = true }
 
     compileOptions {
