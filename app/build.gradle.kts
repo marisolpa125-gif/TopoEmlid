@@ -30,6 +30,15 @@ android {
         }
     }
 
+    buildTypes {
+        getByName("debug") {
+            // Paquete separado para pruebas: se instala junto a versiones anteriores
+            // sin chocar con firmas debug históricas.
+            applicationIdSuffix = ".test"
+            versionNameSuffix = "-test"
+        }
+    }
+
     buildFeatures { compose = true }
 
     compileOptions {
