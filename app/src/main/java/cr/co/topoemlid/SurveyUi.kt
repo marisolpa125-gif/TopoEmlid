@@ -223,6 +223,7 @@ fun SurveyScreen(
         committedGeometries.forEach { g ->
             drawCommittedGeometry(m, g)
         }
+        drawSavedSurveyPointSymbols(m, savedPoints, context)
         drawLiveReceiverPosition(m, gnss, context)
         ensureSurveyGeometryOverlayOnTop(m, committedGeometries)
         ensureSurveyPointOverlayOnTop(m, savedPoints, gnss, pointDisplaySettings)
@@ -2579,6 +2580,37 @@ private fun ensureSurveyPointOverlayOnTop(
             PropertyFactory.circleRadius(10f)
         )
     )
+}
+
+private fun drawSavedSurveyPointSymbols(
+    map: MapLibreMap,
+    points: List<SurveyPoint>,
+    context: Context
+) {
+    val iconFactory = IconFactory.getInstance(context)
+    val icon = iconFactory.fromBitmap(
+        makeTopoPointBitmap(android.graphics.Color.rgb(255, 45, 45))
+    )
+    points.forEach { point ->
+        val lat = point.latitude ?: return@forEach
+        val lon = point.longitude ?: return@forEach
+        map.addMarker(
+            MarkerOptions()
+                .position(LatLng(lat, lon))
+                .icon(icon)
+                .title("Punto ${point.pointNumber}")
+                .snippet(
+                    buildString {
+                        val detail = point.description.ifBlank { point.code }
+                        if (detail.isNotBlank()) append(detail)
+                        point.ellipsoidalHeightM?.let {
+                            if (isNotBlank()) append(" • ")
+                            append("H %.3f m".format(it))
+                        }
+                    }
+                )
+        )
+    }
 }
 
 private fun drawLiveReceiverPosition(
