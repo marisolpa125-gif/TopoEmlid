@@ -407,6 +407,30 @@ private fun AppSettingsScreen(
     var modemInfoBusy by remember { mutableStateOf(false) }
     var modemInfoMessage by remember { mutableStateOf<String?>(null) }
 
+    val connectivityPrefs = remember {
+        context.getSharedPreferences("internet_source_profile", android.content.Context.MODE_PRIVATE)
+    }
+    var preferredInternetSource by remember {
+        mutableStateOf(connectivityPrefs.getString("preferred_source", "REACH") ?: "REACH")
+    }
+    var tabletSimOperator by remember {
+        mutableStateOf(
+            runCatching {
+                SimOperator.valueOf(connectivityPrefs.getString("tablet_operator", SimOperator.LIBERTY.name)!!)
+            }.getOrDefault(SimOperator.LIBERTY)
+        )
+    }
+    var tabletSimPhone by remember {
+        mutableStateOf(connectivityPrefs.getString("tablet_phone", "").orEmpty())
+    }
+
+    fun saveConnectivityProfile() {
+        connectivityPrefs.edit()
+            .putString("preferred_source", preferredInternetSource)
+            .putString("tablet_operator", tabletSimOperator.name)
+            .putString("tablet_phone", tabletSimPhone.trim())
+            .apply()
+    }
     fun saveReachSimIdentity() {
         simPrefs.edit()
             .putString("operator", reachSimOperator.name)
@@ -599,6 +623,90 @@ private fun AppSettingsScreen(
 
         Spacer(Modifier.height(16.dp))
 
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Fuente de Internet / Respaldo", fontWeight = FontWeight.Bold)
+                Text(
+                    "Guarde cuál conexión quiere usar como principal en campo y los datos de la SIM de la tablet. Esto no cambia todavía el hotspot de Android automáticamente; deja lista la selección para las pruebas de conmutación.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Spacer(Modifier.height(10.dp))
+                Text("Fuente preferida", style = MaterialTheme.typography.labelMedium)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = preferredInternetSource == "REACH",
+                        onClick = {
+                            preferredInternetSource = "REACH"
+                            saveConnectivityProfile()
+                        },
+                        label = { Text("SIM del Reach") }
+                    )
+                    FilterChip(
+                        selected = preferredInternetSource == "TABLET",
+                        onClick = {
+                            preferredInternetSource = "TABLET"
+                            saveConnectivityProfile()
+                        },
+                        label = { Text("SIM de la tablet") }
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+                Text("SIM de la tablet", fontWeight = FontWeight.Bold)
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        SimOperator.KOLBI,
+                        SimOperator.CLARO,
+                        SimOperator.LIBERTY,
+                        SimOperator.OTHER
+                    ).forEach { option ->
+                        FilterChip(
+                            selected = tabletSimOperator == option,
+                            onClick = {
+                                tabletSimOperator = option
+                                saveConnectivityProfile()
+                            },
+                            label = { Text(option.label) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = tabletSimPhone,
+                    onValueChange = {
+                        tabletSimPhone = it.filter { ch -> ch.isDigit() || ch == '+' || ch == ' ' || ch == '-' }
+                        saveConnectivityProfile()
+                    },
+                    label = { Text("Número de línea de la tablet") },
+                    placeholder = { Text("Ej. 8888 8888") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (preferredInternetSource == "REACH")
+                        "Principal: SIM del Reach • Respaldo: SIM de la tablet"
+                    else
+                        "Principal: SIM de la tablet • Respaldo: SIM del Reach",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "La conmutación automática entre ambas conexiones queda pendiente de la prueba real con las dos SIM y del comportamiento del hotspot de la tablet.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp)) {
                 Text("SIM / Datos móviles del Reach", fontWeight = FontWeight.Bold)
