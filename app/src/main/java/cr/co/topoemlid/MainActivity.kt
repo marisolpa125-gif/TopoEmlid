@@ -465,7 +465,15 @@ private fun AppSettingsScreen(
                 else
                     "Reach configurado para compartir Internet. Si Android aún indica Sin Internet, reconecte el Wi‑Fi del Reach y pulse Comprobar."
 
-            readReachModem()
+            runCatching {
+                Pair(client.modemInfo(), client.modemSettings())
+            }.onSuccess { (info, settings) ->
+                modemInfo = info
+                shareMobileData = settings.dataSharing
+                mobileRoaming = settings.roaming
+                mobileUpgrades = settings.gsmUpgrades
+                mobileDataEnabled = info.state?.equals("CONNECTED", ignoreCase = true)
+            }
             reachInternetBusy = false
         }
     }
