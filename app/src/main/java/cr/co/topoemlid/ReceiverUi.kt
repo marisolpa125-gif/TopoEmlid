@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.UUID
+import kotlinx.coroutines.launch
 
 private data class NearbyReceiver(
     val name: String,
@@ -453,6 +454,10 @@ private fun ReceiverDetailScreen(
         return
     }
 
+    val localApiMode =
+        receiver.preferredMode == ReceiverConnectionMode.WIFI_AP ||
+        receiver.preferredMode == ReceiverConnectionMode.WIFI_LOCAL
+
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         TextButton(onClick = onBack) { Text("← Receptores") }
         Text(receiver.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -498,7 +503,7 @@ private fun ReceiverDetailScreen(
 
         Spacer(Modifier.height(10.dp))
 
-        if (gnss.connected && gnss.receiverName == receiver.name) {
+        if ((gnss.connected && gnss.receiverName == receiver.name) || localApiMode) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Row(
@@ -520,7 +525,10 @@ private fun ReceiverDetailScreen(
                     }
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Receptor conectado y disponible para trabajo de campo.",
+                        if (gnss.connected && gnss.receiverName == receiver.name)
+                            "Receptor conectado y disponible para trabajo de campo."
+                        else
+                            "Modo Wi‑Fi seleccionado. La administración local funciona de forma independiente de Bluetooth/NMEA.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -554,10 +562,12 @@ private fun ReceiverDetailScreen(
             ) { page = ReceiverPage.INFO }
 
             Spacer(Modifier.height(12.dp))
-            Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) {
-                Text("Desconectar")
+            if (gnss.connected && gnss.receiverName == receiver.name) {
+                Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) {
+                    Text("Desconectar")
+                }
+                Spacer(Modifier.height(8.dp))
             }
-            Spacer(Modifier.height(8.dp))
             OutlinedButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) {
                 Text("Olvidar en Topo Emlid")
             }
@@ -783,8 +793,8 @@ private fun ReceiverSubPage(
                 )
             }
 
-            ReceiverPage.WIFI -> ReceiverWifiPlaceholder(receiver)
-            ReceiverPage.INFO -> ReceiverInfoPlaceholder(receiver, gnss)
+            ReceiverPage.WIFI -> ReceiverWifiLocalPanel(receiver)
+            ReceiverPage.INFO -> ReceiverInfoLocalPanel(receiver, gnss)
             ReceiverPage.ADVANCED -> ReceiverAdvancedPlaceholder()
 
             ReceiverPage.HOME -> Unit
@@ -847,69 +857,255 @@ private fun ReceiverAdminPlaceholder(title: String, rows: List<String>) {
 }
 
 @Composable
-private fun ReceiverWifiPlaceholder(receiver: ReceiverProfile) {
+private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
+    val scope = rememberCoroutineScope()
+    var host by remember(receiver.id) {
+        mutableStateOf(
+            if (receiver.preferredMode == ReceiverConnectionMode.WIFI_AP) "192.168.42.1" else ""
+        )
+    }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var wifi by remember { mutableStateOf<ReachWifiStatus?>(null) }
+
     Text("Wi‑Fi del receptor", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
     Spacer(Modifier.height(8.dp))
     Text(
-        "Panel visual preparado para las funciones Wi‑Fi del Reach. No modifica la conexión activa ni cambia ningún ajuste del receptor.",
+        "API local real del Reach. En modo AP la dirección predeterminada es 192.168.42.1. En red local escriba la IP que muestra Reach Panel.",
         style = MaterialTheme.typography.bodySmall
     )
-    Spacer(Modifier.height(12.dp))
+    Spacer(Modifier.height(10.dp))
 
-    listOf(
-        "Estado Wi‑Fi" to "Conexión actual del receptor",
-        "Punto de acceso (AP)" to "Red creada directamente por el receptor",
-        "Red local" to "Receptor y tablet dentro de la misma red",
-        "Redes disponibles" to "Exploración y selección cuando la API local esté habilitada"
-    ).forEach { (title, subtitle) ->
-        Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-            Column(Modifier.padding(14.dp)) {
-                Text(title, fontWeight = FontWeight.Bold)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall)
+    OutlinedTextField(
+        value = host,
+        onValueChange = { host = it.trim() },
+        label = { Text("IP o nombre local del Reach") },
+        placeholder = { Text("192.168.42.1 o ReachRover.local") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+
+    Spacer(Modifier.height(8.dp))
+    Button(
+        enabled = host.isNotBlank() && !loading,
+        onClick = {
+            loading = true
+            error = null
+            scope.launch {
+                runCatching { ReachLocalApiClient(host).wifiStatus() }
+                    .onSuccess { wifi = it }
+                    .onFailure { error = it.message ?: "No se pudo leer Wi‑Fi del receptor." }
+                loading = false
             }
-        }
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(if (loading) "Leyendo…" else "Leer estado Wi‑Fi")
+    }
+
+    wifi?.let {
+        Spacer(Modifier.height(12.dp))
+        StatusLine("IP", it.ip ?: "—")
+        StatusLine("SSID", it.ssid ?: "—")
+        StatusLine("Seguridad", it.security ?: "—")
+        StatusLine("Wi‑Fi", when (it.enabled) { true -> "ACTIVO"; false -> "INACTIVO"; null -> "—" })
+        StatusLine("Modo", it.mode ?: "—")
+    }
+    error?.let {
+        Spacer(Modifier.height(8.dp))
+        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
     }
 
     Spacer(Modifier.height(8.dp))
     Text(
-        "Método seleccionado actualmente: ${receiver.preferredMode.label}",
+        "Método seleccionado: ${receiver.preferredMode.label}. Esta lectura no modifica BLE, Bluetooth/NMEA ni NTRIP.",
         style = MaterialTheme.typography.bodySmall,
         fontWeight = FontWeight.Bold
     )
 }
 
 @Composable
-private fun ReceiverInfoPlaceholder(receiver: ReceiverProfile, gnss: GnssStatus) {
-    Text("Información del receptor", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-    Spacer(Modifier.height(12.dp))
+private fun ReceiverInfoLocalPanel(receiver: ReceiverProfile, gnss: GnssStatus) {
+    val scope = rememberCoroutineScope()
+    var host by remember(receiver.id) {
+        mutableStateOf(
+            if (receiver.preferredMode == ReceiverConnectionMode.WIFI_AP) "192.168.42.1" else ""
+        )
+    }
+    var loading by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var battery by remember { mutableStateOf<ReachBatteryStatus?>(null) }
+    var device by remember { mutableStateOf<ReachDeviceStatus?>(null) }
+    var wifi by remember { mutableStateOf<ReachWifiStatus?>(null) }
+    var confirmAction by remember { mutableStateOf<ReachLocalAction?>(null) }
 
-    StatusLine("Nombre", receiver.name)
-    StatusLine("Dirección", receiver.address)
+    fun runAction(action: ReachLocalAction) {
+        if (host.isBlank()) return
+        loading = true
+        error = null
+        message = null
+        scope.launch {
+            val result = ReachLocalApiClient(host).sendAction(action)
+            result
+                .onSuccess {
+                    message = when (action) {
+                        ReachLocalAction.FIND_REACH -> "Orden enviada: el receptor debe parpadear sus luces."
+                        ReachLocalAction.REBOOT -> "Orden de reinicio enviada."
+                        ReachLocalAction.SHUTDOWN -> "Orden de apagado enviada."
+                        ReachLocalAction.RESET_RTK -> "Orden de reinicio RTK enviada."
+                    }
+                }
+                .onFailure { error = it.message ?: "No se pudo enviar la orden al Reach." }
+            loading = false
+        }
+    }
+
+    Text("Información del receptor", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(10.dp))
+
+    StatusLine("Nombre guardado", receiver.name)
     StatusLine("Método seleccionado", receiver.preferredMode.label)
-    StatusLine("Transporte activo", gnss.connectionTransport ?: receiver.transport)
-    StatusLine("Estado", if (gnss.connected) "Conectado" else "Desconectado")
+    StatusLine("Transporte GNSS", gnss.connectionTransport ?: receiver.transport)
+
+    OutlinedTextField(
+        value = host,
+        onValueChange = { host = it.trim() },
+        label = { Text("IP o nombre local del Reach") },
+        placeholder = { Text("192.168.42.1 o ReachRover.local") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+
+    Spacer(Modifier.height(8.dp))
+    Button(
+        enabled = host.isNotBlank() && !loading,
+        onClick = {
+            loading = true
+            error = null
+            message = null
+            scope.launch {
+                val client = ReachLocalApiClient(host)
+                val result = runCatching {
+                    Triple(client.battery(), client.device(), client.wifiStatus())
+                }
+                result
+                    .onSuccess {
+                        battery = it.first
+                        device = it.second
+                        wifi = it.third
+                        message = "API local conectada correctamente."
+                    }
+                    .onFailure { error = it.message ?: "No se pudo conectar con la API local del Reach." }
+                loading = false
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(if (loading) "Comunicando…" else "Leer información local")
+    }
+
+    device?.let {
+        Spacer(Modifier.height(12.dp))
+        Text("Dispositivo", fontWeight = FontWeight.Bold)
+        StatusLine("Nombre Reach", it.name ?: "—")
+    }
+
+    battery?.let {
+        Spacer(Modifier.height(10.dp))
+        Text("Batería", fontWeight = FontWeight.Bold)
+        StatusLine("Carga", it.stateOfCharge?.let { p -> "$p %" } ?: "—")
+        StatusLine("Voltaje", it.voltageV?.let { v -> "%.2f V".format(v) } ?: "—")
+        StatusLine("Corriente", it.currentA?.let { a -> "%.2f A".format(a) } ?: "—")
+        StatusLine("Temperatura", it.temperatureC?.let { t -> "%.1f °C".format(t) } ?: "—")
+        StatusLine("Estado", it.chargerStatus ?: "—")
+    }
+
+    wifi?.let {
+        Spacer(Modifier.height(10.dp))
+        Text("Red local", fontWeight = FontWeight.Bold)
+        StatusLine("IP", it.ip ?: "—")
+        StatusLine("SSID", it.ssid ?: "—")
+        StatusLine("Modo", it.mode ?: "—")
+    }
 
     Spacer(Modifier.height(14.dp))
-    Text("Funciones del equipo", fontWeight = FontWeight.Bold)
-    listOf(
-        "Identificar receptor" to "Parpadeo de luces",
-        "Reiniciar receptor" to "Pendiente de API local",
-        "Apagar receptor" to "Pendiente de API local",
-        "Batería y sistema" to "Pendiente de lectura por API local"
-    ).forEach { (title, subtitle) ->
-        Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-            Row(
-                Modifier.fillMaxWidth().padding(14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(title, fontWeight = FontWeight.Bold)
-                    Text(subtitle, style = MaterialTheme.typography.bodySmall)
-                }
-                Text("Pendiente", style = MaterialTheme.typography.bodySmall)
+    Text("Control local del Reach", fontWeight = FontWeight.Bold)
+    Text(
+        "Comandos confirmados en Reach Panel por Socket.IO. No modifican la lógica Bluetooth/NMEA ni NTRIP de Topo Emlid.",
+        style = MaterialTheme.typography.bodySmall
+    )
+
+    Spacer(Modifier.height(8.dp))
+    OutlinedButton(
+        onClick = { runAction(ReachLocalAction.FIND_REACH) },
+        enabled = host.isNotBlank() && !loading,
+        modifier = Modifier.fillMaxWidth()
+    ) { Text("Parpadear luces / Identificar") }
+
+    OutlinedButton(
+        onClick = { confirmAction = ReachLocalAction.RESET_RTK },
+        enabled = host.isNotBlank() && !loading,
+        modifier = Modifier.fillMaxWidth()
+    ) { Text("Reiniciar RTK") }
+
+    OutlinedButton(
+        onClick = { confirmAction = ReachLocalAction.REBOOT },
+        enabled = host.isNotBlank() && !loading,
+        modifier = Modifier.fillMaxWidth()
+    ) { Text("Reiniciar receptor") }
+
+    Button(
+        onClick = { confirmAction = ReachLocalAction.SHUTDOWN },
+        enabled = host.isNotBlank() && !loading,
+        modifier = Modifier.fillMaxWidth(),
+        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+    ) { Text("Apagar receptor") }
+
+    message?.let {
+        Spacer(Modifier.height(8.dp))
+        Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+    }
+    error?.let {
+        Spacer(Modifier.height(8.dp))
+        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+    }
+
+    confirmAction?.let { action ->
+        AlertDialog(
+            onDismissRequest = { confirmAction = null },
+            title = {
+                Text(
+                    when (action) {
+                        ReachLocalAction.REBOOT -> "¿Reiniciar receptor?"
+                        ReachLocalAction.SHUTDOWN -> "¿Apagar receptor?"
+                        ReachLocalAction.RESET_RTK -> "¿Reiniciar RTK?"
+                        ReachLocalAction.FIND_REACH -> "¿Identificar receptor?"
+                    }
+                )
+            },
+            text = {
+                Text(
+                    when (action) {
+                        ReachLocalAction.REBOOT -> "El Reach perderá conexión unos instantes y volverá a iniciar."
+                        ReachLocalAction.SHUTDOWN -> "El Reach se apagará por completo y deberá encenderlo físicamente."
+                        ReachLocalAction.RESET_RTK -> "Se reiniciará el motor/estado RTK del receptor."
+                        ReachLocalAction.FIND_REACH -> "Las luces del Reach parpadearán."
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmAction = null
+                        runAction(action)
+                    }
+                ) { Text("Confirmar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmAction = null }) { Text("Cancelar") }
             }
-        }
+        )
     }
 }
 
