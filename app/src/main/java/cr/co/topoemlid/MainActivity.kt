@@ -2,6 +2,8 @@ package cr.co.topoemlid
 
 import android.content.Intent
 import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
@@ -367,6 +369,29 @@ private fun AppSettingsScreen(
     var modemInfoBusy by remember { mutableStateOf(false) }
     var modemInfoMessage by remember { mutableStateOf<String?>(null) }
 
+    var tabletInternetAvailable by remember { mutableStateOf<Boolean?>(null) }
+    var tabletNetworkTransport by remember { mutableStateOf("Sin red") }
+
+    fun refreshTabletInternetStatus() {
+        val manager = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+            as ConnectivityManager
+        val network = manager.activeNetwork
+        val capabilities = network?.let { manager.getNetworkCapabilities(it) }
+
+        tabletInternetAvailable = capabilities?.let {
+            it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                it.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        } ?: false
+
+        tabletNetworkTransport = when {
+            capabilities == null -> "Sin red"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi‑Fi"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Datos móviles de la tablet"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+            else -> "Otra conexión"
+        }
+    }
+
     val connectivityPrefs = remember {
         context.getSharedPreferences("internet_source_profile", android.content.Context.MODE_PRIVATE)
     }
@@ -422,6 +447,10 @@ private fun AppSettingsScreen(
 
     LaunchedEffect(Unit) {
         readReachModem()
+        while (true) {
+            refreshTabletInternetStatus()
+            kotlinx.coroutines.delay(3000)
+        }
     }
     val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         val event = pendingSoundEvent
@@ -590,6 +619,54 @@ private fun AppSettingsScreen(
                     "Guarde cuál conexión quiere usar como principal en campo y los datos de la SIM de la tablet. Esto no cambia todavía el hotspot de Android automáticamente; deja lista la selección para las pruebas de conmutación.",
                     style = MaterialTheme.typography.bodySmall
                 )
+
+                Spacer(Modifier.height(10.dp))
+
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Internet en la tablet", fontWeight = FontWeight.Bold)
+                                Text(
+                                    "Comprueba la salida real a Internet de Android, no solo que el Wi‑Fi esté conectado.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            OutlinedButton(onClick = { refreshTabletInternetStatus() }) {
+                                Text("Comprobar")
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            when (tabletInternetAvailable) {
+                                true -> "Disponible"
+                                false -> "Sin Internet"
+                                null -> "Comprobando…"
+                            },
+                            color = when (tabletInternetAvailable) {
+                                true -> Color(0xFF2E7D32)
+                                false -> MaterialTheme.colorScheme.error
+                                null -> Color.Unspecified
+                            },
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Conexión usada por Android: $tabletNetworkTransport",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        if (shareMobileData == true && tabletInternetAvailable == false) {
+                            Text(
+                                "El Reach indica que comparte Internet, pero la tablet no tiene salida validada. Revise el hotspot o reinicie Compartir Internet.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
 
                 Spacer(Modifier.height(10.dp))
                 Text("Fuente preferida", style = MaterialTheme.typography.labelMedium)
