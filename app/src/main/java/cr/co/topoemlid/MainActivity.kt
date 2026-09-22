@@ -226,7 +226,7 @@ fun TopoEmlidApp() {
                 persist(projects + p)
                 activeProjectId = p.id
                 store.setActiveProject(p.id)
-                selectedProjectId = p.id
+                selectedProjectId = null
                 showNewProject = false
             }
         )
@@ -1117,9 +1117,27 @@ private fun ProjectHub(
                     }
                     if (p.location.isNotBlank()) Text(p.location, style = MaterialTheme.typography.bodySmall)
                     Text("CRS: ${p.crsName} • Geoide: ${p.geoidFileName ?: p.geoidModel.label}", style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { onView(p) },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Importar / Exportar")
+                        }
+                        OutlinedButton(
+                            onClick = { onEdit(p) },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Configurar")
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
                     Text(
-                        "Toque para abrir • Mantenga presionado para más opciones",
+                        "Toque la tarjeta para abrir el trabajo • Mantenga presionado para más opciones",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -1465,7 +1483,7 @@ private fun ProjectDetails(
         Spacer(Modifier.height(12.dp))
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp)) {
-                Text("Exportar / Guardar trabajo", fontWeight = FontWeight.Bold)
+                Text("Exportar trabajo existente", fontWeight = FontWeight.Bold)
                 Text(
                     "Exporte solo puntos, solo figuras o todo el trabajo en TXT, CSV, GeoJSON, KML, DXF o respaldo TOPO EMLID.",
                     style = MaterialTheme.typography.bodySmall
@@ -1487,7 +1505,7 @@ private fun ProjectDetails(
         Spacer(Modifier.height(12.dp))
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp)) {
-                Text("Importar para trabajo / replanteo", fontWeight = FontWeight.Bold)
+                Text("Importar al trabajo existente", fontWeight = FontWeight.Bold)
                 Text(
                     "Importe puntos y, cuando el formato lo permita, líneas o polígonos desde archivos externos.",
                     style = MaterialTheme.typography.bodySmall
