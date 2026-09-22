@@ -123,17 +123,17 @@ fun ensureTopoSurveyPointLayers(
 
 private fun ensurePointImages(style: Style) {
     if (style.getImage("topo-point-red") == null) {
-        style.addImage("topo-point-red", makePointBitmap(android.graphics.Color.rgb(255, 45, 45)))
+        style.addImage("topo-point-red", makeTopoPointBitmap(android.graphics.Color.rgb(255, 45, 45)))
     }
     if (style.getImage("topo-point-yellow") == null) {
-        style.addImage("topo-point-yellow", makePointBitmap(android.graphics.Color.rgb(255, 214, 0)))
+        style.addImage("topo-point-yellow", makeTopoPointBitmap(android.graphics.Color.rgb(255, 214, 0)))
     }
     if (style.getImage("topo-rtk-cyan") == null) {
-        style.addImage("topo-rtk-cyan", makePointBitmap(android.graphics.Color.rgb(0, 188, 212)))
+        style.addImage("topo-rtk-cyan", makeTopoPointBitmap(android.graphics.Color.rgb(0, 188, 212)))
     }
 }
 
-private fun makePointBitmap(color: Int): Bitmap {
+fun makeTopoPointBitmap(color: Int): Bitmap {
     val size = 64
     val center = size / 2f
     val circleRadius = 13f
