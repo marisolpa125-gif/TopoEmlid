@@ -135,6 +135,27 @@ class ReachLocalApiClient(
         }
     }
 
+    suspend fun setMobileGsmUpgrades(enabled: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val payload = JSONObject()
+                .put("gsm_upgrades", enabled)
+                .toString()
+                .toRequestBody("application/json".toMediaType())
+
+            val path = "/modem/1/settings"
+            val request = Request.Builder()
+                .url(baseUrl + path)
+                .post(payload)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .build()
+
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) error("HTTP ${response.code} en $path")
+            }
+        }
+    }
+
     suspend fun sendAction(action: ReachLocalAction): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             // Reach Panel usa Socket.IO/Engine.IO 3 y emite:
