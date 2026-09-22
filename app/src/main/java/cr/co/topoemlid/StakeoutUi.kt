@@ -90,14 +90,19 @@ fun StakeoutScreen(
             }
 
             when {
-                distance <= 0.05 -> {
-                    // Punto alcanzado: tono largo. Si se aleja, el siguiente ciclo
-                    // vuelve automáticamente a pulsos cortos.
+                distance <= 0.005 -> {
+                    // Punto prácticamente coincidente: tono largo. Si se aleja,
+                    // vuelve automáticamente a los pulsos según la distancia.
                     toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP2, 700)
                     delay(950)
                 }
+                distance <= 0.05 -> {
+                    // Entre 5 cm y el centro: pulsos muy rápidos.
+                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 90)
+                    delay(150)
+                }
                 distance <= 0.50 -> {
-                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 110)
+                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
                     delay(230)
                 }
                 distance <= 2.0 -> {
@@ -496,7 +501,7 @@ private fun StakeoutMapPreview(
                 tonalElevation = 6.dp
             ) {
                 Text(
-                    if (distance <= 0.05)
+                    if (distance <= 0.005)
                         "OBJETIVO ALCANZADO"
                     else
                         "Muévase: $direction • %.2f m".format(distance),
