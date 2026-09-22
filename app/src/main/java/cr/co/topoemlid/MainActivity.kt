@@ -431,23 +431,48 @@ private fun AppSettingsScreen(
     fun activateReachInternetForTablet() {
         if (reachInternetBusy) return
         reachInternetBusy = true
-        reachInternetMessage = "Activando datos móviles y compartiendo Internet desde el Reach…"
+        reachInternetMessage = "Reiniciando la salida de Internet del Reach…"
         settingsScope.launch {
             val client = ReachLocalApiClient("192.168.42.1")
+
+            // Reparación completa del puente celular -> hotspot.
+            // No toca Bluetooth/NMEA.
+            client.setMobileDataSharing(false)
+            kotlinx.coroutines.delay(500)
+
+            client.setMobileDataEnabled(false)
+            kotlinx.coroutines.delay(1200)
+
             val dataResult = client.setMobileDataEnabled(true)
             if (dataResult.isFailure) {
                 reachInternetMessage = dataResult.exceptionOrNull()?.message
-                    ?: "No se pudo activar los datos móviles del Reach."
+                    ?: "No se pudo volver a activar los datos móviles del Reach."
                 reachInternetBusy = false
                 return@launch
             }
 
-            kotlinx.coroutines.delay(700)
+            reachInternetMessage = "Esperando que el módem vuelva a conectar…"
+
+            var modemConnected = false
+            repeat(8) {
+                kotlinx.coroutines.delay(1000)
+                val info = runCatching { client.modemInfo() }.getOrNull()
+                if (info?.state?.equals("CONNECTED", ignoreCase = true) == true) {
+                    modemConnected = true
+                    return@repeat
+                }
+            }
+
+            if (!modemConnected) {
+                reachInternetMessage = "El módem del Reach no volvió a estado CONNECTED. Revise señal/SIM."
+                reachInternetBusy = false
+                return@launch
+            }
 
             val sharingResult = client.setMobileDataSharing(true)
             if (sharingResult.isFailure) {
                 reachInternetMessage = sharingResult.exceptionOrNull()?.message
-                    ?: "No se pudo activar Compartir Internet."
+                    ?: "El módem conectó, pero no se pudo reactivar Compartir Internet."
                 reachInternetBusy = false
                 return@launch
             }
@@ -457,13 +482,16 @@ private fun AppSettingsScreen(
             preferredInternetSource = "REACH"
             saveConnectivityProfile()
 
-            kotlinx.coroutines.delay(1600)
+            reachInternetMessage = "Reach listo. Comprobando Internet en la tablet…"
+            kotlinx.coroutines.delay(2500)
             refreshTabletInternetStatus()
+
             reachInternetMessage =
-                if (tabletInternetAvailable == true)
+                if (tabletInternetAvailable == true) {
                     "Internet del Reach disponible en la tablet."
-                else
-                    "Reach configurado para compartir Internet. Si Android aún indica Sin Internet, reconecte el Wi‑Fi del Reach y pulse Comprobar."
+                } else {
+                    "El Reach ya reinició datos y Compartir Internet, pero Android sigue sin salida. Desconecte y vuelva a conectar el Wi‑Fi del Reach una sola vez."
+                }
 
             runCatching {
                 Pair(client.modemInfo(), client.modemSettings())
