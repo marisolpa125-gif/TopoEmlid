@@ -20,6 +20,7 @@ import org.maplibre.android.annotations.MarkerOptions
 import org.maplibre.android.annotations.PolylineOptions
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
@@ -376,29 +377,56 @@ private fun StakeoutMapPreview(
         val tLat = target?.latitude
         val tLon = target?.longitude
 
-        if (lat != null && lon != null) {
+        val current = if (lat != null && lon != null) LatLng(lat, lon) else null
+        val objective = if (tLat != null && tLon != null) LatLng(tLat, tLon) else null
+
+        current?.let {
             map.addMarker(
                 MarkerOptions()
-                    .position(LatLng(lat, lon))
-                    .title("Posición GNSS")
+                    .position(it)
+                    .title("RTK • posición actual")
             )
         }
 
-        if (tLat != null && tLon != null) {
+        objective?.let {
             map.addMarker(
                 MarkerOptions()
-                    .position(LatLng(tLat, tLon))
-                    .title("OBJETIVO • Punto ${target.pointNumber}")
+                    .position(it)
+                    .title("OBJETIVO • Punto " + (target?.pointNumber ?: ""))
             )
         }
 
-        if (lat != null && lon != null && tLat != null && tLon != null) {
-            map.addPolyline(
-                PolylineOptions()
-                    .add(LatLng(lat, lon))
-                    .add(LatLng(tLat, tLon))
-                    .width(6f)
-            )
+        if (current != null && objective != null) {
+            val north = (objective.latitude - current.latitude) * 111132.0
+            val east = (objective.longitude - current.longitude) *
+                (111320.0 * cos(Math.toRadians(objective.latitude)))
+            val totalM = hypot(north, east)
+            val dashM = when {
+                totalM > 1000.0 -> 40.0
+                totalM > 250.0 -> 20.0
+                totalM > 50.0 -> 8.0
+                else -> 2.0
+            }
+            val pieces = max(1, ceil(totalM / dashM).toInt())
+            for (i in 0 until pieces step 2) {
+                val t0 = i.toDouble() / pieces.toDouble()
+                val t1 = min(1.0, (i + 1).toDouble() / pieces.toDouble())
+                val a = LatLng(
+                    current.latitude + (objective.latitude - current.latitude) * t0,
+                    current.longitude + (objective.longitude - current.longitude) * t0
+                )
+                val b = LatLng(
+                    current.latitude + (objective.latitude - current.latitude) * t1,
+                    current.longitude + (objective.longitude - current.longitude) * t1
+                )
+                map.addPolyline(
+                    PolylineOptions()
+                        .add(a)
+                        .add(b)
+                        .width(7f)
+                        .color(android.graphics.Color.rgb(103, 58, 183))
+                )
+            }
         }
     }
 
@@ -475,6 +503,39 @@ private fun StakeoutMapPreview(
                             refreshViewportWmsLayers(map, layers) {
                                 redrawGuidance(map)
                             }
+                        }
+                    }
+                }
+            },
+            update = { mapView ->
+                mapView.getMapAsync { map ->
+                    redrawGuidance(map)
+
+                    val currentLat = gnss.latitude
+                    val currentLon = gnss.longitude
+                    val targetLat = target?.latitude
+                    val targetLon = target?.longitude
+                    if (currentLat != null && currentLon != null && targetLat != null && targetLon != null) {
+                        val current = LatLng(currentLat, currentLon)
+                        val objective = LatLng(targetLat, targetLon)
+                        val distance = hypot(
+                            (targetLat - currentLat) * 111132.0,
+                            (targetLon - currentLon) * (111320.0 * cos(Math.toRadians(targetLat)))
+                        )
+
+                        if (distance > 20.0) {
+                            val bounds = LatLngBounds.Builder()
+                                .include(current)
+                                .include(objective)
+                                .build()
+                            map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 70))
+                        } else {
+                            val zoom = when {
+                                distance > 5.0 -> 18.0
+                                distance > 0.5 -> 19.5
+                                else -> 21.0
+                            }
+                            map.animateCamera(CameraUpdateFactory.newLatLngZoom(current, zoom))
                         }
                     }
                 }
