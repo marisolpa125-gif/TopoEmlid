@@ -390,6 +390,55 @@ private fun AppSettingsScreen(
     var mobileUpgradesBusy by remember { mutableStateOf(false) }
     var mobileUpgradesMessage by remember { mutableStateOf<String?>(null) }
 
+    val simPrefs = remember {
+        context.getSharedPreferences("reach_sim_profile", android.content.Context.MODE_PRIVATE)
+    }
+    var reachSimOperator by remember {
+        mutableStateOf(
+            runCatching {
+                SimOperator.valueOf(simPrefs.getString("operator", SimOperator.KOLBI.name)!!)
+            }.getOrDefault(SimOperator.KOLBI)
+        )
+    }
+    var reachSimPhone by remember {
+        mutableStateOf(simPrefs.getString("phone_number", "").orEmpty())
+    }
+    var modemInfo by remember { mutableStateOf<ReachModemInfo?>(null) }
+    var modemInfoBusy by remember { mutableStateOf(false) }
+    var modemInfoMessage by remember { mutableStateOf<String?>(null) }
+
+    fun saveReachSimIdentity() {
+        simPrefs.edit()
+            .putString("operator", reachSimOperator.name)
+            .putString("phone_number", reachSimPhone.trim())
+            .apply()
+    }
+
+    fun readReachModem() {
+        if (modemInfoBusy) return
+        modemInfoBusy = true
+        modemInfoMessage = null
+        settingsScope.launch {
+            val client = ReachLocalApiClient("192.168.42.1")
+            runCatching {
+                Pair(client.modemInfo(), client.modemSettings())
+            }.onSuccess { (info, settings) ->
+                modemInfo = info
+                shareMobileData = settings.dataSharing
+                mobileRoaming = settings.roaming
+                mobileUpgrades = settings.gsmUpgrades
+                mobileDataEnabled = info.state?.equals("CONNECTED", ignoreCase = true)
+                modemInfoMessage = "Información del módem actualizada."
+            }.onFailure {
+                modemInfoMessage = it.message ?: "No se pudo leer el módem del Reach."
+            }
+            modemInfoBusy = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        readReachModem()
+    }
     val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         val event = pendingSoundEvent
         pendingSoundEvent = null
@@ -554,12 +603,97 @@ private fun AppSettingsScreen(
             Column(Modifier.padding(14.dp)) {
                 Text("SIM / Datos móviles del Reach", fontWeight = FontWeight.Bold)
                 Text(
-                    "Aquí se agruparán las opciones de la SIM del receptor y el uso de datos móviles. La interfaz queda preparada sin alterar Bluetooth/NMEA, BLE ni NTRIP.",
+                    "Información y control de la SIM instalada en el Reach. Estas opciones usan la API local del receptor y no alteran Bluetooth/NMEA, BLE ni NTRIP.",
                     style = MaterialTheme.typography.bodySmall
                 )
 
                 Spacer(Modifier.height(10.dp))
 
+                Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Identificación de la línea", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Guarde el operador y el número de la SIM instalada en el Reach. El número se usa para identificar la línea; no se envía al receptor.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text("Operador", style = MaterialTheme.typography.labelMedium)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(
+                                SimOperator.KOLBI,
+                                SimOperator.CLARO,
+                                SimOperator.LIBERTY,
+                                SimOperator.OTHER
+                            ).forEach { option ->
+                                FilterChip(
+                                    selected = reachSimOperator == option,
+                                    onClick = {
+                                        reachSimOperator = option
+                                        saveReachSimIdentity()
+                                    },
+                                    label = { Text(option.label) }
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = reachSimPhone,
+                            onValueChange = {
+                                reachSimPhone = it.filter { ch -> ch.isDigit() || ch == '+' || ch == ' ' || ch == '-' }
+                                saveReachSimIdentity()
+                            },
+                            label = { Text("Número de línea") },
+                            placeholder = { Text("Ej. 8888 8888") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
+                Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Estado y consumo del módem", fontWeight = FontWeight.Bold)
+                                Text(
+                                    "Lectura directa de /modem/1/info y /modem/1/settings.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = { readReachModem() },
+                                enabled = !modemInfoBusy
+                            ) {
+                                Text(if (modemInfoBusy) "Leyendo…" else "Actualizar")
+                            }
+                        }
+
+                        modemInfo?.let { info ->
+                            Spacer(Modifier.height(8.dp))
+                            Text("Estado: ${info.state ?: "—"}")
+                            Text("Red: ${info.accessTechnology?.uppercase() ?: "—"} • modo ${info.currentMode?.uppercase() ?: "—"}")
+                            val apn = info.currentApn?.takeIf { it.isNotBlank() }
+                                ?: info.availableApns.firstOrNull()
+                            Text("APN: ${apn ?: "—"}")
+                            Text(
+                                "Consumo registrado: " +
+                                    (info.usageMb?.let { "%.1f MB".format(it) } ?: "—")
+                            )
+                            info.since?.let { Text("Contador desde: $it") }
+                        }
+                        modemInfoMessage?.let {
+                            Spacer(Modifier.height(6.dp))
+                            Text(it, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
                 Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
                     Column(Modifier.padding(14.dp)) {
                         Row(
@@ -754,20 +888,9 @@ private fun AppSettingsScreen(
                         mobileUpgradesMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
                 }
-                SettingsCard(
-                    "APN / Credenciales",
-                    "Operador celular",
-                    "APN, usuario, contraseña y PIN cuando el proveedor lo requiera."
-                )
-                SettingsCard(
-                    "Uso de datos",
-                    "Estadísticas del módem",
-                    "Preparado para mostrar consumo de datos cuando terminemos de vincular la ruta local del módem."
-                )
-
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Usar datos móviles, Compartir Internet, Roaming y Actualizaciones por datos móviles ya usan las órdenes confirmadas del Reach. APN queda pendiente si luego desea configurarlo desde Topo Emlid.",
+                    "Saldo monetario queda pendiente: el Reach Panel no expone por ahora un endpoint de SMS/USSD. El consumo de datos sí se lee directamente del módem.",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
