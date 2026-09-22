@@ -989,7 +989,7 @@ fun SurveyScreen(
                                                     drawSavedSurveyPoints(map, savedPoints, context)
                                                     drawLiveReceiverPosition(map, gnss, context)
                                                     ensureSurveyGeometryOverlayOnTop(map, updatedGeometries)
-                                                    ensureSurveyPointOverlayOnTop(map, savedPoints, gnss)
+                                                    ensureSurveyPointOverlayOnTop(map, savedPoints, gnss, pointDisplaySettings)
                                                 }
                                             }
                                         },
