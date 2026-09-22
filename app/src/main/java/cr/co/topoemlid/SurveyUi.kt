@@ -32,6 +32,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
@@ -86,6 +87,7 @@ fun SurveyScreen(
     gnss: GnssStatus
 ) {
     val context = LocalContext.current
+    val snapThresholdPx = with(LocalDensity.current) { 28.dp.toPx() }
     val fieldSounds = remember { FieldSoundManager(context) }
     DisposableEffect(Unit) {
         onDispose { fieldSounds.release() }
@@ -496,12 +498,25 @@ fun SurveyScreen(
                                     }
                                 } else if (activeMapTool == MapFieldTool.CIRCLE) {
                                     selectedGeometryIndex = null
-                                    toolPoints = listOf(latLng)
+                                    val snap = findSnapTarget(
+                                        map = map,
+                                        tap = latLng,
+                                        savedPoints = savedPoints,
+                                        geometries = committedGeometries,
+                                        currentToolPoints = toolPoints,
+                                        thresholdPx = snapThresholdPx
+                                    )
+                                    val target = snap?.position ?: latLng
+                                    toolPoints = listOf(target)
                                     map.clear()
                                     redrawCommitted(map)
-                                    map.addMarker(MarkerOptions().position(latLng))
+                                    map.addMarker(MarkerOptions().position(target))
                                     showCirclePanel = true
-                                    toolResult = "Centro del círculo marcado en el mapa. Indique radio o diámetro."
+                                    toolResult = if (snap != null) {
+                                        "Centro ajustado a ${snap.label}. Indique radio o diámetro."
+                                    } else {
+                                        "Centro del círculo marcado en el mapa. Indique radio o diámetro."
+                                    }
                                     true
                                 } else if (activeMapTool == MapFieldTool.PARALLEL) {
                                     val lineIndex = findLineGeometryAtScreen(map, latLng, committedGeometries)
@@ -556,15 +571,40 @@ fun SurveyScreen(
                                     }
                                 } else {
                                     selectedGeometryIndex = null
+
+                                    // Ajuste inteligente (snap): si el toque cae cerca de un
+                                    // punto levantado/importado o del vértice de una figura,
+                                    // se usa exactamente esa coordenada. Un toque fuera de la
+                                    // tolerancia conserva su posición libre.
+                                    val snap = findSnapTarget(
+                                        map = map,
+                                        tap = latLng,
+                                        savedPoints = savedPoints,
+                                        geometries = committedGeometries,
+                                        currentToolPoints = toolPoints,
+                                        thresholdPx = snapThresholdPx
+                                    )
+                                    val target = snap?.position ?: latLng
+
                                     val updated = when (activeMapTool) {
-                                        MapFieldTool.POINT -> listOf(latLng)
+                                        MapFieldTool.POINT -> listOf(target)
                                         MapFieldTool.RECTANGLE ->
-                                            if (toolPoints.size >= 3) toolPoints else toolPoints + latLng
-                                        else -> toolPoints + latLng
+                                            if (toolPoints.size >= 3) toolPoints else toolPoints + target
+                                        else -> toolPoints + target
                                     }
 
                                     toolPoints = updated
-                                    toolResult = renderFieldTool(map, activeMapTool, updated, parallelOffsetText.toDoubleOrNull() ?: 1.0)
+                                    val baseResult = renderFieldTool(
+                                        map,
+                                        activeMapTool,
+                                        updated,
+                                        parallelOffsetText.toDoubleOrNull() ?: 1.0
+                                    )
+                                    toolResult = if (snap != null) {
+                                        "Ajustado a ${snap.label}. " + (baseResult ?: "")
+                                    } else {
+                                        baseResult
+                                    }
                                     committedGeometries.forEach { drawCommittedGeometry(map, it) }
                                     true
                                 }
@@ -2159,6 +2199,56 @@ fun SurveyScreen(
     }
 }
 
+
+private data class SnapTarget(
+    val position: LatLng,
+    val label: String,
+    val distancePx: Double
+)
+
+private fun findSnapTarget(
+    map: MapLibreMap,
+    tap: LatLng,
+    savedPoints: List<SurveyPoint>,
+    geometries: List<CommittedGeometry>,
+    currentToolPoints: List<LatLng>,
+    thresholdPx: Float
+): SnapTarget? {
+    val tapScreen = map.projection.toScreenLocation(tap)
+    val candidates = mutableListOf<Pair<LatLng, String>>()
+
+    // Los puntos levantados o importados tienen prioridad semántica.
+    savedPoints.forEach { p ->
+        val lat = p.latitude
+        val lon = p.longitude
+        if (lat != null && lon != null) {
+            candidates += LatLng(lat, lon) to "punto ${p.pointNumber}"
+        }
+    }
+
+    // Todos los vértices de figuras guardadas también pueden recibir snap.
+    geometries.forEachIndexed { geometryIndex, geometry ->
+        geometryPath(geometry).forEachIndexed { vertexIndex, vertex ->
+            candidates += vertex to "vértice ${vertexIndex + 1} de ${geometry.tool.label}"
+        }
+    }
+
+    // Permite cerrar o enlazar la figura que se está dibujando con sus propios
+    // vértices anteriores, útil especialmente en líneas y polígonos.
+    currentToolPoints.forEachIndexed { index, vertex ->
+        candidates += vertex to "vértice actual ${index + 1}"
+    }
+
+    return candidates
+        .map { (position, label) ->
+            val s = map.projection.toScreenLocation(position)
+            val dx = (s.x - tapScreen.x).toDouble()
+            val dy = (s.y - tapScreen.y).toDouble()
+            SnapTarget(position, label, hypot(dx, dy))
+        }
+        .filter { it.distancePx <= thresholdPx }
+        .minByOrNull { it.distancePx }
+}
 
 private fun defaultSurveyQuickCodes(): List<String> = listOf(
     "CALLE", "CORDÓN", "CUNETA", "CAÑO", "ASFALTO", "LASTRE",
