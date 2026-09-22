@@ -339,7 +339,7 @@ private fun ReceiversScreen(
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        "Toque este recuadro para opciones de conexión.",
+                        "Toque este recuadro para información del receptor y opciones de conexión.",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Bold
                     )
@@ -354,9 +354,20 @@ private fun ReceiversScreen(
                 text = {
                     Column {
                         Text("Conectado por " + (gnss.connectionTransport ?: "Bluetooth / NMEA"))
+                        Spacer(Modifier.height(10.dp))
+                        Button(
+                            onClick = {
+                                connectedActions = null
+                                onSelectReceiver(receiver)
+                                onOpenReceiver(receiver)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Información del receptor")
+                        }
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Apagar o reiniciar físicamente la antena requiere un protocolo propio del fabricante. Bluetooth/NMEA estándar no permite apagar el receptor.",
+                            "Desde Información del receptor puede ver estado GNSS, Wi‑Fi, batería y controles locales del Reach sin desconectar Bluetooth/NMEA.",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
