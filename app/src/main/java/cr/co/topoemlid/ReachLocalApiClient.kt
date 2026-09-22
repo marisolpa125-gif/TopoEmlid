@@ -101,7 +101,7 @@ class ReachLocalApiClient(
     }
 
     suspend fun wifiStatus(): ReachWifiStatus {
-        val j = getJson("/status")
+        val j = getJson("/wifi/status")
         val current = j.optJSONObject("current_network")
         return ReachWifiStatus(
             ip = current?.optString("ip")?.takeIf { it.isNotBlank() },
