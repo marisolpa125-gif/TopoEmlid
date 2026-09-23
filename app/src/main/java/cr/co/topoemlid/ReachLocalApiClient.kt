@@ -269,6 +269,47 @@ class ReachLocalApiClient(
         }
     }
 
+    suspend fun connectWifiNetwork(
+        ssid: String,
+        password: String,
+        security: String? = null
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            require(ssid.isNotBlank()) { "Seleccione una red Wi‑Fi." }
+            enableWifi().getOrThrow()
+
+            val payload = JSONObject()
+                .put("ssid", ssid)
+                .put("password", password)
+                .apply {
+                    security?.takeIf { it.isNotBlank() }?.let { put("security", it) }
+                }
+                .toString()
+                .toRequestBody("application/json".toMediaType())
+
+            val candidates = listOf("/wifi/networks", "/wifi/connect")
+            var lastError: String? = null
+            for (path in candidates) {
+                val req = Request.Builder()
+                    .url(baseUrl + path)
+                    .post(payload)
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/json")
+                    .build()
+
+                val accepted = http.newCall(req).execute().use { response ->
+                    if (response.isSuccessful) true
+                    else {
+                        lastError = "HTTP ${response.code} en $path"
+                        false
+                    }
+                }
+                if (accepted) return@runCatching
+            }
+            error(lastError ?: "El Reach no aceptó la conexión a la red Wi‑Fi.")
+        }
+    }
+
     suspend fun modemInfo(): ReachModemInfo {
         val j = getJson("/modem/1/info")
         val stats = j.optJSONObject("stats")
