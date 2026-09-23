@@ -212,61 +212,138 @@ class ReachLocalApiClient(
 
     suspend fun wifiNetworks(): List<ReachWifiNetwork> = withContext(Dispatchers.IO) {
         enableWifi().getOrThrow()
-        val request = Request.Builder()
-            .url(baseUrl + "/wifi/networks")
-            .get()
-            .header("Accept", "application/json")
-            .build()
 
-        http.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) error("HTTP ${response.code} en /wifi/networks")
-            val raw = response.body?.string().orEmpty().trim()
-            if (raw.isBlank()) return@withContext emptyList()
-
-            val array = when {
-                raw.startsWith("[") -> org.json.JSONArray(raw)
-                raw.startsWith("{") -> {
-                    val obj = JSONObject(raw)
-                    obj.optJSONArray("networks")
-                        ?: obj.optJSONArray("available_networks")
-                        ?: obj.optJSONArray("items")
-                        ?: org.json.JSONArray()
+        // Reach Panel no se limita a leer /wifi/networks: primero solicita
+        // un escaneo real por Socket.IO con la acción wifi_scan.
+        val options = IO.Options().apply {
+            forceNew = true
+            reconnection = false
+            timeout = 3500
+        }
+        val socket = IO.socket(URI(baseUrl), options)
+        try {
+            suspendCancellableCoroutine<Unit> { cont ->
+                var finished = false
+                fun finish(result: Result<Unit>) {
+                    if (finished) return
+                    finished = true
+                    socket.off()
+                    socket.disconnect()
+                    if (cont.isActive) {
+                        result.fold(
+                            onSuccess = { cont.resume(Unit) },
+                            onFailure = { cont.cancel(it) }
+                        )
+                    }
                 }
-                else -> org.json.JSONArray()
-            }
 
-            val result = mutableListOf<ReachWifiNetwork>()
-            for (i in 0 until array.length()) {
-                val item = array.opt(i)
-                when (item) {
-                    is String -> if (item.isNotBlank()) result += ReachWifiNetwork(item)
-                    is JSONObject -> {
-                        val ssid = item.optString("ssid")
-                            .ifBlank { item.optString("name") }
-                            .ifBlank { item.optString("network") }
-                        if (ssid.isNotBlank()) {
-                            val signal = when {
-                                item.has("signal") -> item.optInt("signal")
-                                item.has("rssi") -> item.optInt("rssi")
-                                item.has("quality") -> item.optInt("quality")
-                                else -> null
-                            }
-                            result += ReachWifiNetwork(
-                                ssid = ssid,
-                                security = item.optString("security").takeIf { it.isNotBlank() }
-                                    ?: item.optString("encryption").takeIf { it.isNotBlank() },
-                                signal = signal,
-                                known = item.optBoolean("known", item.optBoolean("saved", false))
-                            )
+                socket.on(Socket.EVENT_CONNECT) {
+                    runCatching {
+                        socket.emit(
+                            "action",
+                            JSONObject().put("name", "wifi_scan")
+                        )
+                    }.onSuccess {
+                        Thread {
+                            // El escaneo tarda un instante en poblar /wifi/networks.
+                            Thread.sleep(1400L)
+                            finish(Result.success(Unit))
+                        }.start()
+                    }.onFailure { finish(Result.failure(it)) }
+                }
+                socket.on(Socket.EVENT_CONNECT_ERROR) { args ->
+                    val detail = args.firstOrNull()?.toString() ?: "No se pudo abrir Socket.IO"
+                    finish(Result.failure(IllegalStateException(detail)))
+                }
+                cont.invokeOnCancellation {
+                    socket.off()
+                    socket.disconnect()
+                }
+                socket.connect()
+            }
+        } finally {
+            socket.off()
+            socket.disconnect()
+        }
+
+        fun parseNetworkObject(item: JSONObject): ReachWifiNetwork? {
+            val ssid = item.optString("ssid")
+                .ifBlank { item.optString("name") }
+                .ifBlank { item.optString("network") }
+            if (ssid.isBlank()) return null
+            val signal = when {
+                item.has("signal") -> item.optInt("signal")
+                item.has("rssi") -> item.optInt("rssi")
+                item.has("quality") -> item.optInt("quality")
+                item.has("signal_strength") -> item.optInt("signal_strength")
+                else -> null
+            }
+            return ReachWifiNetwork(
+                ssid = ssid,
+                security = item.optString("security").takeIf { it.isNotBlank() }
+                    ?: item.optString("encryption").takeIf { it.isNotBlank() },
+                signal = signal,
+                known = item.optBoolean("known", item.optBoolean("saved", false))
+            )
+        }
+
+        fun collectNetworks(value: Any?, out: MutableList<ReachWifiNetwork>) {
+            when (value) {
+                is String -> if (value.isNotBlank()) out += ReachWifiNetwork(value)
+                is JSONObject -> {
+                    parseNetworkObject(value)?.let { out += it }
+                    val keys = value.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        val child = value.opt(key)
+                        if (child is JSONObject || child is org.json.JSONArray) {
+                            collectNetworks(child, out)
                         }
                     }
                 }
+                is org.json.JSONArray -> {
+                    for (i in 0 until value.length()) {
+                        collectNetworks(value.opt(i), out)
+                    }
+                }
             }
-            result.distinctBy { it.ssid }.sortedWith(
-                compareByDescending<ReachWifiNetwork> { it.signal ?: Int.MIN_VALUE }
-                    .thenBy { it.ssid.lowercase() }
-            )
         }
+
+        var lastRaw = ""
+        var parsed: List<ReachWifiNetwork> = emptyList()
+        repeat(4) { attempt ->
+            val request = Request.Builder()
+                .url(baseUrl + "/wifi/networks")
+                .get()
+                .header("Accept", "application/json")
+                .build()
+
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) error("HTTP ${response.code} en /wifi/networks")
+                lastRaw = response.body?.string().orEmpty().trim()
+            }
+
+            if (lastRaw.isNotBlank()) {
+                val found = mutableListOf<ReachWifiNetwork>()
+                runCatching {
+                    when {
+                        lastRaw.startsWith("[") -> collectNetworks(org.json.JSONArray(lastRaw), found)
+                        lastRaw.startsWith("{") -> collectNetworks(JSONObject(lastRaw), found)
+                    }
+                }
+                parsed = found
+                    .distinctBy { it.ssid }
+                    .sortedWith(
+                        compareByDescending<ReachWifiNetwork> { it.signal ?: Int.MIN_VALUE }
+                            .thenBy { it.ssid.lowercase() }
+                    )
+                if (parsed.isNotEmpty()) return@withContext parsed
+            }
+
+            if (attempt < 3) Thread.sleep(800L)
+        }
+
+        parsed
     }
 
     suspend fun connectWifiNetwork(
