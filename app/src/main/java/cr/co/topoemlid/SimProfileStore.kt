@@ -9,7 +9,6 @@ enum class SimOperator(val label: String) {
     KOLBI("kölbi"),
     CLARO("Claro"),
     LIBERTY("Liberty"),
-    MOVISTAR("Movistar"),
     OTHER("Otro");
 
     companion object {
@@ -18,8 +17,7 @@ enum class SimOperator(val label: String) {
             return when {
                 "kolbi" in n || "kölbi" in n || "ice" in n -> KOLBI
                 "claro" in n -> CLARO
-                "liberty" in n -> LIBERTY
-                "movistar" in n -> MOVISTAR
+                "liberty" in n || "movistar" in n -> LIBERTY
                 else -> OTHER
             }
         }
