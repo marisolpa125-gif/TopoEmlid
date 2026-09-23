@@ -965,13 +965,17 @@ private fun AppSettingsScreen(
 
                         modemInfo?.let { info ->
                             Spacer(Modifier.height(8.dp))
-                            val connectedNow = info.state?.equals("CONNECTED", ignoreCase = true) == true
+                            val connectedNow = info.connected == true
                             Text(
                                 "Estado de datos móviles: " +
-                                    if (connectedNow) "Conectado" else "Desconectado",
+                                    when (info.connected) {
+                                        true -> "Conectado"
+                                        false -> "Desconectado"
+                                        null -> "—"
+                                    },
                                 fontWeight = FontWeight.Bold
                             )
-                            Text("Estado del módem: ${info.state ?: "—"}")
+                            Text("Estado SIM/módem: ${info.state ?: "—"}")
                             Text("Red: ${info.accessTechnology?.uppercase() ?: "—"} • modo ${info.currentMode?.uppercase() ?: "—"}")
                             val apn = info.currentApn?.takeIf { it.isNotBlank() }
                                 ?: info.availableApns.firstOrNull()
