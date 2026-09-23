@@ -91,10 +91,16 @@ class ReachLocalApiClient(
             .header("Accept", "application/json")
             .build()
 
-        http.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) error("HTTP ${response.code} en $path")
-            val body = response.body?.string().orEmpty()
-            if (body.isBlank()) JSONObject() else JSONObject(body)
+        try {
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) error("HTTP ${response.code} en $path")
+                val body = response.body?.string().orEmpty()
+                if (body.isBlank()) JSONObject() else JSONObject(body)
+            }
+        } catch (e: java.net.ConnectException) {
+            error("No se puede acceder al panel local del Reach en $baseUrl. Conecte la tablet al Wi‑Fi/hotspot del Reach o ponga ambos equipos en la misma red.")
+        } catch (e: java.net.SocketTimeoutException) {
+            error("El Reach no respondió en $baseUrl. Verifique que la tablet esté conectada al Wi‑Fi/hotspot del Reach.")
         }
     }
 
