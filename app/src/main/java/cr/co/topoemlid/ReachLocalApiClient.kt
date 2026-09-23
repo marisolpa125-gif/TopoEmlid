@@ -38,6 +38,7 @@ data class ReachWifiStatus(
 )
 
 data class ReachModemInfo(
+    val connected: Boolean? = null,
     val accessTechnology: String? = null,
     val currentMode: String? = null,
     val currentApn: String? = null,
@@ -143,6 +144,7 @@ class ReachLocalApiClient(
         val stats = j.optJSONObject("stats")
         val apns = j.optJSONArray("available_apns")
         return ReachModemInfo(
+            connected = if (j.has("connected")) j.optBoolean("connected") else null,
             accessTechnology = j.optString("access_technology").takeIf { it.isNotBlank() },
             currentMode = j.optString("current_mode").takeIf { it.isNotBlank() },
             currentApn = j.optString("current_apn").takeIf { it.isNotBlank() },
@@ -275,8 +277,8 @@ class ReachLocalApiClient(
                                     val info = runCatching {
                                         kotlinx.coroutines.runBlocking { modemInfo() }
                                     }.getOrNull()
-                                    val connected = info?.state?.equals("CONNECTED", ignoreCase = true) == true
-                                    matched = if (enabled) connected else !connected
+                                    val connected = info?.connected
+                                    matched = if (enabled) connected == true else connected == false
                                 }
                                 if (matched) {
                                     finish(Result.success(Unit))
