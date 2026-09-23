@@ -210,6 +210,65 @@ class ReachLocalApiClient(
         }
     }
 
+    suspend fun disableWifi(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val options = IO.Options().apply {
+                forceNew = true
+                reconnection = false
+                timeout = 3500
+            }
+            val socket = IO.socket(URI(baseUrl), options)
+            try {
+                suspendCancellableCoroutine<Unit> { cont ->
+                    var finished = false
+                    fun finish(result: Result<Unit>) {
+                        if (finished) return
+                        finished = true
+                        socket.off()
+                        socket.disconnect()
+                        if (cont.isActive) {
+                            result.fold(
+                                onSuccess = { cont.resume(Unit) },
+                                onFailure = { cont.cancel(it) }
+                            )
+                        }
+                    }
+
+                    socket.on(Socket.EVENT_CONNECT) {
+                        runCatching { socket.emit("task", "turn_off_wifi") }
+                            .onSuccess {
+                                Thread {
+                                    val deadline = System.currentTimeMillis() + 8_000L
+                                    var disabledNow = false
+                                    while (!disabledNow && System.currentTimeMillis() < deadline) {
+                                        Thread.sleep(300L)
+                                        disabledNow = runCatching {
+                                            kotlinx.coroutines.runBlocking { wifiStatus().enabled == false }
+                                        }.getOrDefault(false)
+                                    }
+                                    if (disabledNow) finish(Result.success(Unit))
+                                    else finish(Result.failure(IllegalStateException("El Reach recibió la orden, pero no confirmó Wi‑Fi desactivado.")))
+                                }.start()
+                            }
+                            .onFailure { finish(Result.failure(it)) }
+                    }
+                    socket.on(Socket.EVENT_CONNECT_ERROR) { args ->
+                        val detail = args.firstOrNull()?.toString() ?: "No se pudo abrir Socket.IO"
+                        finish(Result.failure(IllegalStateException(detail)))
+                    }
+                    cont.invokeOnCancellation {
+                        socket.off()
+                        socket.disconnect()
+                    }
+                    socket.connect()
+                }
+            } finally {
+                socket.off()
+                socket.disconnect()
+            }
+        }
+    }
+
     suspend fun wifiNetworks(): List<ReachWifiNetwork> = withContext(Dispatchers.IO) {
         enableWifi().getOrThrow()
         val request = Request.Builder()
