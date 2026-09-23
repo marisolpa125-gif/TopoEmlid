@@ -276,10 +276,10 @@ class ReachLocalApiClient(
                             }
                         }.onSuccess {
                             Thread {
-                                val deadline = System.currentTimeMillis() + 15_000L
+                                val deadline = System.currentTimeMillis() + 12_000L
                                 var matched = false
                                 while (!matched && System.currentTimeMillis() < deadline) {
-                                    Thread.sleep(700L)
+                                    Thread.sleep(300L)
                                     val info = runCatching {
                                         kotlinx.coroutines.runBlocking { modemInfo() }
                                     }.getOrNull()
