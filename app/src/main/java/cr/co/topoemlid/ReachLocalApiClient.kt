@@ -37,6 +37,13 @@ data class ReachWifiStatus(
     val mode: String? = null
 )
 
+data class ReachWifiNetwork(
+    val ssid: String,
+    val security: String? = null,
+    val signal: Int? = null,
+    val known: Boolean = false
+)
+
 data class ReachModemInfo(
     val connected: Boolean? = null,
     val accessTechnology: String? = null,
@@ -138,6 +145,172 @@ class ReachLocalApiClient(
             enabled = if (j.has("enabled")) j.optBoolean("enabled") else null,
             mode = j.optString("mode").takeIf { it.isNotBlank() }
         )
+    }
+
+
+    suspend fun enableWifi(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val current = runCatching { wifiStatus() }.getOrNull()
+            if (current?.enabled == true) return@runCatching
+
+            val options = IO.Options().apply {
+                forceNew = true
+                reconnection = false
+                timeout = 3500
+            }
+            val socket = IO.socket(URI(baseUrl), options)
+            try {
+                suspendCancellableCoroutine<Unit> { cont ->
+                    var finished = false
+                    fun finish(result: Result<Unit>) {
+                        if (finished) return
+                        finished = true
+                        socket.off()
+                        socket.disconnect()
+                        if (cont.isActive) {
+                            result.fold(
+                                onSuccess = { cont.resume(Unit) },
+                                onFailure = { cont.cancel(it) }
+                            )
+                        }
+                    }
+
+                    socket.on(Socket.EVENT_CONNECT) {
+                        runCatching { socket.emit("task", "turn_on_wifi") }
+                            .onSuccess {
+                                Thread {
+                                    val deadline = System.currentTimeMillis() + 8_000L
+                                    var enabledNow = false
+                                    while (!enabledNow && System.currentTimeMillis() < deadline) {
+                                        Thread.sleep(300L)
+                                        enabledNow = runCatching {
+                                            kotlinx.coroutines.runBlocking { wifiStatus().enabled == true }
+                                        }.getOrDefault(false)
+                                    }
+                                    if (enabledNow) finish(Result.success(Unit))
+                                    else finish(Result.failure(IllegalStateException("El Reach recibió la orden, pero no confirmó Wi‑Fi activo.")))
+                                }.start()
+                            }
+                            .onFailure { finish(Result.failure(it)) }
+                    }
+                    socket.on(Socket.EVENT_CONNECT_ERROR) { args ->
+                        val detail = args.firstOrNull()?.toString() ?: "No se pudo abrir Socket.IO"
+                        finish(Result.failure(IllegalStateException(detail)))
+                    }
+                    cont.invokeOnCancellation {
+                        socket.off()
+                        socket.disconnect()
+                    }
+                    socket.connect()
+                }
+            } finally {
+                socket.off()
+                socket.disconnect()
+            }
+        }
+    }
+
+    suspend fun wifiNetworks(): List<ReachWifiNetwork> = withContext(Dispatchers.IO) {
+        enableWifi().getOrThrow()
+        val request = Request.Builder()
+            .url(baseUrl + "/wifi/networks")
+            .get()
+            .header("Accept", "application/json")
+            .build()
+
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) error("HTTP ${response.code} en /wifi/networks")
+            val raw = response.body?.string().orEmpty().trim()
+            if (raw.isBlank()) return@withContext emptyList()
+
+            val array = when {
+                raw.startsWith("[") -> org.json.JSONArray(raw)
+                raw.startsWith("{") -> {
+                    val obj = JSONObject(raw)
+                    obj.optJSONArray("networks")
+                        ?: obj.optJSONArray("available_networks")
+                        ?: obj.optJSONArray("items")
+                        ?: org.json.JSONArray()
+                }
+                else -> org.json.JSONArray()
+            }
+
+            val result = mutableListOf<ReachWifiNetwork>()
+            for (i in 0 until array.length()) {
+                val item = array.opt(i)
+                when (item) {
+                    is String -> if (item.isNotBlank()) result += ReachWifiNetwork(item)
+                    is JSONObject -> {
+                        val ssid = item.optString("ssid")
+                            .ifBlank { item.optString("name") }
+                            .ifBlank { item.optString("network") }
+                        if (ssid.isNotBlank()) {
+                            val signal = when {
+                                item.has("signal") -> item.optInt("signal")
+                                item.has("rssi") -> item.optInt("rssi")
+                                item.has("quality") -> item.optInt("quality")
+                                else -> null
+                            }
+                            result += ReachWifiNetwork(
+                                ssid = ssid,
+                                security = item.optString("security").takeIf { it.isNotBlank() }
+                                    ?: item.optString("encryption").takeIf { it.isNotBlank() },
+                                signal = signal,
+                                known = item.optBoolean("known", item.optBoolean("saved", false))
+                            )
+                        }
+                    }
+                }
+            }
+            result.distinctBy { it.ssid }.sortedWith(
+                compareByDescending<ReachWifiNetwork> { it.signal ?: Int.MIN_VALUE }
+                    .thenBy { it.ssid.lowercase() }
+            )
+        }
+    }
+
+    suspend fun connectWifiNetwork(
+        ssid: String,
+        password: String,
+        security: String? = null
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            require(ssid.isNotBlank()) { "Seleccione una red Wi‑Fi." }
+            enableWifi().getOrThrow()
+
+            val payload = JSONObject()
+                .put("ssid", ssid)
+                .put("password", password)
+                .apply {
+                    security?.takeIf { it.isNotBlank() }?.let { put("security", it) }
+                }
+                .toString()
+                .toRequestBody("application/json".toMediaType())
+
+            // Reach Panel obtiene las redes desde /wifi/networks y usa esa misma
+            // colección para activar una red. Si el firmware responde 404/405,
+            // probamos el alias /wifi/connect usado por variantes del panel.
+            val candidates = listOf("/wifi/networks", "/wifi/connect")
+            var lastError: String? = null
+            for (path in candidates) {
+                val req = Request.Builder()
+                    .url(baseUrl + path)
+                    .post(payload)
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/json")
+                    .build()
+
+                val accepted = http.newCall(req).execute().use { response ->
+                    if (response.isSuccessful) true
+                    else {
+                        lastError = "HTTP ${response.code} en $path"
+                        false
+                    }
+                }
+                if (accepted) return@runCatching
+            }
+            error(lastError ?: "El Reach no aceptó la conexión a la red Wi‑Fi.")
+        }
     }
 
     suspend fun modemInfo(): ReachModemInfo {
