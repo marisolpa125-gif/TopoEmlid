@@ -481,25 +481,30 @@ class ReceiverConnectionManager(context: Context) {
 
     @Synchronized
     fun disconnect() {
+        // Desconexión manual: primero anulamos cualquier reconexión automática.
+        // Para Bluetooth/NMEA NO interrumpimos a la fuerza el hilo lector; cerrar
+        // el socket hace que readLine() termine por sí solo y evita carreras que
+        // podían tumbar el proceso Android al pulsar "Desconectar".
         requestedProfileId = null
         autoFallbackProfile = null
         floatStreak = 0
 
-        val oldWorker = worker
         val oldWatchdog = watchdog
         val oldSocket = socket
         val oldGatt = gatt
 
-        worker = null
         watchdog = null
         socket = null
         gatt = null
 
-        oldWorker?.interrupt()
-        oldWatchdog?.interrupt()
+        runCatching { oldWatchdog?.interrupt() }
         runCatching { oldSocket?.close() }
         runCatching { oldGatt?.disconnect() }
         runCatching { oldGatt?.close() }
+
+        // El worker saldrá al cerrarse su socket. Quitamos nuestra referencia
+        // únicamente después de haber invalidado requestedProfileId.
+        worker = null
         usedSatelliteIds.clear()
 
         connecting = false
