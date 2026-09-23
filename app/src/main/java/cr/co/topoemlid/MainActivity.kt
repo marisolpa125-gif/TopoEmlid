@@ -406,7 +406,7 @@ private fun AppSettingsScreen(
     var tabletSimOperator by remember {
         mutableStateOf(
             runCatching {
-                SimOperator.valueOf(connectivityPrefs.getString("tablet_operator", SimOperator.MOVISTAR.name)!!)
+                SimOperator.valueOf(connectivityPrefs.getString("tablet_operator", SimOperator.LIBERTY.name)!!)
             }.getOrDefault(SimOperator.LIBERTY)
         )
     }
@@ -699,7 +699,7 @@ private fun AppSettingsScreen(
             Column(Modifier.padding(14.dp)) {
                 Text("Fuente de Internet / Respaldo", fontWeight = FontWeight.Bold)
                 Text(
-                    "Configuración de campo: SIM kölbi en el Reach como fuente principal y SIM Movistar en la tablet como respaldo. La app comprueba además cuál conexión tiene Internet real.",
+                    "Configuración de campo: SIM kölbi en el Reach como fuente principal y SIM Liberty en la tablet como respaldo. La app comprueba además cuál conexión tiene Internet real.",
                     style = MaterialTheme.typography.bodySmall
                 )
 
@@ -914,7 +914,6 @@ private fun AppSettingsScreen(
                                 SimOperator.KOLBI,
                                 SimOperator.CLARO,
                                 SimOperator.LIBERTY,
-                                SimOperator.MOVISTAR,
                                 SimOperator.OTHER
                             ).forEach { option ->
                                 FilterChip(
