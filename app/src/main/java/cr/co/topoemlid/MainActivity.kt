@@ -1009,49 +1009,14 @@ private fun AppSettingsScreen(
                                     mobileDataEnabledBusy = true
                                     mobileDataEnabledMessage = null
                                     settingsScope.launch {
-                                        val client = ReachLocalApiClient("192.168.42.1")
-
-                                        val result = if (checked) {
-                                            client.setMobileDataEnabled(true)
-                                        } else {
-                                            // Si Compartir Internet queda activo, el firmware puede
-                                            // volver a levantar el módem. Para que OFF sea realmente
-                                            // OFF, apagamos primero el puente celular -> hotspot.
-                                            client.setMobileDataSharing(false)
-                                            shareMobileData = false
-                                            client.setMobileDataEnabled(false)
-                                        }
-
+                                        val result = ReachLocalApiClient("192.168.42.1")
+                                            .setMobileDataEnabled(checked)
                                         result.onSuccess {
-                                            var realConnected: Boolean? = null
-                                            var lastInfo: ReachModemInfo? = null
-                                            repeat(7) {
-                                                kotlinx.coroutines.delay(700)
-                                                val info = runCatching { client.modemInfo() }.getOrNull()
-                                                if (info != null) {
-                                                    lastInfo = info
-                                                    realConnected =
-                                                        info.state?.equals("CONNECTED", ignoreCase = true) == true
-                                                }
-                                            }
-                                            if (lastInfo != null) modemInfo = lastInfo
-                                            mobileDataEnabled = realConnected ?: checked
-
-                                            mobileDataEnabledMessage = when {
-                                                checked && realConnected == true ->
-                                                    "Datos móviles ACTIVADOS. Estado verificado: Conectado."
-                                                !checked && realConnected == false ->
-                                                    "Datos móviles DESACTIVADOS. Estado verificado: Desconectado."
-                                                checked && realConnected == false ->
-                                                    "Se ordenó activar, pero el módem sigue Desconectado."
-                                                !checked && realConnected == true ->
-                                                    "Se ordenó desactivar, pero el Reach volvió a Conectado."
-                                                else ->
-                                                    "Orden enviada; pulse Actualizar para confirmar el estado."
-                                            }
-                                        }.onFailure {
+                                            mobileDataEnabled = checked
                                             mobileDataEnabledMessage =
-                                                it.message ?: "No se pudo cambiar el estado de datos móviles"
+                                                if (checked) "Datos móviles activados" else "Datos móviles desactivados"
+                                        }.onFailure {
+                                            mobileDataEnabledMessage = it.message ?: "No se pudo cambiar el estado de datos móviles"
                                         }
                                         mobileDataEnabledBusy = false
                                     }
