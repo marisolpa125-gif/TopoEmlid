@@ -828,7 +828,38 @@ private fun AppSettingsScreen(
                 )
 
                 Spacer(Modifier.height(10.dp))
-                Text("SIM de la tablet", fontWeight = FontWeight.Bold)
+                Text(
+                    if (preferredInternetSource == "REACH")
+                        "Fuente seleccionada: SIM del Reach"
+                    else
+                        "Fuente seleccionada: SIM de la tablet",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    if (preferredInternetSource == "REACH")
+                        "Respaldo configurado: SIM de la tablet"
+                    else
+                        "Respaldo configurado: SIM del Reach",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "Al elegir SIM del Reach, Topo Emlid intenta activar los datos móviles y Compartir Internet. Para usar la SIM de la tablet, mantenga GNSS por Bluetooth/NMEA y use la conexión móvil de Android; la conexión del Reach como cliente del hotspot de la tablet seguirá tratándose aparte.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("SIM / Datos móviles de la tablet", fontWeight = FontWeight.Bold)
+                Text(
+                    "Información de la SIM instalada en la tablet. Este bloque queda separado de Fuente de Internet / Respaldo.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(10.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -860,28 +891,6 @@ private fun AppSettingsScreen(
                     placeholder = { Text("Ej. 8888 8888") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    if (preferredInternetSource == "REACH")
-                        "Fuente seleccionada: SIM del Reach"
-                    else
-                        "Fuente seleccionada: SIM de la tablet",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    if (preferredInternetSource == "REACH")
-                        "Respaldo configurado: SIM de la tablet"
-                    else
-                        "Respaldo configurado: SIM del Reach",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Text(
-                    "Al elegir SIM del Reach, Topo Emlid intenta activar los datos móviles y Compartir Internet. Para usar la SIM de la tablet, mantenga GNSS por Bluetooth/NMEA y use la conexión móvil de Android; la conexión del Reach como cliente del hotspot de la tablet seguirá tratándose aparte.",
-                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }
