@@ -870,9 +870,13 @@ private fun ReceiverAdminPlaceholder(title: String, rows: List<String>) {
 @Composable
 private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val localPrefs = remember { context.getSharedPreferences("reach_local_hosts", Context.MODE_PRIVATE) }
+    val hostKey = remember(receiver.id) { "host_${receiver.id}" }
     var host by remember(receiver.id) {
         mutableStateOf(
-            if (receiver.preferredMode == ReceiverConnectionMode.WIFI_AP) "192.168.42.1" else ""
+            localPrefs.getString(hostKey, null)
+                ?: if (receiver.preferredMode == ReceiverConnectionMode.WIFI_AP) "192.168.42.1" else ""
         )
     }
     var loading by remember { mutableStateOf(false) }
@@ -889,7 +893,10 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
 
     OutlinedTextField(
         value = host,
-        onValueChange = { host = it.trim() },
+        onValueChange = {
+            host = it.trim()
+            localPrefs.edit().putString(hostKey, host).apply()
+        },
         label = { Text("IP o nombre local del Reach") },
         placeholder = { Text("192.168.42.1 o ReachRover.local") },
         singleLine = true,
@@ -938,9 +945,13 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
 @Composable
 private fun ReceiverInfoLocalPanel(receiver: ReceiverProfile, gnss: GnssStatus) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val localPrefs = remember { context.getSharedPreferences("reach_local_hosts", Context.MODE_PRIVATE) }
+    val hostKey = remember(receiver.id) { "host_${receiver.id}" }
     var host by remember(receiver.id) {
         mutableStateOf(
-            if (receiver.preferredMode == ReceiverConnectionMode.WIFI_AP) "192.168.42.1" else ""
+            localPrefs.getString(hostKey, null)
+                ?: if (receiver.preferredMode == ReceiverConnectionMode.WIFI_AP) "192.168.42.1" else ""
         )
     }
     var loading by remember { mutableStateOf(false) }
@@ -981,7 +992,10 @@ private fun ReceiverInfoLocalPanel(receiver: ReceiverProfile, gnss: GnssStatus) 
 
     OutlinedTextField(
         value = host,
-        onValueChange = { host = it.trim() },
+        onValueChange = {
+            host = it.trim()
+            localPrefs.edit().putString(hostKey, host).apply()
+        },
         label = { Text("IP o nombre local del Reach") },
         placeholder = { Text("192.168.42.1 o ReachRover.local") },
         singleLine = true,
