@@ -283,22 +283,29 @@ class ReceiverConnectionManager(context: Context) {
                 // so the reader exits and the normal reconnect path can take over.
                 watchdog?.interrupt()
                 watchdog = thread(name = "gnss-nmea-watchdog") {
-                    while (!Thread.currentThread().isInterrupted && requestedProfileId == profile.id) {
-                        Thread.sleep(2000L)
-                        val last = status.lastNmeaAt
-                        if (status.connected && last != null && System.currentTimeMillis() - last > 8000L) {
-                            mainHandler.post {
-                                connecting = true
-                                status = status.copy(
-                                    connected = false,
-                                    nmeaReceiving = false,
-                                    solution = "SIN DATOS • RECONECTANDO"
-                                )
-                                lastError = "Se perdió el flujo NMEA del receptor. Intentando reconectar."
+                    try {
+                        while (!Thread.currentThread().isInterrupted && requestedProfileId == profile.id) {
+                            Thread.sleep(2000L)
+                            val last = status.lastNmeaAt
+                            if (status.connected && last != null && System.currentTimeMillis() - last > 8000L) {
+                                mainHandler.post {
+                                    if (requestedProfileId == profile.id) {
+                                        connecting = true
+                                        status = status.copy(
+                                            connected = false,
+                                            nmeaReceiving = false,
+                                            solution = "SIN DATOS • RECONECTANDO"
+                                        )
+                                        lastError = "Se perdió el flujo NMEA del receptor. Intentando reconectar."
+                                    }
+                                }
+                                runCatching { s.close() }
+                                break
                             }
-                            runCatching { s.close() }
-                            break
                         }
+                    } catch (_: InterruptedException) {
+                        // Desconexión manual o cierre normal: salir sin lanzar
+                        // una excepción no controlada desde el hilo watchdog.
                     }
                 }
 
@@ -434,7 +441,7 @@ class ReceiverConnectionManager(context: Context) {
                     }
                 }
             } finally {
-                watchdog?.interrupt()
+                watchdog?.let { runCatching { it.interrupt() } }
                 watchdog = null
 
                 val mine = ownedSocket
@@ -497,7 +504,8 @@ class ReceiverConnectionManager(context: Context) {
         socket = null
         gatt = null
 
-        runCatching { oldWatchdog?.interrupt() }
+        // No interrumpir el watchdog: Thread.sleep() lanzaba InterruptedException.
+        // requestedProfileId == null hará que salga limpiamente tras el ciclo actual.
         runCatching { oldSocket?.close() }
         runCatching { oldGatt?.disconnect() }
         runCatching { oldGatt?.close() }
