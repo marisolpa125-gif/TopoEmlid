@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import java.util.UUID
 import java.util.Calendar
@@ -377,6 +378,14 @@ private fun AppSettingsScreen(
     var tabletInternetAvailable by remember { mutableStateOf<Boolean?>(null) }
     var tabletNetworkTransport by remember { mutableStateOf("Sin red") }
 
+    var tabletReachWifiNetworks by remember { mutableStateOf<List<ReachWifiNetwork>>(emptyList()) }
+    var tabletReachWifiBusy by remember { mutableStateOf(false) }
+    var tabletReachWifiMessage by remember { mutableStateOf<String?>(null) }
+    var tabletReachWifiExpanded by remember { mutableStateOf(false) }
+    var tabletReachWifiSelected by remember { mutableStateOf<ReachWifiNetwork?>(null) }
+    var tabletReachWifiPassword by remember { mutableStateOf("") }
+    var tabletReachWifiShowPasswordDialog by remember { mutableStateOf(false) }
+
     fun refreshTabletInternetStatus() {
         val manager = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
             as ConnectivityManager
@@ -426,6 +435,59 @@ private fun AppSettingsScreen(
             .putString("operator", reachSimOperator.name)
             .putString("phone_number", reachSimPhone.trim())
             .apply()
+    }
+
+    fun scanWifiForReachFromTabletSection() {
+        if (preferredInternetSource != "TABLET" || tabletReachWifiBusy) return
+        tabletReachWifiBusy = true
+        tabletReachWifiMessage = "Buscando redes Wi‑Fi disponibles para el Reach…"
+        settingsScope.launch {
+            val client = ReachLocalApiClient("192.168.42.1")
+            runCatching {
+                client.enableWifi().getOrThrow()
+                client.wifiNetworks()
+            }.onSuccess { networks ->
+                tabletReachWifiNetworks = networks
+                tabletReachWifiMessage =
+                    if (networks.isEmpty()) "El Reach no reportó redes Wi‑Fi cercanas."
+                    else "Redes detectadas por el Reach: ${networks.size}"
+            }.onFailure {
+                tabletReachWifiMessage = it.message
+                    ?: "No se pudieron consultar las redes Wi‑Fi del Reach."
+            }
+            tabletReachWifiBusy = false
+        }
+    }
+
+    fun connectReachToSelectedWifi() {
+        val target = tabletReachWifiSelected ?: return
+        if (preferredInternetSource != "TABLET" || tabletReachWifiBusy) return
+        val looksOpen = target.security?.lowercase()?.let {
+            it.contains("open") || it.contains("none") || it.contains("unsecured")
+        } == true
+        if (!looksOpen && tabletReachWifiPassword.isBlank()) return
+
+        tabletReachWifiBusy = true
+        tabletReachWifiShowPasswordDialog = false
+        tabletReachWifiMessage = "Conectando el Reach a ${target.ssid}…"
+        settingsScope.launch {
+            ReachLocalApiClient("192.168.42.1")
+                .connectWifiNetwork(
+                    ssid = target.ssid,
+                    password = if (looksOpen) "" else tabletReachWifiPassword,
+                    security = target.security
+                )
+                .onSuccess {
+                    tabletReachWifiMessage =
+                        "Orden enviada al Reach para conectarse a ${target.ssid}. El receptor puede cambiar de IP al entrar a esa red."
+                }
+                .onFailure {
+                    tabletReachWifiMessage = it.message
+                        ?: "No se pudo conectar el Reach a ${target.ssid}."
+                }
+            tabletReachWifiPassword = ""
+            tabletReachWifiBusy = false
+        }
     }
 
     fun activateReachInternetForTablet() {
@@ -559,6 +621,47 @@ private fun AppSettingsScreen(
 
     DisposableEffect(Unit) {
         onDispose { soundManager.release() }
+    }
+
+    if (tabletReachWifiShowPasswordDialog) {
+        val network = tabletReachWifiSelected
+        if (network != null) {
+            AlertDialog(
+                onDismissRequest = {
+                    tabletReachWifiShowPasswordDialog = false
+                    tabletReachWifiPassword = ""
+                },
+                title = { Text("Conectar Reach a ${network.ssid}") },
+                text = {
+                    OutlinedTextField(
+                        value = tabletReachWifiPassword,
+                        onValueChange = { tabletReachWifiPassword = it },
+                        label = { Text("Contraseña Wi‑Fi") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = tabletReachWifiPassword.isNotBlank() && !tabletReachWifiBusy,
+                        onClick = { connectReachToSelectedWifi() }
+                    ) {
+                        Text("Conectar")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            tabletReachWifiShowPasswordDialog = false
+                            tabletReachWifiPassword = ""
+                        }
+                    ) {
+                        Text("Cancelar")
+                    }
+                }
+            )
+        }
     }
 
     if (confirmExit) {
@@ -856,7 +959,7 @@ private fun AppSettingsScreen(
             Column(Modifier.padding(14.dp)) {
                 Text("SIM / Datos móviles de la tablet", fontWeight = FontWeight.Bold)
                 Text(
-                    "Información de la SIM instalada en la tablet. Este bloque queda separado de Fuente de Internet / Respaldo.",
+                    "Información de la SIM instalada en la tablet y selección de la red Wi‑Fi que usará el Reach cuando esta fuente esté habilitada.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(Modifier.height(10.dp))
@@ -892,6 +995,102 @@ private fun AppSettingsScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                Spacer(Modifier.height(14.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(12.dp))
+
+                val tabletWifiEnabled = preferredInternetSource == "TABLET"
+                Text("Wi‑Fi disponible para el Reach", fontWeight = FontWeight.Bold)
+                Text(
+                    if (tabletWifiEnabled)
+                        "Fuente SIM de la tablet seleccionada. Ya puede buscar una red y escoger cuál usará el Reach."
+                    else
+                        "Seleccione “SIM de la tablet” en Fuente preferida para habilitar esta sección.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (tabletWifiEnabled) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { scanWifiForReachFromTabletSection() },
+                    enabled = tabletWifiEnabled && !tabletReachWifiBusy,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (tabletReachWifiBusy) "Buscando…" else "Buscar redes disponibles")
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { tabletReachWifiExpanded = true },
+                        enabled = tabletWifiEnabled && !tabletReachWifiBusy && tabletReachWifiNetworks.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            tabletReachWifiSelected?.ssid
+                                ?: if (tabletReachWifiNetworks.isEmpty())
+                                    "Red Wi‑Fi para el Reach"
+                                else
+                                    "Seleccione una red"
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = tabletReachWifiExpanded,
+                        onDismissRequest = { tabletReachWifiExpanded = false }
+                    ) {
+                        tabletReachWifiNetworks.forEach { network ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(network.ssid, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            buildString {
+                                                append(network.security ?: "Seguridad no indicada")
+                                                network.signal?.let { append(" • señal ").append(it) }
+                                            },
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    tabletReachWifiExpanded = false
+                                    tabletReachWifiSelected = network
+                                    tabletReachWifiPassword = ""
+                                    val looksOpen = network.security?.lowercase()?.let {
+                                        it.contains("open") || it.contains("none") || it.contains("unsecured")
+                                    } == true
+                                    if (looksOpen) {
+                                        connectReachToSelectedWifi()
+                                    } else {
+                                        tabletReachWifiShowPasswordDialog = true
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
+                tabletReachWifiMessage?.let {
+                    Spacer(Modifier.height(7.dp))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (it.contains("No se pudo", ignoreCase = true) ||
+                            it.contains("timeout", ignoreCase = true))
+                            MaterialTheme.colorScheme.error
+                        else
+                            Color.Unspecified
+                    )
+                }
+
+                if (!tabletWifiEnabled) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Esta parte permanece bloqueada mientras la fuente preferida sea la SIM del Reach.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         }
 
