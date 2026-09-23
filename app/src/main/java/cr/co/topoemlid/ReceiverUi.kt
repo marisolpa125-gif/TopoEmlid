@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import java.util.UUID
 import kotlinx.coroutines.launch
@@ -881,6 +882,8 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
     var message by remember { mutableStateOf<String?>(null) }
     var wifi by remember { mutableStateOf<ReachWifiStatus?>(null) }
     var networks by remember { mutableStateOf<List<ReachWifiNetwork>>(emptyList()) }
+    var selectedNetwork by remember { mutableStateOf<ReachWifiNetwork?>(null) }
+    var password by remember { mutableStateOf("") }
 
     fun scanNetworks() {
         if (host.isBlank()) return
@@ -911,7 +914,7 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
     Text("Wi‑Fi del receptor", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
     Spacer(Modifier.height(8.dp))
     Text(
-        "Desde Topo Emlid puede leer el estado y ver las redes Wi‑Fi que detecta el Reach. Por ahora no se conectará ni desconectará redes desde esta pantalla.",
+        "Desde Topo Emlid puede ver las redes que detecta el Reach y conectarlo a cualquiera de ellas.",
         style = MaterialTheme.typography.bodySmall
     )
     Spacer(Modifier.height(10.dp))
@@ -970,18 +973,34 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
     if (networks.isNotEmpty()) {
         Spacer(Modifier.height(14.dp))
         Text("Redes detectadas por el Reach", fontWeight = FontWeight.Bold)
+        Text("Toque una red para conectar el Reach.", style = MaterialTheme.typography.bodySmall)
         networks.forEach { network ->
-            Card(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-                Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                    Text(network.ssid, fontWeight = FontWeight.Bold)
-                    Text(
-                        buildString {
-                            append(network.security ?: "Seguridad no indicada")
-                            network.signal?.let { append(" • señal ").append(it) }
-                            if (network.known) append(" • guardada")
-                        },
-                        style = MaterialTheme.typography.bodySmall
-                    )
+            Card(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp)
+                    .clickable {
+                        selectedNetwork = network
+                        password = ""
+                    }
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(network.ssid, fontWeight = FontWeight.Bold)
+                        Text(
+                            buildString {
+                                append(network.security ?: "Seguridad no indicada")
+                                network.signal?.let { append(" • señal ").append(it) }
+                                if (network.known) append(" • guardada")
+                            },
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Text("Conectar", color = MaterialTheme.colorScheme.primary)
                 }
             }
         }
@@ -998,10 +1017,81 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
 
     Spacer(Modifier.height(8.dp))
     Text(
-        "Bluetooth/NMEA y NTRIP no se modifican al consultar o buscar redes Wi‑Fi del Reach.",
+        "La conexión Wi‑Fi del Reach no cambia el transporte GNSS por Bluetooth/NMEA ni la configuración NTRIP de Topo Emlid.",
         style = MaterialTheme.typography.bodySmall,
         fontWeight = FontWeight.Bold
     )
+
+    selectedNetwork?.let { network ->
+        val looksOpen = network.security?.lowercase()?.let {
+            it.contains("open") || it.contains("none") || it.contains("unsecured")
+        } == true
+
+        AlertDialog(
+            onDismissRequest = {
+                selectedNetwork = null
+                password = ""
+            },
+            title = { Text("Conectar Reach a ${network.ssid}") },
+            text = {
+                Column {
+                    Text("Topo Emlid enviará al Reach la orden para conectarse a esta red.")
+                    if (!looksOpen) {
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = { password = it },
+                            label = { Text("Contraseña Wi‑Fi") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !loading && (looksOpen || password.isNotBlank()),
+                    onClick = {
+                        val target = network
+                        val key = password
+                        selectedNetwork = null
+                        loading = true
+                        error = null
+                        message = "Conectando el Reach a ${target.ssid}…"
+                        scope.launch {
+                            ReachLocalApiClient(host)
+                                .connectWifiNetwork(
+                                    ssid = target.ssid,
+                                    password = if (looksOpen) "" else key,
+                                    security = target.security
+                                )
+                                .onSuccess {
+                                    message = "Orden enviada para conectar el Reach a ${target.ssid}. El Reach puede cambiar de IP al entrar a esa red."
+                                    localPrefs.edit()
+                                        .putString("last_wifi_ssid_${receiver.id}", target.ssid)
+                                        .apply()
+                                }
+                                .onFailure {
+                                    error = it.message ?: "No se pudo conectar el Reach a ${target.ssid}."
+                                    message = null
+                                }
+                            loading = false
+                            password = ""
+                        }
+                    }
+                ) { Text("Conectar") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        selectedNetwork = null
+                        password = ""
+                    }
+                ) { Text("Cancelar") }
+            }
+        )
+    }
 }
 
 @Composable
