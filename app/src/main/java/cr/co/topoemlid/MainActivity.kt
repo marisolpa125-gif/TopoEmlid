@@ -478,8 +478,7 @@ private fun AppSettingsScreen(
                     security = target.security
                 )
                 .onSuccess {
-                    tabletReachWifiMessage =
-                        "Orden enviada al Reach para conectarse a ${target.ssid}. El receptor puede cambiar de IP al entrar a esa red."
+                    tabletReachWifiMessage = "Conectando el Reach a ${target.ssid}…"
                 }
                 .onFailure {
                     tabletReachWifiMessage = it.message
@@ -1002,14 +1001,13 @@ private fun AppSettingsScreen(
 
                 val tabletWifiEnabled = preferredInternetSource == "TABLET"
                 Text("Wi‑Fi disponible para el Reach", fontWeight = FontWeight.Bold)
-                Text(
-                    if (tabletWifiEnabled)
-                        "Fuente SIM de la tablet seleccionada. Ya puede buscar una red y escoger cuál usará el Reach."
-                    else
-                        "Seleccione “SIM de la tablet” en Fuente preferida para habilitar esta sección.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (tabletWifiEnabled) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (!tabletWifiEnabled) {
+                    Text(
+                        "Seleccione “SIM de la tablet” para habilitar.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
@@ -1041,18 +1039,7 @@ private fun AppSettingsScreen(
                     ) {
                         tabletReachWifiNetworks.forEach { network ->
                             DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(network.ssid, fontWeight = FontWeight.Bold)
-                                        Text(
-                                            buildString {
-                                                append(network.security ?: "Seguridad no indicada")
-                                                network.signal?.let { append(" • señal ").append(it) }
-                                            },
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    }
-                                },
+                                text = { Text(network.ssid, fontWeight = FontWeight.Bold) },
                                 onClick = {
                                     tabletReachWifiExpanded = false
                                     tabletReachWifiSelected = network
