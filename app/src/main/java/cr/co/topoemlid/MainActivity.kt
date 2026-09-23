@@ -965,7 +965,13 @@ private fun AppSettingsScreen(
 
                         modemInfo?.let { info ->
                             Spacer(Modifier.height(8.dp))
-                            Text("Estado: ${info.state ?: "—"}")
+                            val connectedNow = info.state?.equals("CONNECTED", ignoreCase = true) == true
+                            Text(
+                                "Estado de datos móviles: " +
+                                    if (connectedNow) "Conectado" else "Desconectado",
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text("Estado del módem: ${info.state ?: "—"}")
                             Text("Red: ${info.accessTechnology?.uppercase() ?: "—"} • modo ${info.currentMode?.uppercase() ?: "—"}")
                             val apn = info.currentApn?.takeIf { it.isNotBlank() }
                                 ?: info.availableApns.firstOrNull()
@@ -1004,35 +1010,48 @@ private fun AppSettingsScreen(
                                     mobileDataEnabledMessage = null
                                     settingsScope.launch {
                                         val client = ReachLocalApiClient("192.168.42.1")
-                                        val result = client.setMobileDataEnabled(checked)
+
+                                        val result = if (checked) {
+                                            client.setMobileDataEnabled(true)
+                                        } else {
+                                            // Si Compartir Internet queda activo, el firmware puede
+                                            // volver a levantar el módem. Para que OFF sea realmente
+                                            // OFF, apagamos primero el puente celular -> hotspot.
+                                            client.setMobileDataSharing(false)
+                                            shareMobileData = false
+                                            client.setMobileDataEnabled(false)
+                                        }
+
                                         result.onSuccess {
-                                            // La orden Socket.IO solo confirma que fue enviada.
-                                            // Verificamos el estado REAL del módem antes de mover
-                                            // definitivamente el interruptor.
                                             var realConnected: Boolean? = null
-                                            repeat(6) {
+                                            var lastInfo: ReachModemInfo? = null
+                                            repeat(7) {
                                                 kotlinx.coroutines.delay(700)
                                                 val info = runCatching { client.modemInfo() }.getOrNull()
-                                                val state = info?.state?.uppercase()
-                                                if (state != null) {
-                                                    modemInfo = info
-                                                    realConnected = state == "CONNECTED"
+                                                if (info != null) {
+                                                    lastInfo = info
+                                                    realConnected =
+                                                        info.state?.equals("CONNECTED", ignoreCase = true) == true
                                                 }
                                             }
+                                            if (lastInfo != null) modemInfo = lastInfo
                                             mobileDataEnabled = realConnected ?: checked
+
                                             mobileDataEnabledMessage = when {
-                                                realConnected == checked ->
-                                                    if (checked) "Datos móviles activados y verificados"
-                                                    else "Datos móviles desactivados y verificados"
-                                                !checked && realConnected == true ->
-                                                    "El Reach volvió a conectar el módem automáticamente. La app muestra el estado real."
+                                                checked && realConnected == true ->
+                                                    "Datos móviles ACTIVADOS. Estado verificado: Conectado."
+                                                !checked && realConnected == false ->
+                                                    "Datos móviles DESACTIVADOS. Estado verificado: Desconectado."
                                                 checked && realConnected == false ->
-                                                    "Se envió la orden, pero el módem todavía no aparece conectado."
+                                                    "Se ordenó activar, pero el módem sigue Desconectado."
+                                                !checked && realConnected == true ->
+                                                    "Se ordenó desactivar, pero el Reach volvió a Conectado."
                                                 else ->
-                                                    "Orden enviada; no se pudo verificar todavía el estado real del módem."
+                                                    "Orden enviada; pulse Actualizar para confirmar el estado."
                                             }
                                         }.onFailure {
-                                            mobileDataEnabledMessage = it.message ?: "No se pudo cambiar el estado de datos móviles"
+                                            mobileDataEnabledMessage =
+                                                it.message ?: "No se pudo cambiar el estado de datos móviles"
                                         }
                                         mobileDataEnabledBusy = false
                                     }
