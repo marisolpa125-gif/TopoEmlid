@@ -978,16 +978,16 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
                 onClick = {
                     loading = true
                     error = null
-                    message = "Desconectando Wi‑Fi del Reach…"
+                    message = "Desconectando el Reach de ${status.ssid ?: "la red seleccionada"}…"
                     scope.launch {
                         ReachLocalApiClient(host).disableWifi()
                             .onSuccess {
-                                message = "Wi‑Fi del Reach desconectado."
+                                message = "Reach desconectado de ${status.ssid ?: "la red seleccionada"}. La red queda disponible para volver a conectarse."
                                 networks = emptyList()
                                 wifi = runCatching { ReachLocalApiClient(host).wifiStatus() }.getOrNull()
                             }
                             .onFailure {
-                                error = it.message ?: "No se pudo desconectar el Wi‑Fi del Reach."
+                                error = it.message ?: "No se pudo desconectar el Reach de ${status.ssid ?: "la red seleccionada"}."
                                 message = null
                             }
                         loading = false
@@ -995,7 +995,7 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Desconectar Wi‑Fi del Reach")
+                Text("Desconectar de ${status.ssid ?: "esta red"}")
             }
         }
     }
