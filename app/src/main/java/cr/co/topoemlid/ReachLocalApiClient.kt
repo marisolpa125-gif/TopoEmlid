@@ -264,10 +264,16 @@ class ReachLocalApiClient(
 
                     socket.on(Socket.EVENT_CONNECT) {
                         runCatching {
-                            // Reach Panel llama ws.emitTask(taskName) para estas dos
-                            // tareas. En Socket.IO el primer argumento del evento "task"
-                            // es directamente el nombre de la tarea.
-                            socket.emit("task", taskName)
+                            // En este RS2+ se comprobó físicamente que:
+                            // - modem_connect responde al payload con nombre.
+                            // - modem_disconnect responde al nombre directo.
+                            // Conservamos ambos formatos según la acción para no
+                            // romper el encendido que ya funcionó en el receptor.
+                            if (enabled) {
+                                socket.emit("task", JSONObject().put("name", taskName))
+                            } else {
+                                socket.emit("task", taskName)
+                            }
                         }.onSuccess {
                             Thread {
                                 val deadline = System.currentTimeMillis() + 15_000L
@@ -281,6 +287,7 @@ class ReachLocalApiClient(
                                         ?: when {
                                             info?.state.equals("CONNECTED", ignoreCase = true) -> true
                                             info?.state.equals("DISCONNECTED", ignoreCase = true) -> false
+                                            info?.state.equals("UNLOCKED", ignoreCase = true) -> false
                                             else -> null
                                         }
                                     matched = if (enabled) connected == true else connected == false
