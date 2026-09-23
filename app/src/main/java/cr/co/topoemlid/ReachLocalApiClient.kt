@@ -167,9 +167,9 @@ class ReachLocalApiClient(
                     for (last in 2..254) {
                         if (last == ownLast) continue
                         val host = "$prefix.$last"
-                        completion.submit<String?> {
+                        completion.submit(java.util.concurrent.Callable<String?> {
                             if (looksLikeReach(host)) host else null
-                        }
+                        })
                         submitted++
                     }
 
