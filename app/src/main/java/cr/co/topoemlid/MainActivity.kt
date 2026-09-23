@@ -385,6 +385,8 @@ private fun AppSettingsScreen(
     var tabletReachWifiSelected by remember { mutableStateOf<ReachWifiNetwork?>(null) }
     var tabletReachWifiPassword by remember { mutableStateOf("") }
     var tabletReachWifiShowPasswordDialog by remember { mutableStateOf(false) }
+    var returnReachHotspotBusy by remember { mutableStateOf(false) }
+    var returnReachHotspotMessage by remember { mutableStateOf<String?>(null) }
     var tabletReachWifiConnectedSsid by remember { mutableStateOf<String?>(null) }
     var tabletReachWifiConnectedSignal by remember { mutableStateOf<Int?>(null) }
     var tabletReachWifiConnectedSecurity by remember { mutableStateOf<String?>(null) }
@@ -493,6 +495,37 @@ private fun AppSettingsScreen(
                 }
             tabletReachWifiPassword = ""
             tabletReachWifiBusy = false
+        }
+    }
+
+    fun activateReachHotspotMode() {
+        if (returnReachHotspotBusy) return
+        returnReachHotspotBusy = true
+        returnReachHotspotMessage = "Buscando el Reach en la red actual…"
+        settingsScope.launch {
+            val host = ReachLocalApiClient.discoverReachOnLocalNetwork()
+            if (host == null) {
+                returnReachHotspotMessage =
+                    "No se encontró el Reach en la red de la tablet. Verifique que el receptor siga conectado a esa red."
+                returnReachHotspotBusy = false
+                return@launch
+            }
+
+            returnReachHotspotMessage = "Reach localizado en $host. Activando su punto de acceso…"
+            ReachLocalApiClient(host)
+                .startHotspotMode()
+                .onSuccess {
+                    returnReachHotspotMessage =
+                        "Punto de acceso del Reach activado. Desactive el hotspot de la tablet y conéctela a la red Wi‑Fi del Reach."
+                    tabletReachWifiConnectedSsid = null
+                    tabletReachWifiConnectedSignal = null
+                    tabletReachWifiConnectedSecurity = null
+                }
+                .onFailure {
+                    returnReachHotspotMessage = it.message
+                        ?: "No se pudo activar el punto de acceso del Reach."
+                }
+            returnReachHotspotBusy = false
         }
     }
 
@@ -1115,6 +1148,35 @@ private fun AppSettingsScreen(
                             )
                         }
                     }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = { activateReachHotspotMode() },
+                    enabled = tabletWifiEnabled && !returnReachHotspotBusy,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (returnReachHotspotBusy)
+                            "Activando…"
+                        else
+                            "Activar punto de acceso del Reach"
+                    )
+                }
+                Text(
+                    "Úselo al terminar el trabajo para que el Reach vuelva a crear su propia red Wi‑Fi y recupere 192.168.42.1.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                returnReachHotspotMessage?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (it.contains("No se", ignoreCase = true))
+                            MaterialTheme.colorScheme.error
+                        else
+                            Color.Unspecified
+                    )
                 }
 
                 if (!tabletWifiEnabled) {
