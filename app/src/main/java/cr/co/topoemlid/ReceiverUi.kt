@@ -970,6 +970,36 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
         StatusLine("Modo", it.mode ?: "—")
     }
 
+    wifi?.let { status ->
+        if (status.enabled == true && status.mode?.equals("hotspot", ignoreCase = true) != true) {
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                enabled = !loading,
+                onClick = {
+                    loading = true
+                    error = null
+                    message = "Desconectando Wi‑Fi del Reach…"
+                    scope.launch {
+                        ReachLocalApiClient(host).disableWifi()
+                            .onSuccess {
+                                message = "Wi‑Fi del Reach desconectado."
+                                networks = emptyList()
+                                wifi = runCatching { ReachLocalApiClient(host).wifiStatus() }.getOrNull()
+                            }
+                            .onFailure {
+                                error = it.message ?: "No se pudo desconectar el Wi‑Fi del Reach."
+                                message = null
+                            }
+                        loading = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Desconectar Wi‑Fi del Reach")
+            }
+        }
+    }
+
     if (networks.isNotEmpty()) {
         Spacer(Modifier.height(14.dp))
         Text("Redes detectadas por el Reach", fontWeight = FontWeight.Bold)
