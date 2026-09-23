@@ -385,6 +385,9 @@ private fun AppSettingsScreen(
     var tabletReachWifiSelected by remember { mutableStateOf<ReachWifiNetwork?>(null) }
     var tabletReachWifiPassword by remember { mutableStateOf("") }
     var tabletReachWifiShowPasswordDialog by remember { mutableStateOf(false) }
+    var tabletReachWifiConnectedSsid by remember { mutableStateOf<String?>(null) }
+    var tabletReachWifiConnectedSignal by remember { mutableStateOf<Int?>(null) }
+    var tabletReachWifiConnectedSecurity by remember { mutableStateOf<String?>(null) }
 
     fun refreshTabletInternetStatus() {
         val manager = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
@@ -478,7 +481,11 @@ private fun AppSettingsScreen(
                     security = target.security
                 )
                 .onSuccess {
+                    tabletReachWifiConnectedSsid = target.ssid
+                    tabletReachWifiConnectedSignal = target.signal
+                    tabletReachWifiConnectedSecurity = target.security
                     tabletReachWifiMessage = "Conectando el Reach a ${target.ssid}…"
+                    refreshTabletInternetStatus()
                 }
                 .onFailure {
                     tabletReachWifiMessage = it.message
@@ -1069,6 +1076,45 @@ private fun AppSettingsScreen(
                         else
                             Color.Unspecified
                     )
+                }
+                tabletReachWifiConnectedSsid?.let { connectedSsid ->
+                    Spacer(Modifier.height(12.dp))
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("Estado de conexión del Reach", fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(6.dp))
+                            Text("Red: $connectedSsid")
+                            Text(
+                                "Señal Wi‑Fi: " + (
+                                    tabletReachWifiConnectedSignal?.let { value ->
+                                        when {
+                                            value >= 70 -> "Muy buena ($value)"
+                                            value >= 50 -> "Buena ($value)"
+                                            value >= 30 -> "Media ($value)"
+                                            else -> "Débil ($value)"
+                                        }
+                                    } ?: "—"
+                                )
+                            )
+                            Text("Seguridad: ${tabletReachWifiConnectedSecurity ?: "—"}")
+                            Text(
+                                "Internet en la tablet: " +
+                                    when (tabletInternetAvailable) {
+                                        true -> "Disponible"
+                                        false -> "Sin Internet"
+                                        null -> "Sin comprobar"
+                                    }
+                            )
+                            Text("Conexión de Internet de la tablet: $tabletNetworkTransport")
+                            Text(
+                                if (tabletInternetAvailable == true)
+                                    "El hotspot de la tablet tiene salida a Internet disponible para compartir."
+                                else
+                                    "La app todavía no puede confirmar salida a Internet desde la tablet.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
                 }
 
                 if (!tabletWifiEnabled) {
