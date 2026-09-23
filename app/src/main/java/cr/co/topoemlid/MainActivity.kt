@@ -1097,22 +1097,6 @@ private fun AppSettingsScreen(
                                 )
                             )
                             Text("Seguridad: ${tabletReachWifiConnectedSecurity ?: "—"}")
-                            Text(
-                                "Internet en la tablet: " +
-                                    when (tabletInternetAvailable) {
-                                        true -> "Disponible"
-                                        false -> "Sin Internet"
-                                        null -> "Sin comprobar"
-                                    }
-                            )
-                            Text("Conexión de Internet de la tablet: $tabletNetworkTransport")
-                            Text(
-                                if (tabletInternetAvailable == true)
-                                    "El hotspot de la tablet tiene salida a Internet disponible para compartir."
-                                else
-                                    "La app todavía no puede confirmar salida a Internet desde la tablet.",
-                                style = MaterialTheme.typography.bodySmall
-                            )
                         }
                     }
                 }
