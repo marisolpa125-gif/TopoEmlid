@@ -31,7 +31,7 @@ class ReceiverConnectionManager(context: Context) {
     private var autoFallbackProfile: ReceiverProfile? = null
     private var requestedProfileId: String? = null
     private var floatStreak = 0
-    private val usedSatelliteIds = linkedSetOf<String>()
+    private val usedSatelliteIds = java.util.Collections.synchronizedSet(linkedSetOf<String>())
 
     var status by mutableStateOf(GnssStatus())
         private set
@@ -418,14 +418,20 @@ class ReceiverConnectionManager(context: Context) {
                     }
                 }
             } catch (e: Exception) {
-                mainHandler.post {
-                    connecting = false
-                    lastError = when {
-                        e.message?.contains("read failed", ignoreCase = true) == true ->
-                            "Bluetooth se abrió, pero el receptor cerró el canal o no entregó datos NMEA. Active la salida NMEA por Bluetooth en el receptor y vuelva a intentar."
-                        else -> e.message ?: "No se pudo conectar con el receptor."
+                // Cerrar el socket durante una desconexión manual hace salir al reader.
+                // No lo tratamos como error ni dejamos que una respuesta tardía altere la UI.
+                if (requestedProfileId == profile.id) {
+                    mainHandler.post {
+                        if (requestedProfileId == profile.id) {
+                            connecting = false
+                            lastError = when {
+                                e.message?.contains("read failed", ignoreCase = true) == true ->
+                                    "Bluetooth se abrió, pero el receptor cerró el canal o no entregó datos NMEA. Active la salida NMEA por Bluetooth en el receptor y vuelva a intentar."
+                                else -> e.message ?: "No se pudo conectar con el receptor."
+                            }
+                            status = status.copy(connected = false, solution = "SIN SEÑAL")
+                        }
                     }
-                    status = status.copy(connected = false, solution = "SIN SEÑAL")
                 }
             } finally {
                 watchdog?.interrupt()
@@ -473,11 +479,11 @@ class ReceiverConnectionManager(context: Context) {
         }.getOrDefault(false)
     }
 
+    @Synchronized
     fun disconnect() {
         requestedProfileId = null
         autoFallbackProfile = null
         floatStreak = 0
-        usedSatelliteIds.clear()
 
         val oldWorker = worker
         val oldWatchdog = watchdog
@@ -494,8 +500,10 @@ class ReceiverConnectionManager(context: Context) {
         runCatching { oldSocket?.close() }
         runCatching { oldGatt?.disconnect() }
         runCatching { oldGatt?.close() }
+        usedSatelliteIds.clear()
 
         connecting = false
+        lastError = null
         status = GnssStatus(receiverName = status.receiverName)
     }
 
