@@ -267,7 +267,10 @@ class ReachLocalApiClient(
                             // Reach Panel usa emitTask() y además registra el estado
                             // de modem_connect / modem_disconnect. Mantenemos el
                             // socket abierto mientras el receptor ejecuta la tarea.
-                            socket.emit("task", taskName)
+                            // Reach Panel emitTask() envía una tarea con su nombre
+                            // como objeto, igual que el resto de comandos locales.
+                            // El backend espera {"name":"modem_connect|modem_disconnect"}.
+                            socket.emit("task", JSONObject().put("name", taskName))
                         }.onSuccess {
                             Thread {
                                 val deadline = System.currentTimeMillis() + 15_000L
@@ -287,7 +290,7 @@ class ReachLocalApiClient(
                                         Result.failure(
                                             IllegalStateException(
                                                 if (enabled)
-                                                    "El Reach recibió la orden, pero su módem no llegó a estado CONNECTED."
+                                                    "El Reach recibió la orden, pero no confirmó la conexión de datos móviles."
                                                 else
                                                     "El Reach recibió la orden, pero su módem no llegó a estado desconectado."
                                             )
