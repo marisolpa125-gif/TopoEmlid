@@ -11,7 +11,11 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.net.URI
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
+import java.util.concurrent.ExecutorCompletionService
 import kotlin.coroutines.resume
 
 data class ReachBatteryStatus(
@@ -92,6 +96,98 @@ class ReachLocalApiClient(
         .trimEnd('/')
 
     val baseUrl: String = "http://$cleanHost"
+
+
+    companion object {
+        /**
+         * Busca un Reach accesible dentro de las redes IPv4 locales de la tablet.
+         * Se usa cuando el receptor dejó 192.168.42.1 y recibió una IP dinámica
+         * al conectarse al hotspot/red Wi-Fi de la tablet.
+         */
+        suspend fun discoverReachOnLocalNetwork(): String? = withContext(Dispatchers.IO) {
+            val localAddresses = buildList {
+                val interfaces = runCatching { NetworkInterface.getNetworkInterfaces() }.getOrNull()
+                if (interfaces != null) {
+                    while (interfaces.hasMoreElements()) {
+                        val iface = interfaces.nextElement()
+                        if (!runCatching { iface.isUp }.getOrDefault(false) || iface.isLoopback) continue
+                        val addresses = iface.inetAddresses
+                        while (addresses.hasMoreElements()) {
+                            val addr = addresses.nextElement()
+                            if (addr is Inet4Address && !addr.isLoopbackAddress) {
+                                val bytes = addr.address.map { it.toInt() and 0xFF }
+                                val private = bytes[0] == 10 ||
+                                    (bytes[0] == 172 && bytes[1] in 16..31) ||
+                                    (bytes[0] == 192 && bytes[1] == 168)
+                                if (private) add(bytes)
+                            }
+                        }
+                    }
+                }
+            }.distinct()
+
+            // Primero probar la IP fija del Reach por si ya volvió a modo AP.
+            fun looksLikeReach(host: String): Boolean {
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(280, TimeUnit.MILLISECONDS)
+                    .readTimeout(350, TimeUnit.MILLISECONDS)
+                    .writeTimeout(350, TimeUnit.MILLISECONDS)
+                    .build()
+
+                val request = Request.Builder()
+                    .url("http://$host/wifi/status")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+
+                return runCatching {
+                    client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) return@use false
+                        val raw = response.body?.string().orEmpty()
+                        if (raw.isBlank()) return@use false
+                        val j = JSONObject(raw)
+                        j.has("enabled") || j.has("mode") || j.has("current_network")
+                    }
+                }.getOrDefault(false)
+            }
+
+            if (looksLikeReach("192.168.42.1")) return@withContext "192.168.42.1"
+
+            for (bytes in localAddresses) {
+                // El hotspot/red local normalmente usa /24. Evitamos volver a
+                // explorar la subred propia 192.168.42.x del AP del Reach.
+                if (bytes[0] == 192 && bytes[1] == 168 && bytes[2] == 42) continue
+
+                val prefix = "${bytes[0]}.${bytes[1]}.${bytes[2]}"
+                val ownLast = bytes[3]
+                val pool = Executors.newFixedThreadPool(40)
+                val completion = ExecutorCompletionService<String?>(pool)
+                try {
+                    var submitted = 0
+                    for (last in 2..254) {
+                        if (last == ownLast) continue
+                        val host = "$prefix.$last"
+                        completion.submit<String?> {
+                            if (looksLikeReach(host)) host else null
+                        }
+                        submitted++
+                    }
+
+                    repeat(submitted) {
+                        val found = runCatching { completion.take().get() }.getOrNull()
+                        if (found != null) {
+                            pool.shutdownNow()
+                            return@withContext found
+                        }
+                    }
+                } finally {
+                    pool.shutdownNow()
+                }
+            }
+
+            null
+        }
+    }
 
     private suspend fun getJson(path: String): JSONObject = withContext(Dispatchers.IO) {
         val request = Request.Builder()
@@ -413,6 +509,62 @@ class ReachLocalApiClient(
                             // cambiar de IP, por lo que no esperamos una respuesta HTTP.
                             Thread {
                                 Thread.sleep(600L)
+                                finish(Result.success(Unit))
+                            }.start()
+                        }.onFailure { finish(Result.failure(it)) }
+                    }
+                    socket.on(Socket.EVENT_CONNECT_ERROR) { args ->
+                        val detail = args.firstOrNull()?.toString() ?: "No se pudo abrir Socket.IO"
+                        finish(Result.failure(IllegalStateException(detail)))
+                    }
+                    cont.invokeOnCancellation {
+                        socket.off()
+                        socket.disconnect()
+                    }
+                    socket.connect()
+                }
+            } finally {
+                socket.off()
+                socket.disconnect()
+            }
+        }
+    }
+
+    suspend fun startHotspotMode(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val options = IO.Options().apply {
+                forceNew = true
+                reconnection = false
+                timeout = 3500
+            }
+            val socket = IO.socket(URI(baseUrl), options)
+            try {
+                suspendCancellableCoroutine<Unit> { cont ->
+                    var finished = false
+                    fun finish(result: Result<Unit>) {
+                        if (finished) return
+                        finished = true
+                        socket.off()
+                        socket.disconnect()
+                        if (cont.isActive) {
+                            result.fold(
+                                onSuccess = { cont.resume(Unit) },
+                                onFailure = { cont.cancel(it) }
+                            )
+                        }
+                    }
+
+                    socket.on(Socket.EVENT_CONNECT) {
+                        runCatching {
+                            socket.emit(
+                                "action",
+                                JSONObject().put("name", "start_hotspot_mode")
+                            )
+                        }.onSuccess {
+                            Thread {
+                                // El Reach puede cerrar inmediatamente la conexión
+                                // al abandonar la red actual y volver a modo AP.
+                                Thread.sleep(650L)
                                 finish(Result.success(Unit))
                             }.start()
                         }.onFailure { finish(Result.failure(it)) }
