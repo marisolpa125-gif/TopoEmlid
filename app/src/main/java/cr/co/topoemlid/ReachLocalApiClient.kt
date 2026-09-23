@@ -262,12 +262,36 @@ class ReachLocalApiClient(
 
                     socket.on(Socket.EVENT_CONNECT) {
                         runCatching {
-                            // Reach Panel: emitTask(e,t) -> socket event "task", first arg = task name.
+                            // Reach Panel usa emitTask() y además registra el estado
+                            // de modem_connect / modem_disconnect. Mantenemos el
+                            // socket abierto mientras el receptor ejecuta la tarea.
                             socket.emit("task", taskName)
                         }.onSuccess {
                             Thread {
-                                Thread.sleep(450)
-                                finish(Result.success(Unit))
+                                val deadline = System.currentTimeMillis() + 15_000L
+                                var matched = false
+                                while (!matched && System.currentTimeMillis() < deadline) {
+                                    Thread.sleep(700L)
+                                    val info = runCatching {
+                                        kotlinx.coroutines.runBlocking { modemInfo() }
+                                    }.getOrNull()
+                                    val connected = info?.state?.equals("CONNECTED", ignoreCase = true) == true
+                                    matched = if (enabled) connected else !connected
+                                }
+                                if (matched) {
+                                    finish(Result.success(Unit))
+                                } else {
+                                    finish(
+                                        Result.failure(
+                                            IllegalStateException(
+                                                if (enabled)
+                                                    "El Reach recibió la orden, pero su módem no llegó a estado CONNECTED."
+                                                else
+                                                    "El Reach recibió la orden, pero su módem no llegó a estado desconectado."
+                                            )
+                                        )
+                                    )
+                                }
                             }.start()
                         }.onFailure { finish(Result.failure(it)) }
                     }
