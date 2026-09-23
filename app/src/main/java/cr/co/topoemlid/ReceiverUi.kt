@@ -24,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import java.util.UUID
 import kotlinx.coroutines.launch
@@ -882,8 +881,6 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
     var message by remember { mutableStateOf<String?>(null) }
     var wifi by remember { mutableStateOf<ReachWifiStatus?>(null) }
     var networks by remember { mutableStateOf<List<ReachWifiNetwork>>(emptyList()) }
-    var selectedNetwork by remember { mutableStateOf<ReachWifiNetwork?>(null) }
-    var password by remember { mutableStateOf("") }
 
     fun scanNetworks() {
         if (host.isBlank()) return
@@ -914,7 +911,7 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
     Text("Wi‑Fi del receptor", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
     Spacer(Modifier.height(8.dp))
     Text(
-        "Control directo desde Topo Emlid. Permite activar el Wi‑Fi del Reach, buscar redes cercanas y conectarlo al hotspot de la tablet sin abrir el navegador.",
+        "Desde Topo Emlid puede leer el estado y ver las redes Wi‑Fi que detecta el Reach. Por ahora no se conectará ni desconectará redes desde esta pantalla.",
         style = MaterialTheme.typography.bodySmall
     )
     Spacer(Modifier.height(10.dp))
@@ -970,70 +967,21 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
         StatusLine("Modo", it.mode ?: "—")
     }
 
-    wifi?.let { status ->
-        if (status.enabled == true && status.mode?.equals("hotspot", ignoreCase = true) != true) {
-            Spacer(Modifier.height(10.dp))
-            OutlinedButton(
-                enabled = !loading,
-                onClick = {
-                    loading = true
-                    error = null
-                    message = "Desconectando el Reach de ${status.ssid ?: "la red seleccionada"}…"
-                    scope.launch {
-                        ReachLocalApiClient(host).disableWifi()
-                            .onSuccess {
-                                message = "Reach desconectado de ${status.ssid ?: "la red seleccionada"}. La red queda disponible para volver a conectarse."
-                                networks = emptyList()
-                                wifi = runCatching { ReachLocalApiClient(host).wifiStatus() }.getOrNull()
-                            }
-                            .onFailure {
-                                error = it.message ?: "No se pudo desconectar el Reach de ${status.ssid ?: "la red seleccionada"}."
-                                message = null
-                            }
-                        loading = false
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Desconectar de ${status.ssid ?: "esta red"}")
-            }
-        }
-    }
-
     if (networks.isNotEmpty()) {
         Spacer(Modifier.height(14.dp))
         Text("Redes detectadas por el Reach", fontWeight = FontWeight.Bold)
-        Text(
-            "Toque el hotspot de la tablet para conectarlo.",
-            style = MaterialTheme.typography.bodySmall
-        )
         networks.forEach { network ->
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 3.dp)
-                    .clickable {
-                        selectedNetwork = network
-                        password = ""
-                    }
-            ) {
-                Row(
-                    Modifier.fillMaxWidth().padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(network.ssid, fontWeight = FontWeight.Bold)
-                        Text(
-                            buildString {
-                                append(network.security ?: "Seguridad no indicada")
-                                network.signal?.let { append(" • señal ").append(it) }
-                                if (network.known) append(" • guardada")
-                            },
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                    Text("Conectar", color = MaterialTheme.colorScheme.primary)
+            Card(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                    Text(network.ssid, fontWeight = FontWeight.Bold)
+                    Text(
+                        buildString {
+                            append(network.security ?: "Seguridad no indicada")
+                            network.signal?.let { append(" • señal ").append(it) }
+                            if (network.known) append(" • guardada")
+                        },
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
         }
@@ -1050,81 +998,10 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
 
     Spacer(Modifier.height(8.dp))
     Text(
-        "Bluetooth/NMEA y NTRIP no se modifican al buscar o cambiar la red Wi‑Fi del Reach.",
+        "Bluetooth/NMEA y NTRIP no se modifican al consultar o buscar redes Wi‑Fi del Reach.",
         style = MaterialTheme.typography.bodySmall,
         fontWeight = FontWeight.Bold
     )
-
-    selectedNetwork?.let { network ->
-        val looksOpen = network.security?.lowercase()?.let {
-            it.contains("open") || it.contains("none") || it.contains("unsecured")
-        } == true
-
-        AlertDialog(
-            onDismissRequest = {
-                selectedNetwork = null
-                password = ""
-            },
-            title = { Text("Conectar Reach a ${network.ssid}") },
-            text = {
-                Column {
-                    Text("El Reach dejará su hotspot y se conectará a esta red.")
-                    if (!looksOpen) {
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = { password = it },
-                            label = { Text("Contraseña Wi‑Fi") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !loading && (looksOpen || password.isNotBlank()),
-                    onClick = {
-                        val target = network
-                        val key = password
-                        selectedNetwork = null
-                        loading = true
-                        error = null
-                        message = "Conectando el Reach a ${target.ssid}…"
-                        scope.launch {
-                            ReachLocalApiClient(host)
-                                .connectWifiNetwork(
-                                    ssid = target.ssid,
-                                    password = if (looksOpen) "" else key,
-                                    security = target.security
-                                )
-                                .onSuccess {
-                                    message = "Orden aceptada. El Reach está cambiando a ${target.ssid}; su hotspot puede desaparecer durante el cambio."
-                                    localPrefs.edit()
-                                        .putString("last_wifi_ssid_${receiver.id}", target.ssid)
-                                        .apply()
-                                }
-                                .onFailure {
-                                    error = it.message ?: "No se pudo conectar el Reach a ${target.ssid}."
-                                    message = null
-                                }
-                            loading = false
-                            password = ""
-                        }
-                    }
-                ) { Text("Conectar") }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        selectedNetwork = null
-                        password = ""
-                    }
-                ) { Text("Cancelar") }
-            }
-        )
-    }
 }
 
 @Composable
