@@ -1003,12 +1003,34 @@ private fun AppSettingsScreen(
                                     mobileDataEnabledBusy = true
                                     mobileDataEnabledMessage = null
                                     settingsScope.launch {
-                                        val result = ReachLocalApiClient("192.168.42.1")
-                                            .setMobileDataEnabled(checked)
+                                        val client = ReachLocalApiClient("192.168.42.1")
+                                        val result = client.setMobileDataEnabled(checked)
                                         result.onSuccess {
-                                            mobileDataEnabled = checked
-                                            mobileDataEnabledMessage =
-                                                if (checked) "Datos móviles activados" else "Datos móviles desactivados"
+                                            // La orden Socket.IO solo confirma que fue enviada.
+                                            // Verificamos el estado REAL del módem antes de mover
+                                            // definitivamente el interruptor.
+                                            var realConnected: Boolean? = null
+                                            repeat(6) {
+                                                kotlinx.coroutines.delay(700)
+                                                val info = runCatching { client.modemInfo() }.getOrNull()
+                                                val state = info?.state?.uppercase()
+                                                if (state != null) {
+                                                    modemInfo = info
+                                                    realConnected = state == "CONNECTED"
+                                                }
+                                            }
+                                            mobileDataEnabled = realConnected ?: checked
+                                            mobileDataEnabledMessage = when {
+                                                realConnected == checked ->
+                                                    if (checked) "Datos móviles activados y verificados"
+                                                    else "Datos móviles desactivados y verificados"
+                                                !checked && realConnected == true ->
+                                                    "El Reach volvió a conectar el módem automáticamente. La app muestra el estado real."
+                                                checked && realConnected == false ->
+                                                    "Se envió la orden, pero el módem todavía no aparece conectado."
+                                                else ->
+                                                    "Orden enviada; no se pudo verificar todavía el estado real del módem."
+                                            }
                                         }.onFailure {
                                             mobileDataEnabledMessage = it.message ?: "No se pudo cambiar el estado de datos móviles"
                                         }
