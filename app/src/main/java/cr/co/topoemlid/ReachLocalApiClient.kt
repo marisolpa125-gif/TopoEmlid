@@ -50,6 +50,7 @@ data class ReachModemInfo(
 )
 
 data class ReachModemSettings(
+    val autoconnect: Boolean? = null,
     val dataSharing: Boolean? = null,
     val gsmUpgrades: Boolean? = null,
     val roaming: Boolean? = null,
@@ -166,11 +167,33 @@ class ReachLocalApiClient(
     suspend fun modemSettings(): ReachModemSettings {
         val j = getJson("/modem/1/settings")
         return ReachModemSettings(
+            autoconnect = if (j.has("autoconnect")) j.optBoolean("autoconnect") else null,
             dataSharing = if (j.has("data_sharing")) j.optBoolean("data_sharing") else null,
             gsmUpgrades = if (j.has("gsm_upgrades")) j.optBoolean("gsm_upgrades") else null,
             roaming = if (j.has("roaming")) j.optBoolean("roaming") else null,
             pinConfigured = if (j.has("pin")) !j.isNull("pin") && j.optString("pin").isNotBlank() else null
         )
+    }
+
+    suspend fun setMobileAutoconnect(enabled: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val payload = JSONObject()
+                .put("autoconnect", enabled)
+                .toString()
+                .toRequestBody("application/json".toMediaType())
+
+            val path = "/modem/1/settings"
+            val request = Request.Builder()
+                .url(baseUrl + path)
+                .post(payload)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .build()
+
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) error("HTTP ${response.code} en $path")
+            }
+        }
     }
 
     suspend fun setMobileDataSharing(enabled: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
@@ -238,6 +261,10 @@ class ReachLocalApiClient(
 
     suspend fun setMobileDataEnabled(enabled: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
+            // "Use mobile data" en Reach depende también de autoconnect.
+            // Si queda true al desconectar, el módem puede volver a enlazarse solo.
+            setMobileAutoconnect(enabled).getOrThrow()
+
             val taskName = if (enabled) "modem_connect" else "modem_disconnect"
             val options = IO.Options().apply {
                 forceNew = true
