@@ -278,35 +278,28 @@ class ReachLocalApiClient(
             require(ssid.isNotBlank()) { "Seleccione una red Wi‑Fi." }
             enableWifi().getOrThrow()
 
-            val payload = JSONObject()
+            val network = JSONObject()
+                .put("security", security?.takeIf { it.isNotBlank() } ?: "wpa-psk")
                 .put("ssid", ssid)
                 .put("password", password)
-                .apply {
-                    security?.takeIf { it.isNotBlank() }?.let { put("security", it) }
-                }
+
+            val payload = JSONObject()
+                .put("network", network)
                 .toString()
                 .toRequestBody("application/json".toMediaType())
 
-            val candidates = listOf("/wifi/networks", "/wifi/connect")
-            var lastError: String? = null
-            for (path in candidates) {
-                val req = Request.Builder()
-                    .url(baseUrl + path)
-                    .post(payload)
-                    .header("Accept", "application/json")
-                    .header("Content-Type", "application/json")
-                    .build()
+            val req = Request.Builder()
+                .url(baseUrl + "/wifi/networks/saved")
+                .post(payload)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .build()
 
-                val accepted = http.newCall(req).execute().use { response ->
-                    if (response.isSuccessful) true
-                    else {
-                        lastError = "HTTP ${response.code} en $path"
-                        false
-                    }
+            http.newCall(req).execute().use { response ->
+                if (!response.isSuccessful) {
+                    error("HTTP ${response.code} en /wifi/networks/saved")
                 }
-                if (accepted) return@runCatching
             }
-            error(lastError ?: "El Reach no aceptó la conexión a la red Wi‑Fi.")
         }
     }
 
