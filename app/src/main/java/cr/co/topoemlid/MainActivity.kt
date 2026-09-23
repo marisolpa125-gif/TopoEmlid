@@ -974,10 +974,18 @@ private fun AppSettingsScreen(
 
                         modemInfo?.let { info ->
                             Spacer(Modifier.height(8.dp))
-                            val connectedNow = info.connected == true
+                            // Algunos firmware del Reach no incluyen la bandera booleana
+                            // "connected" aunque sí reportan state=CONNECTED/DISCONNECTED.
+                            // Usamos ambos campos para que el estado visual refleje el estado real.
+                            val connectedNow = info.connected
+                                ?: when {
+                                    info.state.equals("CONNECTED", ignoreCase = true) -> true
+                                    info.state.equals("DISCONNECTED", ignoreCase = true) -> false
+                                    else -> null
+                                }
                             Text(
                                 "Estado de datos móviles: " +
-                                    when (info.connected) {
+                                    when (connectedNow) {
                                         true -> "Conectado"
                                         false -> "Desconectado"
                                         null -> "—"
