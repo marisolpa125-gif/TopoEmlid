@@ -261,9 +261,26 @@ class ReachLocalApiClient(
 
     suspend fun setMobileDataEnabled(enabled: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            // "Use mobile data" en Reach depende también de autoconnect.
-            // Si queda true al desconectar, el módem puede volver a enlazarse solo.
+            // "Use mobile data" depende de autoconnect. Primero escribimos el
+            // ajuste y comprobamos que el Reach realmente lo guardó antes de
+            // mandar la tarea del módem.
             setMobileAutoconnect(enabled).getOrThrow()
+
+            val settingsDeadline = System.currentTimeMillis() + 3_000L
+            var autoconnectConfirmed = false
+            while (!autoconnectConfirmed && System.currentTimeMillis() < settingsDeadline) {
+                val settings = runCatching { modemSettings() }.getOrNull()
+                autoconnectConfirmed = settings?.autoconnect == enabled
+                if (!autoconnectConfirmed) Thread.sleep(200L)
+            }
+            if (!autoconnectConfirmed) {
+                error(
+                    if (enabled)
+                        "El Reach no confirmó autoconnect activado."
+                    else
+                        "El Reach no confirmó autoconnect desactivado."
+                )
+            }
 
             val taskName = if (enabled) "modem_connect" else "modem_disconnect"
             val options = IO.Options().apply {
@@ -291,16 +308,10 @@ class ReachLocalApiClient(
 
                     socket.on(Socket.EVENT_CONNECT) {
                         runCatching {
-                            // En este RS2+ se comprobó físicamente que:
-                            // - modem_connect responde al payload con nombre.
-                            // - modem_disconnect responde al nombre directo.
-                            // Conservamos ambos formatos según la acción para no
-                            // romper el encendido que ya funcionó en el receptor.
-                            if (enabled) {
-                                socket.emit("task", JSONObject().put("name", taskName))
-                            } else {
-                                socket.emit("task", taskName)
-                            }
+                            // Reach Panel usa ws.emitTask(taskName) para
+                            // modem_connect y modem_disconnect: ambos se envían
+                            // directamente como nombre de tarea.
+                            socket.emit("task", taskName)
                         }.onSuccess {
                             Thread {
                                 val deadline = System.currentTimeMillis() + 12_000L
