@@ -278,6 +278,7 @@ class ReachLocalApiClient(
             require(ssid.isNotBlank()) { "Seleccione una red Wi‑Fi." }
             enableWifi().getOrThrow()
 
+            // Reach Panel primero guarda/actualiza la red por HTTP.
             val network = JSONObject()
                 .put("security", security?.takeIf { it.isNotBlank() } ?: "wpa-psk")
                 .put("ssid", ssid)
@@ -299,6 +300,59 @@ class ReachLocalApiClient(
                 if (!response.isSuccessful) {
                     error("HTTP ${response.code} en /wifi/networks/saved")
                 }
+            }
+
+            // Confirmado en Reach Panel: emitAction("connect_to_wifi_network", {ssid: ...})
+            val options = IO.Options().apply {
+                forceNew = true
+                reconnection = false
+                timeout = 3500
+            }
+            val socket = IO.socket(URI(baseUrl), options)
+            try {
+                suspendCancellableCoroutine<Unit> { cont ->
+                    var finished = false
+                    fun finish(result: Result<Unit>) {
+                        if (finished) return
+                        finished = true
+                        socket.off()
+                        socket.disconnect()
+                        if (cont.isActive) {
+                            result.fold(
+                                onSuccess = { cont.resume(Unit) },
+                                onFailure = { cont.cancel(it) }
+                            )
+                        }
+                    }
+
+                    socket.on(Socket.EVENT_CONNECT) {
+                        runCatching {
+                            val action = JSONObject()
+                                .put("name", "connect_to_wifi_network")
+                                .put("payload", JSONObject().put("ssid", ssid))
+                            socket.emit("action", action)
+                        }.onSuccess {
+                            // Al aceptar la acción el Reach abandona su hotspot y puede
+                            // cambiar de IP, por lo que no esperamos una respuesta HTTP.
+                            Thread {
+                                Thread.sleep(600L)
+                                finish(Result.success(Unit))
+                            }.start()
+                        }.onFailure { finish(Result.failure(it)) }
+                    }
+                    socket.on(Socket.EVENT_CONNECT_ERROR) { args ->
+                        val detail = args.firstOrNull()?.toString() ?: "No se pudo abrir Socket.IO"
+                        finish(Result.failure(IllegalStateException(detail)))
+                    }
+                    cont.invokeOnCancellation {
+                        socket.off()
+                        socket.disconnect()
+                    }
+                    socket.connect()
+                }
+            } finally {
+                socket.off()
+                socket.disconnect()
             }
         }
     }
