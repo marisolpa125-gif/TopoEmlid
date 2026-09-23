@@ -264,13 +264,10 @@ class ReachLocalApiClient(
 
                     socket.on(Socket.EVENT_CONNECT) {
                         runCatching {
-                            // Reach Panel usa emitTask() y además registra el estado
-                            // de modem_connect / modem_disconnect. Mantenemos el
-                            // socket abierto mientras el receptor ejecuta la tarea.
-                            // Reach Panel emitTask() envía una tarea con su nombre
-                            // como objeto, igual que el resto de comandos locales.
-                            // El backend espera {"name":"modem_connect|modem_disconnect"}.
-                            socket.emit("task", JSONObject().put("name", taskName))
+                            // Reach Panel llama ws.emitTask(taskName) para estas dos
+                            // tareas. En Socket.IO el primer argumento del evento "task"
+                            // es directamente el nombre de la tarea.
+                            socket.emit("task", taskName)
                         }.onSuccess {
                             Thread {
                                 val deadline = System.currentTimeMillis() + 15_000L
@@ -281,6 +278,11 @@ class ReachLocalApiClient(
                                         kotlinx.coroutines.runBlocking { modemInfo() }
                                     }.getOrNull()
                                     val connected = info?.connected
+                                        ?: when {
+                                            info?.state.equals("CONNECTED", ignoreCase = true) -> true
+                                            info?.state.equals("DISCONNECTED", ignoreCase = true) -> false
+                                            else -> null
+                                        }
                                     matched = if (enabled) connected == true else connected == false
                                 }
                                 if (matched) {
