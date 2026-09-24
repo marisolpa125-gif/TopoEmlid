@@ -99,16 +99,16 @@ class ReachBleAdminClient(
                     gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         device.connectGatt(
                             appContext,
-                            false,
+                            true,
                             callback,
                             android.bluetooth.BluetoothDevice.TRANSPORT_LE
                         )
                     } else {
-                        device.connectGatt(appContext, false, callback)
+                        device.connectGatt(appContext, true, callback)
                     }
 
                     try {
-                        withTimeout(8_000L) { waiter.await() }
+                        withTimeout(15_000L) { waiter.await() }
                     } finally {
                         if (connectWaiter === waiter) connectWaiter = null
                     }
@@ -574,6 +574,15 @@ class ReachBleAdminClient(
         return null
     }
 
+    private fun refreshGattCache(target: BluetoothGatt?) {
+        if (target == null) return
+        runCatching {
+            val method = target.javaClass.getMethod("refresh")
+            method.isAccessible = true
+            method.invoke(target)
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private fun closeGattOnly() {
         val old = gatt
@@ -604,6 +613,7 @@ class ReachBleAdminClient(
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     eventCharacteristic = null
                     apiCharacteristic = null
+                    if (status == 133) refreshGattCache(g)
                     if (gatt === g) gatt = null
                     apiNotificationsReady = false
                     val detail = if (status == BluetoothGatt.GATT_SUCCESS) "" else " (GATT $status)"
