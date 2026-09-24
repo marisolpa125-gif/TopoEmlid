@@ -397,6 +397,7 @@ private fun AppSettingsScreen(
     var tabletReachWifiPassword by remember { mutableStateOf("") }
     var tabletReachWifiShowPasswordDialog by remember { mutableStateOf(false) }
     var returnReachHotspotBusy by remember { mutableStateOf(false) }
+    var returnReachHotspotActive by remember { mutableStateOf(false) }
     var returnReachHotspotMessage by remember { mutableStateOf<String?>(null) }
     var tabletReachWifiConnectedSsid by remember { mutableStateOf<String?>(null) }
     var tabletReachWifiConnectedSignal by remember { mutableStateOf<Int?>(null) }
@@ -507,6 +508,7 @@ private fun AppSettingsScreen(
 
         tabletReachWifiBusy = true
         tabletReachWifiShowPasswordDialog = false
+        returnReachHotspotActive = false
         tabletReachWifiMessage = "Conectando el Reach a ${target.ssid}…"
         settingsScope.launch {
             runCatching {
@@ -536,17 +538,20 @@ private fun AppSettingsScreen(
     fun activateReachHotspotMode() {
         if (returnReachHotspotBusy) return
         returnReachHotspotBusy = true
+        returnReachHotspotActive = false
         returnReachHotspotMessage = "Activando el punto de acceso del Reach por BLE…"
         settingsScope.launch {
             runCatching {
                 ensureReachBleAdmin().startHotspotMode().getOrThrow()
             }.onSuccess {
+                returnReachHotspotActive = true
                 returnReachHotspotMessage =
-                    "Orden enviada por BLE. El Reach debe volver a emitir su propia red Wi‑Fi; después conecte la tablet a esa red para recuperar 192.168.42.1."
+                    "Punto de acceso del Reach: ACTIVADO. Después conecte la tablet a esa red para recuperar 192.168.42.1."
                 tabletReachWifiConnectedSsid = null
                 tabletReachWifiConnectedSignal = null
                 tabletReachWifiConnectedSecurity = null
             }.onFailure {
+                returnReachHotspotActive = false
                 returnReachHotspotMessage = it.message
                     ?: "No se pudo activar el punto de acceso del Reach por BLE."
             }
@@ -1192,13 +1197,24 @@ private fun AppSettingsScreen(
                 Button(
                     onClick = { activateReachHotspotMode() },
                     enabled = tabletWifiEnabled && !returnReachHotspotBusy,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (returnReachHotspotActive)
+                            Color(0xFF2E7D32)
+                        else
+                            MaterialTheme.colorScheme.primary,
+                        contentColor = if (returnReachHotspotActive)
+                            Color.White
+                        else
+                            MaterialTheme.colorScheme.onPrimary
+                    )
                 ) {
                     Text(
-                        if (returnReachHotspotBusy)
-                            "Activando…"
-                        else
-                            "Activar punto de acceso del Reach"
+                        when {
+                            returnReachHotspotBusy -> "Activando…"
+                            returnReachHotspotActive -> "✓ Punto de acceso del Reach ACTIVADO"
+                            else -> "Activar punto de acceso del Reach"
+                        }
                     )
                 }
                 Text(
