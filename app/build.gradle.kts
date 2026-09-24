@@ -60,6 +60,7 @@ dependencies {
 
     implementation("org.maplibre.gl:android-sdk:13.1.0")
     implementation("org.locationtech.jts:jts-core:1.20.0")
+    implementation("org.locationtech.proj4j:proj4j:1.3.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.socket:socket.io-client:1.0.2") {
         exclude(group = "org.json", module = "json")
