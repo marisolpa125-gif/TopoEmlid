@@ -405,6 +405,54 @@ fun SurveyScreen(
         }
     }
 
+    var liveProjectCoordinate by remember(project?.id) { mutableStateOf<ProjectCoordinate?>(null) }
+    var liveOrthometricHeight by remember(project?.id) { mutableStateOf<Double?>(null) }
+    var liveGeoidError by remember(project?.id) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(
+        project?.id,
+        project?.crsName,
+        project?.geoidFileUri,
+        gnss.latitude,
+        gnss.longitude,
+        gnss.ellipsoidalHeightM
+    ) {
+        val p = project
+        val lat = gnss.latitude
+        val lon = gnss.longitude
+        if (p == null || lat == null || lon == null) {
+            liveProjectCoordinate = null
+            liveOrthometricHeight = null
+            liveGeoidError = null
+        } else {
+            liveProjectCoordinate = runCatching {
+                ProjectCoordinateEngine.fromWgs84(lat, lon, p.crsName)
+            }.getOrNull()
+
+            val h = gnss.ellipsoidalHeightM
+            if (h != null && p.geoidFileUri != null) {
+                withContext(Dispatchers.IO) {
+                    GeoidGridService.undulation(
+                        context = context,
+                        uriText = p.geoidFileUri,
+                        fileName = p.geoidFileName,
+                        latitude = lat,
+                        longitude = lon
+                    )
+                }.onSuccess { sample ->
+                    liveOrthometricHeight = h - sample.undulationM
+                    liveGeoidError = null
+                }.onFailure {
+                    liveOrthometricHeight = null
+                    liveGeoidError = it.message ?: "Geoide no aplicado"
+                }
+            } else {
+                liveOrthometricHeight = null
+                liveGeoidError = null
+            }
+        }
+    }
+
     editingQuickCodeIndex?.let { index ->
         AlertDialog(
             onDismissRequest = { editingQuickCodeIndex = null },
@@ -687,7 +735,7 @@ fun SurveyScreen(
                 .padding(8.dp),
             tonalElevation = 4.dp
         ) {
-            Column(Modifier.padding(10.dp)) {
+            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
                 Text(project?.name ?: "Sin proyecto activo", style = MaterialTheme.typography.titleMedium)
                 Text(
                     if (gnss.connected) {
@@ -697,6 +745,47 @@ fun SurveyScreen(
                     },
                     style = MaterialTheme.typography.bodySmall
                 )
+
+                HorizontalDivider(Modifier.padding(vertical = 5.dp))
+
+                val p = project
+                val coord = liveProjectCoordinate
+                if (p != null) {
+                    if (p.crsName == "WGS 84 geográficas") {
+                        Text(
+                            "CRS: WGS 84 geográficas • Lat: ${gnss.latitude?.let { "%.8f".format(it) } ?: "—"} • Lon: ${gnss.longitude?.let { "%.8f".format(it) } ?: "—"}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    } else {
+                        Text(
+                            "CRS: ${p.crsName} • N: ${coord?.northingM?.let { "%.3f".format(it) } ?: "—"} • E: ${coord?.eastingM?.let { "%.3f".format(it) } ?: "—"}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    val verticalColor = when {
+                        p.geoidFileUri == null -> Color(0xFF546E7A)
+                        liveGeoidError != null -> MaterialTheme.colorScheme.error
+                        liveOrthometricHeight != null -> Color(0xFF2E7D32)
+                        else -> Color(0xFF546E7A)
+                    }
+                    val verticalText = when {
+                        p.geoidFileUri == null ->
+                            "Altura: ${gnss.ellipsoidalHeightM?.let { "%.3f m".format(it) } ?: "—"} • Vertical: Elipsoidal"
+                        liveGeoidError != null ->
+                            "Geoide no aplicado • ${p.geoidFileName ?: "archivo geoidal"}"
+                        else ->
+                            "Elevación: ${liveOrthometricHeight?.let { "%.3f m".format(it) } ?: "—"} • Vertical: Geoide · ${p.geoidFileName ?: "local"}"
+                    }
+                    Text(
+                        verticalText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = verticalColor,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 
