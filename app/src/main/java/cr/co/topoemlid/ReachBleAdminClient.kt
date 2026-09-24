@@ -73,17 +73,25 @@ class ReachBleAdminClient(
         runCatching {
             if (connected) return@runCatching
 
+            val scanned = scanForReachDevices()
+            val classicFallback = runCatching { adapter?.getRemoteDevice(address) }.getOrNull()
+            val candidates = buildList {
+                addAll(scanned)
+                if (classicFallback != null && none { it.address.equals(classicFallback.address, true) }) {
+                    add(classicFallback)
+                }
+            }
+
+            if (candidates.isEmpty()) {
+                error("No se encontró ningún anuncio BLE compatible con el Reach.")
+            }
+
             var lastError: Throwable? = null
-            repeat(2) { attempt ->
+            for ((index, device) in candidates.take(4).withIndex()) {
                 try {
                     closeGattOnly()
-                    if (attempt > 0) delay(900L)
-
-                    // No depender únicamente del MAC de Bluetooth Classic/NMEA.
-                    // Algunos receptores anuncian BLE con una identidad distinta.
-                    val device = scanForReachDevice()
-                        ?: adapter?.getRemoteDevice(address)
-                        ?: error("Android no encontró el receptor Reach por BLE.")
+                    // Dejar que Android libere el escáner antes de abrir GATT.
+                    delay(if (index == 0) 500L else 1_100L)
 
                     val waiter = CompletableDeferred<Unit>()
                     connectWaiter = waiter
@@ -100,7 +108,7 @@ class ReachBleAdminClient(
                     }
 
                     try {
-                        withTimeout(9_000L) { waiter.await() }
+                        withTimeout(8_000L) { waiter.await() }
                     } finally {
                         if (connectWaiter === waiter) connectWaiter = null
                     }
@@ -111,29 +119,45 @@ class ReachBleAdminClient(
                 }
             }
 
-            throw (lastError ?: IllegalStateException("No se pudo abrir el canal BLE del Reach."))
+            val suffix = if (candidates.size > 1)
+                " Se probaron ${minOf(candidates.size, 4)} anuncios BLE encontrados."
+            else
+                ""
+            throw IllegalStateException(
+                (lastError?.message ?: "No se pudo abrir el canal BLE del Reach.") + suffix,
+                lastError
+            )
         }
     }
 
+    private data class BleCandidate(
+        val device: android.bluetooth.BluetoothDevice,
+        val score: Int
+    )
+
     @SuppressLint("MissingPermission")
-    private suspend fun scanForReachDevice(): android.bluetooth.BluetoothDevice? =
+    private suspend fun scanForReachDevices(): List<android.bluetooth.BluetoothDevice> =
         suspendCancellableCoroutine { cont ->
             val scanner = adapter?.bluetoothLeScanner
             if (scanner == null) {
-                cont.resume(null) { _ -> }
+                cont.resume(emptyList()) { _ -> }
                 return@suspendCancellableCoroutine
             }
 
+            val candidates = linkedMapOf<String, BleCandidate>()
             var finished = false
             val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
             lateinit var callback: ScanCallback
-            fun finish(device: android.bluetooth.BluetoothDevice?) {
+            fun finish() {
                 if (finished) return
                 finished = true
                 runCatching { scanner.stopScan(callback) }
                 handler.removeCallbacksAndMessages(null)
-                if (cont.isActive) cont.resume(device) { _ -> }
+                val ordered = candidates.values
+                    .sortedByDescending { it.score }
+                    .map { it.device }
+                if (cont.isActive) cont.resume(ordered) { _ -> }
             }
 
             callback = object : ScanCallback() {
@@ -147,17 +171,37 @@ class ReachBleAdminClient(
 
                     val exactAddress = device.address.equals(address, ignoreCase = true)
                     val serviceMatch = advertisedServices.contains(SERVICE_UUID)
-                    val nameMatch =
+                    val genericNameMatch =
                         name.contains("Reach", ignoreCase = true) ||
-                        name.contains("Emlid", ignoreCase = true) ||
-                        (!receiverName.isNullOrBlank() &&
-                            name.contains(receiverName, ignoreCase = true))
+                        name.contains("Emlid", ignoreCase = true)
+                    val selectedNameMatch =
+                        !receiverName.isNullOrBlank() &&
+                        name.contains(receiverName, ignoreCase = true)
 
-                    if (exactAddress || serviceMatch || nameMatch) finish(device)
+                    val score = when {
+                        serviceMatch -> 100
+                        exactAddress -> 80
+                        selectedNameMatch -> 60
+                        genericNameMatch -> 40
+                        else -> 0
+                    }
+
+                    if (score > 0) {
+                        val previous = candidates[device.address]
+                        if (previous == null || score > previous.score) {
+                            candidates[device.address] = BleCandidate(device, score)
+                        }
+                        // Un anuncio con el servicio exacto ya es suficiente.
+                        if (score == 100) finish()
+                    }
+                }
+
+                override fun onBatchScanResults(results: MutableList<ScanResult>) {
+                    results.forEach { onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES, it) }
                 }
 
                 override fun onScanFailed(errorCode: Int) {
-                    finish(null)
+                    finish()
                 }
             }
 
@@ -167,15 +211,17 @@ class ReachBleAdminClient(
 
             runCatching { scanner.startScan(null, settings, callback) }
                 .onFailure {
-                    finish(null)
+                    finish()
                     return@suspendCancellableCoroutine
                 }
 
-            handler.postDelayed({ finish(null) }, 6_000L)
-            cont.invokeOnCancellation { finish(null) }
+            // Dar tiempo a ver todos los anuncios en lugar de tomar el primer
+            // dispositivo cuyo nombre se parezca a Reach.
+            handler.postDelayed({ finish() }, 6_000L)
+            cont.invokeOnCancellation { finish() }
         }
 
-    suspend fun scanWifiNetworks(): Result<List<ReachWifiNetwork>> = withContext(Dispatchers.IO) {
+        suspend fun scanWifiNetworks(): Result<List<ReachWifiNetwork>> = withContext(Dispatchers.IO) {
         runCatching {
             ensureConnected().getOrThrow()
             sendAction("wifi_scan").getOrThrow()
