@@ -360,9 +360,17 @@ private fun AppSettingsScreen(
     }
     var reachBleAdminMessage by remember { mutableStateOf<String?>(null) }
     var reachBleAdminBusy by remember { mutableStateOf(false) }
+    var bleWifiSessionReceiver by remember { mutableStateOf<ReceiverProfile?>(null) }
 
     DisposableEffect(reachBleAdmin) {
-        onDispose { reachBleAdmin?.close() }
+        onDispose {
+            val receiverToRestore = bleWifiSessionReceiver
+            reachBleAdmin?.close()
+            bleWifiSessionReceiver = null
+            if (receiverToRestore != null) {
+                onResumeReceiverAfterBle(receiverToRestore)
+            }
+        }
     }
     var shareMobileData by remember { mutableStateOf<Boolean?>(null) }
     var shareMobileDataBusy by remember { mutableStateOf(false) }
@@ -464,35 +472,57 @@ private fun AppSettingsScreen(
             .apply()
     }
 
-    suspend fun <T> withReachBleManagement(
-        operationLabel: String,
-        block: suspend (ReachBleAdminClient) -> T
-    ): T {
+    suspend fun startBleWifiSession(operationLabel: String): ReachBleAdminClient {
         val receiver = activeReceiverProfile
             ?: throw IllegalStateException("Seleccione primero el receptor Reach.")
-
         val client = reachBleAdmin
             ?: throw IllegalStateException("No se pudo preparar el canal BLE del Reach.")
+
+        if (client.connected && bleWifiSessionReceiver != null) {
+            return client
+        }
 
         reachBleAdminMessage =
             "Cambiando temporalmente de Bluetooth/NMEA a BLE para $operationLabel…"
 
-        // Emlid indica que Reach prioriza la conexión actual y que Bluetooth
-        // Classic de software de terceros debe desconectarse antes de usar BLE.
         onPauseReceiverForBle()
-        kotlinx.coroutines.delay(1_400L)
+        kotlinx.coroutines.delay(1_800L)
 
         return try {
             client.ensureConnected().getOrThrow()
+            bleWifiSessionReceiver = receiver
             reachBleAdminMessage = "BLE conectado temporalmente para $operationLabel."
-            block(client)
-        } finally {
+            client
+        } catch (t: Throwable) {
             client.close()
+            bleWifiSessionReceiver = null
+            onResumeReceiverAfterBle(receiver)
+            throw t
+        }
+    }
+
+    suspend fun finishBleWifiSession(operationLabel: String) {
+        val receiver = bleWifiSessionReceiver ?: activeReceiverProfile
+        reachBleAdmin?.close()
+        bleWifiSessionReceiver = null
+        if (receiver != null) {
             kotlinx.coroutines.delay(700L)
             reachBleAdminMessage = "Restaurando Bluetooth/NMEA…"
             onResumeReceiverAfterBle(receiver)
             kotlinx.coroutines.delay(900L)
             reachBleAdminMessage = "Bluetooth/NMEA restaurado después de $operationLabel."
+        }
+    }
+
+    suspend fun <T> withReachBleManagement(
+        operationLabel: String,
+        block: suspend (ReachBleAdminClient) -> T
+    ): T {
+        val client = startBleWifiSession(operationLabel)
+        return try {
+            block(client)
+        } finally {
+            finishBleWifiSession(operationLabel)
         }
     }
 
@@ -502,17 +532,22 @@ private fun AppSettingsScreen(
         tabletReachWifiMessage = "Buscando redes Wi‑Fi por BLE…"
         settingsScope.launch {
             runCatching {
-                withReachBleManagement("buscar redes Wi‑Fi") { client ->
-                    client.scanWifiNetworks().getOrThrow()
-                }
+                val client = startBleWifiSession("buscar redes Wi‑Fi")
+                client.scanWifiNetworks().getOrThrow()
             }.onSuccess { networks ->
                 tabletReachWifiNetworks = networks
                 tabletReachWifiMessage =
-                    if (networks.isEmpty()) "El Reach no reportó redes Wi‑Fi cercanas por BLE."
-                    else "Redes detectadas por el Reach vía BLE: ${networks.size}"
+                    if (networks.isEmpty()) {
+                        "El Reach no reportó redes Wi‑Fi cercanas por BLE."
+                    } else {
+                        "Redes detectadas por el Reach vía BLE: ${networks.size}. Seleccione una red; BLE permanecerá abierto hasta terminar la conexión."
+                    }
+                reachBleAdminMessage =
+                    "BLE listo para seleccionar la red. Bluetooth/NMEA se restaurará al terminar."
             }.onFailure {
                 tabletReachWifiMessage = it.message
                     ?: "No se pudieron consultar las redes Wi‑Fi del Reach por BLE."
+                runCatching { finishBleWifiSession("buscar redes Wi‑Fi") }
             }
             tabletReachWifiBusy = false
         }
@@ -531,27 +566,30 @@ private fun AppSettingsScreen(
         returnReachHotspotActive = false
         tabletReachWifiMessage = "Conectando el Reach a ${target.ssid}…"
         settingsScope.launch {
-            runCatching {
-                withReachBleManagement("conectar el Reach a ${target.ssid}") { client ->
+            try {
+                runCatching {
+                    val client = startBleWifiSession("conectar el Reach a ${target.ssid}")
                     client.connectWifiNetwork(
                         ssid = target.ssid,
                         password = if (looksOpen) "" else tabletReachWifiPassword,
                         security = target.security
                     ).getOrThrow()
+                }.onSuccess {
+                    tabletReachWifiConnectedSsid = target.ssid
+                    tabletReachWifiConnectedSignal = target.signal
+                    tabletReachWifiConnectedSecurity = target.security
+                    tabletReachWifiMessage =
+                        "Orden enviada por BLE. El Reach está cambiando a ${target.ssid}."
+                    refreshTabletInternetStatus()
+                }.onFailure {
+                    tabletReachWifiMessage = it.message
+                        ?: "No se pudo conectar el Reach a ${target.ssid} por BLE."
                 }
-            }.onSuccess {
-                tabletReachWifiConnectedSsid = target.ssid
-                tabletReachWifiConnectedSignal = target.signal
-                tabletReachWifiConnectedSecurity = target.security
-                tabletReachWifiMessage =
-                    "Orden enviada por BLE. El Reach está cambiando a ${target.ssid}; Bluetooth/NMEA debe continuar conectado."
-                refreshTabletInternetStatus()
-            }.onFailure {
-                tabletReachWifiMessage = it.message
-                    ?: "No se pudo conectar el Reach a ${target.ssid} por BLE."
+            } finally {
+                finishBleWifiSession("conectar el Reach a ${target.ssid}")
+                tabletReachWifiPassword = ""
+                tabletReachWifiBusy = false
             }
-            tabletReachWifiPassword = ""
-            tabletReachWifiBusy = false
         }
     }
 
@@ -1048,7 +1086,12 @@ private fun AppSettingsScreen(
                     Spacer(Modifier.height(6.dp))
                     Text(
                         "Canal BLE de administración: " +
-                            if (reachBleAdmin?.connected == true) "Conectado temporalmente" else "En espera",
+                            when {
+                                reachBleAdmin?.connected == true && bleWifiSessionReceiver != null ->
+                                    "Conectado temporalmente • esperando selección"
+                                reachBleAdmin?.connected == true -> "Conectado temporalmente"
+                                else -> "En espera"
+                            },
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Bold
                     )
