@@ -273,6 +273,7 @@ fun TopoEmlidApp() {
                 )
                 "Replanteo" -> StakeoutScreen(activeProject, gnss)
                 "Configuración" -> AppSettingsScreen(
+                    activeReceiverProfile = receiverProfiles.firstOrNull { it.id == activeReceiverId },
                     onExitApp = {
                         ntripConnection.disconnect()
                         receiverConnection.disconnect()
@@ -333,6 +334,7 @@ fun TopoEmlidApp() {
 
 @Composable
 private fun AppSettingsScreen(
+    activeReceiverProfile: ReceiverProfile?,
     onExitApp: () -> Unit
 ) {
     val context = LocalContext.current
@@ -343,6 +345,15 @@ private fun AppSettingsScreen(
     var soundVersion by remember { mutableIntStateOf(0) }
     var pendingSoundEvent by remember { mutableStateOf<FieldSoundEvent?>(null) }
     val settingsScope = rememberCoroutineScope()
+    val reachBleAdmin = remember(activeReceiverProfile?.address) {
+        activeReceiverProfile?.address?.let { ReachBleAdminClient(context, it) }
+    }
+    var reachBleAdminMessage by remember { mutableStateOf<String?>(null) }
+    var reachBleAdminBusy by remember { mutableStateOf(false) }
+
+    DisposableEffect(reachBleAdmin) {
+        onDispose { reachBleAdmin?.close() }
+    }
     var shareMobileData by remember { mutableStateOf<Boolean?>(null) }
     var shareMobileDataBusy by remember { mutableStateOf(false) }
     var shareMobileDataMessage by remember { mutableStateOf<String?>(null) }
@@ -442,23 +453,45 @@ private fun AppSettingsScreen(
             .apply()
     }
 
+    suspend fun ensureReachBleAdmin(): ReachBleAdminClient {
+        val client = reachBleAdmin
+            ?: throw IllegalStateException("Seleccione primero el receptor Reach que está conectado por Bluetooth/NMEA.")
+        client.ensureConnected().getOrThrow()
+        return client
+    }
+
+    fun connectReachBleAdmin() {
+        if (reachBleAdminBusy) return
+        reachBleAdminBusy = true
+        reachBleAdminMessage = "Conectando canal BLE de administración con el Reach…"
+        settingsScope.launch {
+            runCatching { ensureReachBleAdmin() }
+                .onSuccess {
+                    reachBleAdminMessage = "BLE de administración conectado. Bluetooth/NMEA continúa aparte."
+                }
+                .onFailure {
+                    reachBleAdminMessage = it.message
+                        ?: "No se pudo abrir el canal BLE de administración del Reach."
+                }
+            reachBleAdminBusy = false
+        }
+    }
+
     fun scanWifiForReachFromTabletSection() {
         if (preferredInternetSource != "TABLET" || tabletReachWifiBusy) return
         tabletReachWifiBusy = true
-        tabletReachWifiMessage = "Buscando redes Wi‑Fi disponibles para el Reach…"
+        tabletReachWifiMessage = "Buscando redes Wi‑Fi por BLE…"
         settingsScope.launch {
-            val client = ReachLocalApiClient("192.168.42.1")
             runCatching {
-                client.enableWifi().getOrThrow()
-                client.wifiNetworks()
+                ensureReachBleAdmin().scanWifiNetworks().getOrThrow()
             }.onSuccess { networks ->
                 tabletReachWifiNetworks = networks
                 tabletReachWifiMessage =
-                    if (networks.isEmpty()) "El Reach no reportó redes Wi‑Fi cercanas."
-                    else "Redes detectadas por el Reach: ${networks.size}"
+                    if (networks.isEmpty()) "El Reach no reportó redes Wi‑Fi cercanas por BLE."
+                    else "Redes detectadas por el Reach vía BLE: ${networks.size}"
             }.onFailure {
                 tabletReachWifiMessage = it.message
-                    ?: "No se pudieron consultar las redes Wi‑Fi del Reach."
+                    ?: "No se pudieron consultar las redes Wi‑Fi del Reach por BLE."
             }
             tabletReachWifiBusy = false
         }
@@ -476,23 +509,25 @@ private fun AppSettingsScreen(
         tabletReachWifiShowPasswordDialog = false
         tabletReachWifiMessage = "Conectando el Reach a ${target.ssid}…"
         settingsScope.launch {
-            ReachLocalApiClient("192.168.42.1")
-                .connectWifiNetwork(
-                    ssid = target.ssid,
-                    password = if (looksOpen) "" else tabletReachWifiPassword,
-                    security = target.security
-                )
-                .onSuccess {
-                    tabletReachWifiConnectedSsid = target.ssid
-                    tabletReachWifiConnectedSignal = target.signal
-                    tabletReachWifiConnectedSecurity = target.security
-                    tabletReachWifiMessage = "Conectando el Reach a ${target.ssid}…"
-                    refreshTabletInternetStatus()
-                }
-                .onFailure {
-                    tabletReachWifiMessage = it.message
-                        ?: "No se pudo conectar el Reach a ${target.ssid}."
-                }
+            runCatching {
+                ensureReachBleAdmin()
+                    .connectWifiNetwork(
+                        ssid = target.ssid,
+                        password = if (looksOpen) "" else tabletReachWifiPassword,
+                        security = target.security
+                    )
+                    .getOrThrow()
+            }.onSuccess {
+                tabletReachWifiConnectedSsid = target.ssid
+                tabletReachWifiConnectedSignal = target.signal
+                tabletReachWifiConnectedSecurity = target.security
+                tabletReachWifiMessage =
+                    "Orden enviada por BLE. El Reach está cambiando a ${target.ssid}; Bluetooth/NMEA debe continuar conectado."
+                refreshTabletInternetStatus()
+            }.onFailure {
+                tabletReachWifiMessage = it.message
+                    ?: "No se pudo conectar el Reach a ${target.ssid} por BLE."
+            }
             tabletReachWifiPassword = ""
             tabletReachWifiBusy = false
         }
@@ -501,30 +536,20 @@ private fun AppSettingsScreen(
     fun activateReachHotspotMode() {
         if (returnReachHotspotBusy) return
         returnReachHotspotBusy = true
-        returnReachHotspotMessage = "Buscando el Reach en la red actual…"
+        returnReachHotspotMessage = "Activando el punto de acceso del Reach por BLE…"
         settingsScope.launch {
-            val host = ReachLocalApiClient.discoverReachOnLocalNetwork()
-            if (host == null) {
+            runCatching {
+                ensureReachBleAdmin().startHotspotMode().getOrThrow()
+            }.onSuccess {
                 returnReachHotspotMessage =
-                    "No se encontró el Reach en la red de la tablet. Verifique que el receptor siga conectado a esa red."
-                returnReachHotspotBusy = false
-                return@launch
+                    "Orden enviada por BLE. El Reach debe volver a emitir su propia red Wi‑Fi; después conecte la tablet a esa red para recuperar 192.168.42.1."
+                tabletReachWifiConnectedSsid = null
+                tabletReachWifiConnectedSignal = null
+                tabletReachWifiConnectedSecurity = null
+            }.onFailure {
+                returnReachHotspotMessage = it.message
+                    ?: "No se pudo activar el punto de acceso del Reach por BLE."
             }
-
-            returnReachHotspotMessage = "Reach localizado en $host. Activando su punto de acceso…"
-            ReachLocalApiClient(host)
-                .startHotspotMode()
-                .onSuccess {
-                    returnReachHotspotMessage =
-                        "Punto de acceso del Reach activado. Desactive el hotspot de la tablet y conéctela a la red Wi‑Fi del Reach."
-                    tabletReachWifiConnectedSsid = null
-                    tabletReachWifiConnectedSignal = null
-                    tabletReachWifiConnectedSecurity = null
-                }
-                .onFailure {
-                    returnReachHotspotMessage = it.message
-                        ?: "No se pudo activar el punto de acceso del Reach."
-                }
             returnReachHotspotBusy = false
         }
     }
@@ -924,6 +949,7 @@ private fun AppSettingsScreen(
                         onClick = {
                             preferredInternetSource = "TABLET"
                             saveConnectivityProfile()
+                            connectReachBleAdmin()
                         },
                         label = {
                             Text(
@@ -990,6 +1016,18 @@ private fun AppSettingsScreen(
                     "Al elegir SIM del Reach, Topo Emlid intenta activar los datos móviles y Compartir Internet. Para usar la SIM de la tablet, mantenga GNSS por Bluetooth/NMEA y use la conexión móvil de Android; la conexión del Reach como cliente del hotspot de la tablet seguirá tratándose aparte.",
                     style = MaterialTheme.typography.bodySmall
                 )
+                if (preferredInternetSource == "TABLET") {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Canal BLE de administración: " +
+                            if (reachBleAdmin?.connected == true) "Conectado" else "Sin confirmar",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    reachBleAdminMessage?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
         }
 
@@ -1164,7 +1202,7 @@ private fun AppSettingsScreen(
                     )
                 }
                 Text(
-                    "Úselo al terminar el trabajo para que el Reach vuelva a crear su propia red Wi‑Fi y recupere 192.168.42.1.",
+                    "Se envía por BLE: al terminar el trabajo hace que el Reach vuelva a crear su propia red Wi‑Fi para recuperar 192.168.42.1.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 returnReachHotspotMessage?.let {
