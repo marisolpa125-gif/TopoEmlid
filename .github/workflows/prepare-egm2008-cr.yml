@@ -40,17 +40,17 @@ jobs:
             -co PREDICTOR=3 \
             -projwin -88.0208333333333 12.0208333333333 -81.9791666666667 4.9791666666667 \
             us_nga_egm08_25.tif \
-            EGM2008_CostaRica_2p5min.tif
+            EGM2008_CostaRica_2p5min_TOPOEMLID.tif
 
-          gdalinfo EGM2008_CostaRica_2p5min.tif
-          sha256sum EGM2008_CostaRica_2p5min.tif > EGM2008_CostaRica_2p5min.sha256
+          gdalinfo EGM2008_CostaRica_2p5min_TOPOEMLID.tif
+          sha256sum EGM2008_CostaRica_2p5min_TOPOEMLID.tif > EGM2008_CostaRica_2p5min.sha256
 
       - name: Subir artefacto
         uses: actions/upload-artifact@v4
         with:
           name: EGM2008_CostaRica_2p5min
           path: |
-            EGM2008_CostaRica_2p5min.tif
+            EGM2008_CostaRica_2p5min_TOPOEMLID.tif
             EGM2008_CostaRica_2p5min.sha256
           if-no-files-found: error
           retention-days: 90
@@ -62,13 +62,13 @@ jobs:
           TAG="egm2008-costa-rica-2p5min"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" \
-              EGM2008_CostaRica_2p5min.tif \
+              EGM2008_CostaRica_2p5min_TOPOEMLID.tif \
               EGM2008_CostaRica_2p5min.sha256 \
               --clobber
           else
             gh release create "$TAG" \
-              EGM2008_CostaRica_2p5min.tif \
+              EGM2008_CostaRica_2p5min_TOPOEMLID.tif \
               EGM2008_CostaRica_2p5min.sha256 \
               --title "EGM2008 Costa Rica 2.5 min" \
-              --notes "Recorte de la grilla mundial EGM2008 de NGA/PROJ a Costa Rica. Resolución original: 2.5 minutos de arco. Incluye margen geográfico e Isla del Coco. Fuente: https://cdn.proj.org/us_nga_egm08_25.tif"
+              --notes "Copia GeoTIFF sin compresión para TOPO EMLID, recortada de la grilla mundial EGM2008 de NGA/PROJ a Costa Rica. Resolución original: 2.5 minutos de arco. Incluye margen geográfico e Isla del Coco. Fuente: https://cdn.proj.org/us_nga_egm08_25.tif"
           fi
