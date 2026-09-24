@@ -1796,6 +1796,9 @@ private fun ProjectDetails(
     var geoidFileUri by remember(project.id, project.geoidFileUri) { mutableStateOf(project.geoidFileUri) }
     var crsName by remember(project.id, project.crsName) { mutableStateOf(project.crsName) }
     val context = LocalContext.current
+    val hasSurveyPoints = remember(project.id) {
+        SurveyPointStore(context).load(project.id).isNotEmpty()
+    }
     var showExportDialog by remember(project.id) { mutableStateOf(false) }
     var exportFormat by remember(project.id) { mutableStateOf(ProjectExportFormat.CSV) }
     var exportContent by remember(project.id) { mutableStateOf(ProjectExportContent.ALL) }
@@ -2045,20 +2048,51 @@ private fun ProjectDetails(
 
         Text("Sistema horizontal", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
         CoordinateCatalog.profiles.forEach { crs ->
-            Row(Modifier.fillMaxWidth().clickable { crsName = crs.name }.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(selected = crsName == crs.name, onClick = { crsName = crs.name })
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !hasSurveyPoints) { crsName = crs.name }
+                    .padding(vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = crsName == crs.name,
+                    onClick = { if (!hasSurveyPoints) crsName = crs.name },
+                    enabled = !hasSurveyPoints
+                )
                 Column {
                     Text(crs.name)
                     Text(crs.description, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
+        if (hasSurveyPoints) {
+            Text(
+                "El sistema horizontal está bloqueado porque este proyecto ya tiene puntos levantados.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
 
         Text("Geoide", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
         Text(geoidFileName ?: "Sin archivo geoidal local")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
-            Button(onClick = { geoidPicker.launch(arrayOf("*/*")) }) { Text("Cargar archivo") }
-            if (geoidFileUri != null) OutlinedButton(onClick = { geoidFileUri = null; geoidFileName = null }) { Text("Quitar") }
+            Button(
+                onClick = { geoidPicker.launch(arrayOf("*/*")) },
+                enabled = !hasSurveyPoints
+            ) { Text("Cargar archivo") }
+            if (geoidFileUri != null) {
+                OutlinedButton(
+                    onClick = { geoidFileUri = null; geoidFileName = null },
+                    enabled = !hasSurveyPoints
+                ) { Text("Quitar") }
+            }
+        }
+        if (hasSurveyPoints) {
+            Text(
+                "El geoide también queda bloqueado cuando existen puntos, para no mezclar elevaciones de distintos modelos.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
 
         Spacer(Modifier.height(8.dp))
