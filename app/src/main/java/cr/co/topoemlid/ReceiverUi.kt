@@ -3,6 +3,10 @@ package cr.co.topoemlid
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothDevice
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.Context
@@ -230,8 +234,12 @@ private fun ReceiversScreen(
         object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val device = result.device
-                val name = runCatching { device.name }.getOrNull() ?: result.scanRecord?.deviceName ?: return
-                if (!isLikelyGnssReceiver(name)) return
+                val known = profiles.firstOrNull { it.address.equals(device.address, ignoreCase = true) }
+                val name = runCatching { device.name }.getOrNull()
+                    ?: result.scanRecord?.deviceName
+                    ?: known?.name
+                    ?: return
+                if (!isLikelyGnssReceiver(name) && known == null) return
                 val candidate = NearbyReceiver(name, device.address, result.rssi)
                 nearby = (nearby.filterNot { it.address == candidate.address } + candidate).sortedByDescending { it.rssi }
             }
@@ -242,18 +250,62 @@ private fun ReceiversScreen(
         }
     }
 
+    val classicReceiver = remember(profiles) {
+        object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action != BluetoothDevice.ACTION_FOUND) return
+
+                val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                } ?: return
+
+                val known = profiles.firstOrNull { it.address.equals(device.address, ignoreCase = true) }
+                val name = runCatching { device.name }.getOrNull()
+                    ?: intent.getStringExtra(BluetoothDevice.EXTRA_NAME)
+                    ?: known?.name
+                    ?: return
+
+                if (!isLikelyGnssReceiver(name) && known == null) return
+
+                val rssi = intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, Short.MIN_VALUE)
+                    .toInt()
+                    .let { if (it == Short.MIN_VALUE.toInt()) -100 else it }
+
+                val candidate = NearbyReceiver(name, device.address, rssi)
+                nearby = (nearby.filterNot {
+                    it.address.equals(candidate.address, ignoreCase = true)
+                } + candidate).sortedByDescending { it.rssi }
+            }
+        }
+    }
+
     fun stopScan() {
         runCatching { scanner?.stopScan(callback) }
+        runCatching {
+            if (adapter?.isDiscovering == true) adapter.cancelDiscovery()
+        }
         scanning = false
     }
 
     fun startScan() {
         if (gnss.connected) return
-        if (!permissionGranted || scanner == null || adapter?.isEnabled != true) return
+        if (!permissionGranted || adapter?.isEnabled != true) return
+
         nearby = emptyList()
         scanning = true
-        runCatching { scanner.startScan(callback) }.onFailure { scanning = false }
-        handler.postDelayed({ stopScan() }, 6000)
+
+        // Buscar por las dos vías. Reach puede aparecer como BLE para
+        // administración o como Bluetooth Classic para NMEA/SPP.
+        runCatching { scanner?.startScan(callback) }
+        runCatching {
+            if (adapter.isDiscovering) adapter.cancelDiscovery()
+            adapter.startDiscovery()
+        }
+
+        handler.postDelayed({ stopScan() }, 9000)
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -261,10 +313,19 @@ private fun ReceiversScreen(
         if (permissionGranted) startScan()
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(classicReceiver) {
+        val filter = IntentFilter(BluetoothDevice.ACTION_FOUND)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(classicReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            context.registerReceiver(classicReceiver, filter)
+        }
+
         onDispose {
             handler.removeCallbacksAndMessages(null)
             stopScan()
+            runCatching { context.unregisterReceiver(classicReceiver) }
         }
     }
 
@@ -301,7 +362,7 @@ private fun ReceiversScreen(
 
         Text("Receptores detectados cerca", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
         Text(
-            "Aquí solo aparecen receptores que Topo Emlid detecta durante la búsqueda actual. Si la antena está apagada o fuera de alcance, no debe aparecer en esta sección.",
+            "Aquí solo aparecen receptores detectados durante la búsqueda actual. Topo Emlid busca tanto por BLE como por Bluetooth Classic/NMEA para no perder el Reach.",
             style = MaterialTheme.typography.bodySmall
         )
 
