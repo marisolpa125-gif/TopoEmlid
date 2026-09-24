@@ -71,7 +71,7 @@ data class ReachModemSettings(
 enum class ReachLocalAction(val wireName: String) {
     FIND_REACH("find_reach"),
     REBOOT("reboot"),
-    SHUTDOWN("reach_shutdown"),
+    SHUTDOWN("shutdown"),
     RESET_RTK("reset_rtk")
 }
 
@@ -813,7 +813,7 @@ class ReachLocalApiClient(
     suspend fun sendAction(action: ReachLocalAction): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             // Reach Panel usa Socket.IO/Engine.IO 3 y emite:
-            // event = "action", payload = {"name":"find_reach|reboot|reach_shutdown|reset_rtk"}
+            // event = "action", payload = {"name":"find_reach|reboot|shutdown|reset_rtk"}
             val options = IO.Options().apply {
                 forceNew = true
                 reconnection = false
