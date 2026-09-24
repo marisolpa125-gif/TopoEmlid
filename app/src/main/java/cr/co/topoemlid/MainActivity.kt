@@ -345,8 +345,10 @@ private fun AppSettingsScreen(
     var soundVersion by remember { mutableIntStateOf(0) }
     var pendingSoundEvent by remember { mutableStateOf<FieldSoundEvent?>(null) }
     val settingsScope = rememberCoroutineScope()
-    val reachBleAdmin = remember(activeReceiverProfile?.address) {
-        activeReceiverProfile?.address?.let { ReachBleAdminClient(context, it) }
+    val reachBleAdmin = remember(activeReceiverProfile?.address, activeReceiverProfile?.name) {
+        activeReceiverProfile?.address?.let {
+            ReachBleAdminClient(context, it, activeReceiverProfile?.name)
+        }
     }
     var reachBleAdminMessage by remember { mutableStateOf<String?>(null) }
     var reachBleAdminBusy by remember { mutableStateOf(false) }
