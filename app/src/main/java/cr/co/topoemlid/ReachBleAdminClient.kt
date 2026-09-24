@@ -313,7 +313,7 @@ class ReachBleAdminClient(
             .put("id", id)
             .put("method", method)
             .put("endpoint", endpoint)
-            .put("headers", JSONObject())
+            .put("headers", JSONArray())
             .put("payload", payload ?: JSONObject.NULL)
 
         val waiter = CompletableDeferred<JSONObject>()
@@ -510,7 +510,7 @@ class ReachBleAdminClient(
             val v = b.toInt() and 0xFF
             if (v == 0x7E || v == 0x7D) {
                 out.write(0x7D)
-                out.write(v xor 0x20)
+                out.write(v)
             } else {
                 out.write(v)
             }
@@ -537,7 +537,7 @@ class ReachBleAdminClient(
                     }
                     !inFrame -> Unit
                     escaped -> {
-                        rxFrame.write(value xor 0x20)
+                        rxFrame.write(value)
                         escaped = false
                     }
                     value == 0x7D -> escaped = true
