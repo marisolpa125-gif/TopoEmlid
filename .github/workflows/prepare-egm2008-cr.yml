@@ -36,8 +36,7 @@ jobs:
           # Los límites están alineados con la malla EGM2008 de 2.5 minutos.
           gdal_translate \
             -of GTiff \
-            -co COMPRESS=DEFLATE \
-            -co PREDICTOR=3 \
+            -co COMPRESS=NONE \
             -projwin -88.0208333333333 12.0208333333333 -81.9791666666667 4.9791666666667 \
             us_nga_egm08_25.tif \
             EGM2008_CostaRica_2p5min_TOPOEMLID.tif
