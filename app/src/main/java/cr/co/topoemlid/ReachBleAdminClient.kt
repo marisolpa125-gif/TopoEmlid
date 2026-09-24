@@ -120,7 +120,7 @@ class ReachBleAdminClient(
         suspendCancellableCoroutine { cont ->
             val scanner = adapter?.bluetoothLeScanner
             if (scanner == null) {
-                cont.resume(null)
+                cont.resume(null) { _, _, _ -> }
                 return@suspendCancellableCoroutine
             }
 
@@ -133,7 +133,7 @@ class ReachBleAdminClient(
                 finished = true
                 runCatching { scanner.stopScan(callback) }
                 handler.removeCallbacksAndMessages(null)
-                if (cont.isActive) cont.resume(device)
+                if (cont.isActive) cont.resume(device) { _, _, _ -> }
             }
 
             callback = object : ScanCallback() {
