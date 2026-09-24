@@ -1,0 +1,74 @@
+name: Preparar EGM2008 Costa Rica 2.5min
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/prepare-egm2008-cr.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  preparar-geoide:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar proyecto
+        uses: actions/checkout@v6
+
+      - name: Instalar GDAL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdal-bin
+
+      - name: Descargar grilla oficial EGM2008 2.5 minutos
+        run: |
+          curl -L --fail --retry 8 --retry-delay 3 \
+            -o us_nga_egm08_25.tif \
+            https://cdn.proj.org/us_nga_egm08_25.tif
+          test -s us_nga_egm08_25.tif
+          gdalinfo us_nga_egm08_25.tif | head -80
+
+      - name: Recortar a Costa Rica
+        run: |
+          # Incluye todo el territorio continental y un margen que cubre Isla del Coco.
+          # Los límites están alineados con la malla EGM2008 de 2.5 minutos.
+          gdal_translate \
+            -of GTiff \
+            -co COMPRESS=DEFLATE \
+            -co PREDICTOR=3 \
+            -projwin -88.0208333333333 12.0208333333333 -81.9791666666667 4.9791666666667 \
+            us_nga_egm08_25.tif \
+            EGM2008_CostaRica_2p5min.tif
+
+          gdalinfo EGM2008_CostaRica_2p5min.tif
+          sha256sum EGM2008_CostaRica_2p5min.tif > EGM2008_CostaRica_2p5min.sha256
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: EGM2008_CostaRica_2p5min
+          path: |
+            EGM2008_CostaRica_2p5min.tif
+            EGM2008_CostaRica_2p5min.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publicar descarga permanente
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="egm2008-costa-rica-2p5min"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              EGM2008_CostaRica_2p5min.tif \
+              EGM2008_CostaRica_2p5min.sha256 \
+              --clobber
+          else
+            gh release create "$TAG" \
+              EGM2008_CostaRica_2p5min.tif \
+              EGM2008_CostaRica_2p5min.sha256 \
+              --title "EGM2008 Costa Rica 2.5 min" \
+              --notes "Recorte de la grilla mundial EGM2008 de NGA/PROJ a Costa Rica. Resolución original: 2.5 minutos de arco. Incluye margen geográfico e Isla del Coco. Fuente: https://cdn.proj.org/us_nga_egm08_25.tif"
+          fi
