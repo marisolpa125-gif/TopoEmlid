@@ -7,9 +7,14 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Build
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -30,7 +35,8 @@ import java.util.zip.Inflater
  */
 class ReachBleAdminClient(
     context: Context,
-    private val address: String
+    private val address: String,
+    private val receiverName: String? = null
 ) {
     companion object {
         private val SERVICE_UUID = UUID.fromString("ab0ba111-b9d7-4d3a-a624-21fb75fc0000")
@@ -67,26 +73,107 @@ class ReachBleAdminClient(
         runCatching {
             if (connected) return@runCatching
 
-            val device = adapter?.getRemoteDevice(address)
-                ?: error("Android no encontró el receptor Bluetooth seleccionado.")
+            var lastError: Throwable? = null
+            repeat(2) { attempt ->
+                try {
+                    closeGattOnly()
+                    if (attempt > 0) delay(900L)
 
-            closeGattOnly()
-            val waiter = CompletableDeferred<Unit>()
-            connectWaiter = waiter
+                    // No depender únicamente del MAC de Bluetooth Classic/NMEA.
+                    // Algunos receptores anuncian BLE con una identidad distinta.
+                    val device = scanForReachDevice()
+                        ?: adapter?.getRemoteDevice(address)
+                        ?: error("Android no encontró el receptor Reach por BLE.")
 
-            gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                device.connectGatt(appContext, false, callback, android.bluetooth.BluetoothDevice.TRANSPORT_LE)
-            } else {
-                device.connectGatt(appContext, false, callback)
+                    val waiter = CompletableDeferred<Unit>()
+                    connectWaiter = waiter
+
+                    gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        device.connectGatt(
+                            appContext,
+                            false,
+                            callback,
+                            android.bluetooth.BluetoothDevice.TRANSPORT_LE
+                        )
+                    } else {
+                        device.connectGatt(appContext, false, callback)
+                    }
+
+                    try {
+                        withTimeout(9_000L) { waiter.await() }
+                    } finally {
+                        if (connectWaiter === waiter) connectWaiter = null
+                    }
+                    return@runCatching
+                } catch (t: Throwable) {
+                    lastError = t
+                    closeGattOnly()
+                }
             }
 
-            try {
-                withTimeout(8_000L) { waiter.await() }
-            } finally {
-                if (connectWaiter === waiter) connectWaiter = null
-            }
+            throw (lastError ?: IllegalStateException("No se pudo abrir el canal BLE del Reach."))
         }
     }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun scanForReachDevice(): android.bluetooth.BluetoothDevice? =
+        suspendCancellableCoroutine { cont ->
+            val scanner = adapter?.bluetoothLeScanner
+            if (scanner == null) {
+                cont.resume(null)
+                return@suspendCancellableCoroutine
+            }
+
+            var finished = false
+            val handler = android.os.Handler(android.os.Looper.getMainLooper())
+
+            lateinit var callback: ScanCallback
+            fun finish(device: android.bluetooth.BluetoothDevice?) {
+                if (finished) return
+                finished = true
+                runCatching { scanner.stopScan(callback) }
+                handler.removeCallbacksAndMessages(null)
+                if (cont.isActive) cont.resume(device)
+            }
+
+            callback = object : ScanCallback() {
+                override fun onScanResult(callbackType: Int, result: ScanResult) {
+                    val device = result.device ?: return
+                    val record = result.scanRecord
+                    val advertisedServices = record?.serviceUuids?.map { it.uuid }.orEmpty()
+                    val name = runCatching { device.name }.getOrNull()
+                        ?: record?.deviceName
+                        ?: ""
+
+                    val exactAddress = device.address.equals(address, ignoreCase = true)
+                    val serviceMatch = advertisedServices.contains(SERVICE_UUID)
+                    val nameMatch =
+                        name.contains("Reach", ignoreCase = true) ||
+                        name.contains("Emlid", ignoreCase = true) ||
+                        (!receiverName.isNullOrBlank() &&
+                            name.contains(receiverName, ignoreCase = true))
+
+                    if (exactAddress || serviceMatch || nameMatch) finish(device)
+                }
+
+                override fun onScanFailed(errorCode: Int) {
+                    finish(null)
+                }
+            }
+
+            val settings = ScanSettings.Builder()
+                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .build()
+
+            runCatching { scanner.startScan(null, settings, callback) }
+                .onFailure {
+                    finish(null)
+                    return@suspendCancellableCoroutine
+                }
+
+            handler.postDelayed({ finish(null) }, 6_000L)
+            cont.invokeOnCancellation { finish(null) }
+        }
 
     suspend fun scanWifiNetworks(): Result<List<ReachWifiNetwork>> = withContext(Dispatchers.IO) {
         runCatching {
@@ -474,8 +561,12 @@ class ReachBleAdminClient(
                     if (gatt === g) gatt = null
                     apiNotificationsReady = false
                     val detail = if (status == BluetoothGatt.GATT_SUCCESS) "" else " (GATT $status)"
+                    val message = if (status == 133)
+                        "Android cerró la conexión BLE antes de completar el enlace (GATT 133). Se volverá a intentar buscando primero el anuncio BLE del Reach."
+                    else
+                        "Se perdió el enlace BLE de administración con el Reach$detail."
                     connectWaiter?.takeIf { !it.isCompleted }?.completeExceptionally(
-                        IllegalStateException("Se perdió el enlace BLE de administración con el Reach$detail.")
+                        IllegalStateException(message)
                     )
                     pendingRequests.values.forEach {
                         if (!it.isCompleted) {
