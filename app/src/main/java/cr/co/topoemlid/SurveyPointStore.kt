@@ -23,7 +23,13 @@ class SurveyPointStore(context: Context) {
                     occupationSeconds = o.optInt("occupationSeconds", 1),
                     latitude = if (o.isNull("latitude")) null else o.optDouble("latitude"),
                     longitude = if (o.isNull("longitude")) null else o.optDouble("longitude"),
+                    eastingM = if (o.isNull("eastingM")) null else o.optDouble("eastingM"),
+                    northingM = if (o.isNull("northingM")) null else o.optDouble("northingM"),
+                    projectCrsName = o.optString("projectCrsName", "").ifBlank { null },
                     ellipsoidalHeightM = if (o.isNull("ellipsoidalHeightM")) null else o.optDouble("ellipsoidalHeightM"),
+                    orthometricHeightM = if (o.isNull("orthometricHeightM")) null else o.optDouble("orthometricHeightM"),
+                    geoidUndulationM = if (o.isNull("geoidUndulationM")) null else o.optDouble("geoidUndulationM"),
+                    geoidFileName = o.optString("geoidFileName", "").ifBlank { null },
                     horizontalAccuracyM = if (o.isNull("horizontalAccuracyM")) null else o.optDouble("horizontalAccuracyM"),
                     verticalAccuracyM = if (o.isNull("verticalAccuracyM")) null else o.optDouble("verticalAccuracyM"),
                     solution = o.optString("solution", "SIN SOLUCIÓN"),
@@ -46,7 +52,13 @@ class SurveyPointStore(context: Context) {
                 put("occupationSeconds", p.occupationSeconds)
                 put("latitude", p.latitude ?: JSONObject.NULL)
                 put("longitude", p.longitude ?: JSONObject.NULL)
+                put("eastingM", p.eastingM ?: JSONObject.NULL)
+                put("northingM", p.northingM ?: JSONObject.NULL)
+                put("projectCrsName", p.projectCrsName ?: "")
                 put("ellipsoidalHeightM", p.ellipsoidalHeightM ?: JSONObject.NULL)
+                put("orthometricHeightM", p.orthometricHeightM ?: JSONObject.NULL)
+                put("geoidUndulationM", p.geoidUndulationM ?: JSONObject.NULL)
+                put("geoidFileName", p.geoidFileName ?: "")
                 put("horizontalAccuracyM", p.horizontalAccuracyM ?: JSONObject.NULL)
                 put("verticalAccuracyM", p.verticalAccuracyM ?: JSONObject.NULL)
                 put("solution", p.solution)
