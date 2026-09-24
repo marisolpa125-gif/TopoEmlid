@@ -11,7 +11,6 @@ import android.content.Context
 import android.os.Build
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.Dispatchers
@@ -22,8 +21,6 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.Deflater
 import java.util.zip.Inflater
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 /**
  * Canal BLE de administración del Reach.
@@ -53,6 +50,8 @@ class ReachBleAdminClient(
 
     private var connectWaiter: CompletableDeferred<Unit>? = null
     private var writeWaiter: CompletableDeferred<Boolean>? = null
+    private var descriptorWaiter: CompletableDeferred<Boolean>? = null
+    @Volatile private var apiNotificationsReady: Boolean = false
     private val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<JSONObject>>()
 
     private val rxLock = Any()
@@ -61,7 +60,7 @@ class ReachBleAdminClient(
     private val rxFrame = ByteArrayOutputStream()
 
     val connected: Boolean
-        get() = gatt != null && eventCharacteristic != null && apiCharacteristic != null
+        get() = gatt != null && eventCharacteristic != null
 
     @SuppressLint("MissingPermission")
     suspend fun ensureConnected(): Result<Unit> = withContext(Dispatchers.IO) {
@@ -175,6 +174,7 @@ class ReachBleAdminClient(
         endpoint: String,
         payload: JSONObject?
     ): JSONObject {
+        ensureApiNotifications()
         val id = UUID.randomUUID().toString()
         val request = JSONObject()
             .put("id", id)
@@ -194,6 +194,54 @@ class ReachBleAdminClient(
         } finally {
             pendingRequests.remove(id)
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun ensureApiNotifications() {
+        if (apiNotificationsReady) return
+
+        val currentGatt = gatt ?: error("Canal BLE desconectado.")
+        val characteristic = apiCharacteristic
+            ?: error("Canal BLE de API no disponible.")
+
+        val enabledLocally = currentGatt.setCharacteristicNotification(characteristic, true)
+        if (!enabledLocally) error("Android no pudo habilitar notificaciones BLE del Reach.")
+
+        val descriptor = characteristic.getDescriptor(CCCD_UUID)
+            ?: error("El Reach no expuso el descriptor de notificaciones BLE.")
+
+        val indication =
+            characteristic.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
+        val value =
+            if (indication) BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+            else BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+
+        val waiter = CompletableDeferred<Boolean>()
+        descriptorWaiter = waiter
+        val started = if (Build.VERSION.SDK_INT >= 33) {
+            currentGatt.writeDescriptor(descriptor, value) ==
+                android.bluetooth.BluetoothStatusCodes.SUCCESS
+        } else {
+            @Suppress("DEPRECATION")
+            run {
+                descriptor.value = value
+                currentGatt.writeDescriptor(descriptor)
+            }
+        }
+
+        if (!started) {
+            descriptorWaiter = null
+            error("Android rechazó la activación de notificaciones BLE.")
+        }
+
+        val ok = try {
+            withTimeout(3_000L) { waiter.await() }
+        } finally {
+            if (descriptorWaiter === waiter) descriptorWaiter = null
+        }
+
+        if (!ok) error("El Reach rechazó las notificaciones BLE.")
+        apiNotificationsReady = true
     }
 
     private fun parseNetworks(root: Any?): List<ReachWifiNetwork> {
@@ -394,32 +442,12 @@ class ReachBleAdminClient(
     }
 
     @SuppressLint("MissingPermission")
-    private fun enableApiNotifications(currentGatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-        currentGatt.setCharacteristicNotification(characteristic, true)
-        val descriptor = characteristic.getDescriptor(CCCD_UUID) ?: return
-        val indication =
-            characteristic.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
-        val value =
-            if (indication) BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
-            else BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-
-        if (Build.VERSION.SDK_INT >= 33) {
-            currentGatt.writeDescriptor(descriptor, value)
-        } else {
-            @Suppress("DEPRECATION")
-            run {
-                descriptor.value = value
-                currentGatt.writeDescriptor(descriptor)
-            }
-        }
-    }
-
-    @SuppressLint("MissingPermission")
     private fun closeGattOnly() {
         val old = gatt
         gatt = null
         eventCharacteristic = null
         apiCharacteristic = null
+        apiNotificationsReady = false
         negotiatedMtu = 23
         runCatching { old?.disconnect() }
         runCatching { old?.close() }
@@ -430,15 +458,24 @@ class ReachBleAdminClient(
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     gatt = g
-                    runCatching { g.requestMtu(247) }
-                    runCatching { g.discoverServices() }
+                    // Solo una operación GATT a la vez. Antes se pedía MTU y se
+                    // descubrían servicios simultáneamente, lo que puede provocar
+                    // desconexiones en algunos Android/Reach.
+                    val started = runCatching { g.discoverServices() }.getOrDefault(false)
+                    if (!started) {
+                        connectWaiter?.takeIf { !it.isCompleted }?.completeExceptionally(
+                            IllegalStateException("Android no pudo iniciar el descubrimiento BLE del Reach.")
+                        )
+                    }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     eventCharacteristic = null
                     apiCharacteristic = null
                     if (gatt === g) gatt = null
+                    apiNotificationsReady = false
+                    val detail = if (status == BluetoothGatt.GATT_SUCCESS) "" else " (GATT $status)"
                     connectWaiter?.takeIf { !it.isCompleted }?.completeExceptionally(
-                        IllegalStateException("Se perdió el enlace BLE de administración con el Reach.")
+                        IllegalStateException("Se perdió el enlace BLE de administración con el Reach$detail.")
                     )
                     pendingRequests.values.forEach {
                         if (!it.isCompleted) {
@@ -476,7 +513,7 @@ class ReachBleAdminClient(
 
             eventCharacteristic = event
             apiCharacteristic = api
-            enableApiNotifications(g, api)
+            apiNotificationsReady = false
             connectWaiter?.takeIf { !it.isCompleted }?.complete(Unit)
         }
 
@@ -495,6 +532,15 @@ class ReachBleAdminClient(
             value: ByteArray
         ) {
             onIncoming(value)
+        }
+
+        override fun onDescriptorWrite(
+            g: BluetoothGatt,
+            descriptor: BluetoothGattDescriptor,
+            status: Int
+        ) {
+            descriptorWaiter?.takeIf { !it.isCompleted }
+                ?.complete(status == BluetoothGatt.GATT_SUCCESS)
         }
 
         @Deprecated("Deprecated in API 33")
