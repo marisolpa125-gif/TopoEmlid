@@ -15,7 +15,6 @@ import android.os.Build
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +25,15 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.Deflater
 import java.util.zip.Inflater
+
+data class ReachLoraConfig(
+    val airRateKbps: Double,
+    val frequencyHz: Int,
+    val inputIsLora: Boolean,
+    val output1IsLora: Boolean,
+    val output2IsLora: Boolean,
+    val connected: Boolean?
+)
 
 /**
  * Canal BLE de administración del Reach.
@@ -285,6 +293,125 @@ class ReachBleAdminClient(
         runCatching {
             ensureConnected().getOrThrow()
             sendAction("start_hotspot_mode").getOrThrow()
+        }
+    }
+
+    suspend fun readLoraConfiguration(): Result<ReachLoraConfig> = withContext(Dispatchers.IO) {
+        runCatching {
+            ensureConnected().getOrThrow()
+            val config = apiRequest("GET", "/configuration/", null)
+            val state = runCatching { apiRequest("GET", "/lora/state", null) }.getOrNull()
+
+            fun findObjectByKey(root: Any?, key: String): JSONObject? {
+                when (root) {
+                    is JSONObject -> {
+                        if (root.has(key) && root.opt(key) is JSONObject) {
+                            return root.optJSONObject(key)
+                        }
+                        val it = root.keys()
+                        while (it.hasNext()) {
+                            val found = findObjectByKey(root.opt(it.next()), key)
+                            if (found != null) return found
+                        }
+                    }
+                    is JSONArray -> for (i in 0 until root.length()) {
+                        val found = findObjectByKey(root.opt(i), key)
+                        if (found != null) return found
+                    }
+                }
+                return null
+            }
+
+            fun findIo(root: Any?, key: String): JSONObject? = findObjectByKey(root, key)
+
+            val input = findIo(config, "base_corrections")
+            val out1 = findIo(config, "output")
+            val out2 = findIo(config, "output2")
+
+            val lora = sequenceOf(input, out1, out2)
+                .mapNotNull { it?.optJSONObject("settings")?.optJSONObject("lora") }
+                .firstOrNull()
+                ?: findObjectByKey(config, "lora")
+                ?: error("El Reach no reportó configuración LoRa.")
+
+            val air = when {
+                lora.has("air_rate") -> lora.optDouble("air_rate", Double.NaN)
+                lora.has("airRate") -> lora.optDouble("airRate", Double.NaN)
+                else -> Double.NaN
+            }
+            val freq = when {
+                lora.has("frequency") -> lora.optInt("frequency", 0)
+                else -> 0
+            }
+            if (!air.isFinite() || freq <= 0) {
+                error("El Reach respondió LoRa, pero faltan frecuencia o velocidad.")
+            }
+
+            fun isLora(obj: JSONObject?): Boolean {
+                val t = obj?.optString("io_type", obj.optString("ioType", ""))?.lowercase()
+                return t == "lora"
+            }
+
+            val connected = state?.let {
+                fun findConnected(v: Any?): Boolean? {
+                    when (v) {
+                        is JSONObject -> {
+                            if (v.has("connected")) return v.optBoolean("connected")
+                            val ks = v.keys()
+                            while (ks.hasNext()) {
+                                val r = findConnected(v.opt(ks.next()))
+                                if (r != null) return r
+                            }
+                        }
+                        is JSONArray -> for (i in 0 until v.length()) {
+                            val r = findConnected(v.opt(i))
+                            if (r != null) return r
+                        }
+                    }
+                    return null
+                }
+                findConnected(it)
+            }
+
+            ReachLoraConfig(
+                airRateKbps = air,
+                frequencyHz = freq,
+                inputIsLora = isLora(input),
+                output1IsLora = isLora(out1),
+                output2IsLora = isLora(out2),
+                connected = connected
+            )
+        }
+    }
+
+    suspend fun setLoraCorrectionChannel(
+        channel: String,
+        airRateKbps: Double,
+        frequencyHz: Int
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            ensureConnected().getOrThrow()
+            require(channel in setOf("input", "output1", "output2")) { "Canal LoRa no válido." }
+
+            val lora = JSONObject()
+                .put("air_rate", airRateKbps)
+                .put("frequency", frequencyHz)
+                .put("output_power", JSONObject.NULL)
+
+            val settings = JSONObject().put("lora", lora)
+            val payload = JSONObject()
+                .put("io_type", "lora")
+                .put("settings", settings)
+                .put("nmea_settings", JSONObject.NULL)
+
+            val endpoint = when (channel) {
+                "input" -> "/configuration/correction_input/base_corrections"
+                "output1" -> "/configuration/output"
+                else -> "/configuration/output2"
+            }
+
+            apiRequest("POST", endpoint, payload)
+            Unit
         }
     }
 
