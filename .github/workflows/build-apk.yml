@@ -1,4 +1,4 @@
-# Nuevo run solicitado para generar un artefacto APK fresco desde GitHub Actions.
+# Nuevo run solicitado para generar un artefacto APK fresco desde GitHub Actions. Receptores BLE + Classic.
 name: Generar APK de prueba
 
 on:
