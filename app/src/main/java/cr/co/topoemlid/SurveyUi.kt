@@ -327,6 +327,43 @@ fun SurveyScreen(
         }
 
         if (measuring && secondsRemaining == 0) {
+            val lat = gnss.latitude
+            val lon = gnss.longitude
+            if (lat == null || lon == null) {
+                measuring = false
+                lastMessage = "No hay coordenadas GNSS válidas para guardar."
+                return@LaunchedEffect
+            }
+
+            val projected = runCatching {
+                ProjectCoordinateEngine.fromWgs84(lat, lon, p.crsName)
+            }.getOrElse {
+                measuring = false
+                lastMessage = "No se pudo transformar al CRS del proyecto: ${it.message}"
+                return@LaunchedEffect
+            }
+
+            val ellipsoidal = gnss.ellipsoidalHeightM
+            var geoidUndulation: Double? = null
+            var orthometric: Double? = null
+            if (ellipsoidal != null && p.geoidFileUri != null) {
+                val geoid = GeoidGridService.undulation(
+                    context = context,
+                    uriText = p.geoidFileUri,
+                    fileName = p.geoidFileName,
+                    latitude = lat,
+                    longitude = lon
+                )
+                geoid.onSuccess { sample ->
+                    geoidUndulation = sample.undulationM
+                    orthometric = ellipsoidal - sample.undulationM
+                }.onFailure {
+                    measuring = false
+                    lastMessage = "Geoide no aplicado: ${it.message}"
+                    return@LaunchedEffect
+                }
+            }
+
             val saved = SurveyPoint(
                 id = UUID.randomUUID().toString(),
                 projectId = p.id,
@@ -335,9 +372,15 @@ fun SurveyScreen(
                 code = code.trim(),
                 antennaHeightM = antennaHeight.toDoubleOrNull() ?: p.antennaHeightM,
                 occupationSeconds = seconds.toIntOrNull()?.coerceIn(1, 600) ?: 5,
-                latitude = gnss.latitude,
-                longitude = gnss.longitude,
-                ellipsoidalHeightM = gnss.ellipsoidalHeightM,
+                latitude = lat,
+                longitude = lon,
+                eastingM = projected.eastingM,
+                northingM = projected.northingM,
+                projectCrsName = p.crsName,
+                ellipsoidalHeightM = ellipsoidal,
+                orthometricHeightM = orthometric,
+                geoidUndulationM = geoidUndulation,
+                geoidFileName = p.geoidFileName,
                 verticalAccuracyM = gnss.verticalAccuracyM,
                 horizontalAccuracyM = gnss.horizontalAccuracyM,
                 solution = gnss.solution,
@@ -1731,11 +1774,20 @@ fun SurveyScreen(
                                             if (p.description.isNotBlank()) {
                                                 Text(p.description, style = MaterialTheme.typography.bodySmall)
                                             }
-                                            Text(
-                                                "Lat: ${p.latitude?.let { "%.8f".format(it) } ?: "—"}  Lon: ${p.longitude?.let { "%.8f".format(it) } ?: "—"}",
-                                                style = MaterialTheme.typography.labelSmall
-                                            )
-                                            p.ellipsoidalHeightM?.let {
+                                            if (p.eastingM != null && p.northingM != null) {
+                                                Text(
+                                                    "E: %.3f  N: %.3f  (${p.projectCrsName ?: project.crsName})".format(p.eastingM, p.northingM),
+                                                    style = MaterialTheme.typography.labelSmall
+                                                )
+                                            } else {
+                                                Text(
+                                                    "Lat: ${p.latitude?.let { "%.8f".format(it) } ?: "—"}  Lon: ${p.longitude?.let { "%.8f".format(it) } ?: "—"}",
+                                                    style = MaterialTheme.typography.labelSmall
+                                                )
+                                            }
+                                            p.orthometricHeightM?.let {
+                                                Text("Elevación geoide: %.3f m".format(it), style = MaterialTheme.typography.labelSmall)
+                                            } ?: p.ellipsoidalHeightM?.let {
                                                 Text("H elipsoidal: %.3f m".format(it), style = MaterialTheme.typography.labelSmall)
                                             }
                                         }
