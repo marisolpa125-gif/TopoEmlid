@@ -521,6 +521,8 @@ private fun ReceiverDetailScreen(
             receiver = receiver,
             gnss = gnss,
             ntripStatus = ntripStatus,
+            onPauseReceiverForBle = onDisconnect,
+            onResumeReceiverAfterBle = { onConnect() },
             onBack = { page = ReceiverPage.HOME }
         )
         return
@@ -724,6 +726,8 @@ private fun ReceiverSubPage(
     receiver: ReceiverProfile,
     gnss: GnssStatus,
     ntripStatus: NtripLiveStatus,
+    onPauseReceiverForBle: () -> Unit,
+    onResumeReceiverAfterBle: () -> Unit,
     onBack: () -> Unit
 ) {
     Column(
@@ -867,7 +871,11 @@ private fun ReceiverSubPage(
 
             ReceiverPage.WIFI -> ReceiverWifiLocalPanel(receiver)
             ReceiverPage.INFO -> ReceiverInfoLocalPanel(receiver, gnss)
-            ReceiverPage.ADVANCED -> ReceiverAdvancedPlaceholder()
+            ReceiverPage.ADVANCED -> ReceiverAdvancedIoPanel(
+                receiver = receiver,
+                onPauseReceiverForBle = onPauseReceiverForBle,
+                onResumeReceiverAfterBle = onResumeReceiverAfterBle
+            )
 
             ReceiverPage.HOME -> Unit
         }
@@ -1193,42 +1201,204 @@ private fun ReceiverInfoLocalPanel(receiver: ReceiverProfile, gnss: GnssStatus) 
 }
 
 @Composable
-private fun ReceiverAdvancedPlaceholder() {
-    Text("Configuración avanzada del receptor", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-    Spacer(Modifier.height(8.dp))
+private fun ReceiverAdvancedIoPanel(
+    receiver: ReceiverProfile,
+    onPauseReceiverForBle: () -> Unit,
+    onResumeReceiverAfterBle: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val client = remember(receiver.address, receiver.name) {
+        ReachBleAdminClient(context, receiver.address, receiver.name)
+    }
+
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var current by remember { mutableStateOf<ReachLoraConfig?>(null) }
+    var frequencyMhz by remember { mutableStateOf("902.0") }
+    var airRate by remember { mutableStateOf(9.11) }
+
+    val airRates = listOf(0.81, 1.46, 2.60, 4.56, 9.11, 18.23)
+    val frequencyPresets = listOf(902.0, 905.0, 910.0, 915.0, 920.0, 925.0, 928.0)
+
+    suspend fun <T> withBle(label: String, block: suspend (ReachBleAdminClient) -> T): T {
+        message = "Pausando Bluetooth/NMEA para $label…"
+        onPauseReceiverForBle()
+        kotlinx.coroutines.delay(1_800L)
+        return try {
+            client.ensureConnected().getOrThrow()
+            message = "BLE conectado temporalmente para $label."
+            block(client)
+        } finally {
+            client.close()
+            kotlinx.coroutines.delay(700L)
+            message = "Restaurando Bluetooth/NMEA…"
+            onResumeReceiverAfterBle()
+            kotlinx.coroutines.delay(900L)
+            message = "Bluetooth/NMEA restaurado."
+        }
+    }
+
+    fun loadLora() {
+        if (busy) return
+        busy = true
+        error = null
+        scope.launch {
+            runCatching {
+                withBle("leer LoRa") { it.readLoraConfiguration().getOrThrow() }
+            }.onSuccess { cfg ->
+                current = cfg
+                frequencyMhz = "%.1f".format(cfg.frequencyHz / 1_000_000.0)
+                airRate = cfg.airRateKbps
+                message = "Configuración LoRa leída del Reach."
+            }.onFailure {
+                error = it.message ?: "No se pudo leer la configuración LoRa."
+            }
+            busy = false
+        }
+    }
+
+    fun saveChannel(channel: String, label: String) {
+        if (busy) return
+        val mhz = frequencyMhz.replace(',', '.').toDoubleOrNull()
+        if (mhz == null || mhz !in 902.0..928.0) {
+            error = "La frecuencia debe estar entre 902.0 y 928.0 MHz."
+            return
+        }
+        val hz = (mhz * 1_000_000.0).toInt()
+        busy = true
+        error = null
+        scope.launch {
+            runCatching {
+                withBle("configurar $label") {
+                    it.setLoraCorrectionChannel(channel, airRate, hz).getOrThrow()
+                }
+            }.onSuccess {
+                message = "$label configurada en LoRa: ${"%.1f".format(mhz)} MHz · ${"%.2f".format(airRate)} kb/s."
+            }.onFailure {
+                error = it.message ?: "No se pudo guardar $label por LoRa."
+            }
+            busy = false
+        }
+    }
+
+    DisposableEffect(client) {
+        onDispose { client.close() }
+    }
+
+    Text("Entradas y salidas", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(6.dp))
     Text(
-        "Estas opciones corresponden a la configuración interna del receptor. Topo Emlid las separa de la conexión y de NTRIP para no confundir funciones reales con controles todavía no implementados.",
+        "Configuración real del radio LoRa del Reach. La app pausa Bluetooth/NMEA unos segundos, aplica el ajuste por BLE y vuelve a conectar NMEA automáticamente.",
         style = MaterialTheme.typography.bodySmall
     )
-    Spacer(Modifier.height(12.dp))
 
-    listOf(
-        "Entrada de correcciones" to "NTRIP, LoRa y fuentes compatibles",
-        "Salida de base" to "LoRa, NTRIP, Bluetooth, TCP y RS-232",
-        "Mensajes RTCM3" to "Selección de mensajes y frecuencia",
-        "Configuración de base" to "Coordenadas, altura y promedio",
-        "Registro" to "RINEX, LLH y RTCM3",
-        "Bluetooth del receptor" to "Estado y configuración",
-        "Transmisión de posición" to "NMEA y otros formatos soportados",
-        "Sonidos y avisos" to "Configuración interna del receptor"
-    ).forEach { (title, subtitle) ->
-        Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-            Row(
-                Modifier.fillMaxWidth().padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(title, fontWeight = FontWeight.Bold)
-                    Text(subtitle, style = MaterialTheme.typography.bodySmall)
-                }
-                Text("Pendiente", style = MaterialTheme.typography.bodySmall)
+    Spacer(Modifier.height(12.dp))
+    OutlinedButton(
+        onClick = { loadLora() },
+        enabled = !busy,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(if (busy) "Comunicando…" else "Leer configuración LoRa del Reach")
+    }
+
+    current?.let { cfg ->
+        Spacer(Modifier.height(10.dp))
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp)) {
+                Text("Estado actual", fontWeight = FontWeight.Bold)
+                StatusLine("Frecuencia", "%.1f MHz".format(cfg.frequencyHz / 1_000_000.0))
+                StatusLine("Velocidad", "%.2f kb/s".format(cfg.airRateKbps))
+                StatusLine("Entrada de correcciones", if (cfg.inputIsLora) "LoRa" else "Otra / desactivada")
+                StatusLine("Salida 1", if (cfg.output1IsLora) "LoRa" else "Otra / desactivada")
+                StatusLine("Salida 2", if (cfg.output2IsLora) "LoRa" else "Otra / desactivada")
+                StatusLine(
+                    "Enlace LoRa",
+                    when (cfg.connected) {
+                        true -> "CONECTADO"
+                        false -> "SIN ENLACE"
+                        null -> "NO REPORTADO"
+                    }
+                )
             }
         }
     }
 
-    Spacer(Modifier.height(10.dp))
+    Spacer(Modifier.height(14.dp))
+    Text("Frecuencia LoRa", fontWeight = FontWeight.Bold)
+    OutlinedTextField(
+        value = frequencyMhz,
+        onValueChange = { value ->
+            frequencyMhz = value.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' }
+        },
+        label = { Text("MHz") },
+        supportingText = { Text("Rango del RS2+: 902.0–928.0 MHz") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        frequencyPresets.forEach { f ->
+            AssistChip(
+                onClick = { frequencyMhz = "%.1f".format(f) },
+                label = { Text("%.1f".format(f)) }
+            )
+        }
+    }
+
+    Spacer(Modifier.height(12.dp))
+    Text("Velocidad de transmisión", fontWeight = FontWeight.Bold)
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        airRates.forEach { rate ->
+            FilterChip(
+                selected = airRate == rate,
+                onClick = { airRate = rate },
+                label = { Text("${"%.2f".format(rate)} kb/s") }
+            )
+        }
+    }
+
+    Spacer(Modifier.height(14.dp))
+    Text("Aplicar a", fontWeight = FontWeight.Bold)
+    Button(
+        onClick = { saveChannel("input", "Entrada de correcciones") },
+        enabled = !busy,
+        modifier = Modifier.fillMaxWidth()
+    ) { Text("Entrada de correcciones → LoRa (rover)") }
+
+    Spacer(Modifier.height(8.dp))
+    Button(
+        onClick = { saveChannel("output1", "Salida de base 1") },
+        enabled = !busy,
+        modifier = Modifier.fillMaxWidth()
+    ) { Text("Salida de base 1 → LoRa") }
+
+    Spacer(Modifier.height(8.dp))
+    OutlinedButton(
+        onClick = { saveChannel("output2", "Salida de base 2") },
+        enabled = !busy,
+        modifier = Modifier.fillMaxWidth()
+    ) { Text("Salida de base 2 → LoRa") }
+
+    message?.let {
+        Spacer(Modifier.height(8.dp))
+        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+    }
+    error?.let {
+        Spacer(Modifier.height(8.dp))
+        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
+
+    Spacer(Modifier.height(12.dp))
+    Text("Mensajes RTCM3", fontWeight = FontWeight.Bold)
     Text(
-        "Se habilitará cada opción únicamente cuando Topo Emlid pueda leer y escribir ese ajuste de forma real en el receptor.",
+        "La selección detallada de mensajes y frecuencias RTCM3 se mantiene separada. Este bloque configura primero el canal LoRa de entrada o salida.",
         style = MaterialTheme.typography.bodySmall
     )
 }
