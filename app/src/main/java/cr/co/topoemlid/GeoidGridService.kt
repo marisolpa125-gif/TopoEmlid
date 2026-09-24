@@ -3,6 +3,9 @@ package cr.co.topoemlid
 import android.content.Context
 import android.net.Uri
 import kotlin.math.abs
+import kotlin.math.floor
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 data class GeoidSample(
     val undulationM: Double,
@@ -33,6 +36,11 @@ object GeoidGridService {
         } ?: error("No se pudo abrir el archivo geoidal.")
 
         require(bytes.isNotEmpty()) { "El archivo geoidal está vacío." }
+
+        if (isSouthGridFile(bytes)) {
+            val value = readSouthGridUndulation(bytes, latitude, longitude)
+            return@runCatching GeoidSample(value, fileName ?: "Geoide SGF")
+        }
 
         val text = runCatching { bytes.toString(Charsets.UTF_8) }.getOrNull()
             ?: error("La grilla geoidal no es texto UTF-8 compatible.")
@@ -86,6 +94,76 @@ object GeoidGridService {
         }
 
         GeoidSample(value, fileName ?: "Geoide local")
+    }
+
+    private fun isSouthGridFile(bytes: ByteArray): Boolean {
+        if (bytes.size < 256) return false
+        val magic = bytes.copyOfRange(0, 15).toString(Charsets.US_ASCII)
+        return magic == "SOUTH GRID FILE"
+    }
+
+    private fun readSouthGridUndulation(
+        bytes: ByteArray,
+        latitude: Double,
+        longitude: Double
+    ): Double {
+        require(bytes.size >= 256) { "Archivo SGF incompleto." }
+
+        val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        val minLat = bb.getDouble(96)
+        val maxLat = bb.getDouble(104)
+        val minLonRaw = bb.getDouble(112)
+        val maxLonRaw = bb.getDouble(120)
+        val latStep = bb.getDouble(128)
+        val lonStep = bb.getDouble(136)
+        val latCount = bb.getInt(144)
+        val lonCount = bb.getInt(148)
+
+        require(minLat.isFinite() && maxLat.isFinite() && latStep > 0.0) {
+            "Encabezado SGF inválido: latitud."
+        }
+        require(minLonRaw.isFinite() && maxLonRaw.isFinite() && lonStep > 0.0) {
+            "Encabezado SGF inválido: longitud."
+        }
+        require(latCount >= 2 && lonCount >= 2) {
+            "Encabezado SGF inválido: dimensiones."
+        }
+
+        val expected = 256L + latCount.toLong() * lonCount.toLong() * 4L
+        require(bytes.size.toLong() >= expected) {
+            "Archivo SGF incompleto: faltan datos de la grilla."
+        }
+
+        val lon360 = if (longitude < 0.0) longitude + 360.0 else longitude
+        require(latitude in minLat..maxLat && lon360 in minLonRaw..maxLonRaw) {
+            "La posición está fuera de la cobertura del geoide SGF."
+        }
+
+        val fyRaw = (latitude - minLat) / latStep
+        val fxRaw = (lon360 - minLonRaw) / lonStep
+        val row0 = floor(fyRaw).toInt().coerceIn(0, latCount - 2)
+        val col0 = floor(fxRaw).toInt().coerceIn(0, lonCount - 2)
+        val ty = (fyRaw - row0).coerceIn(0.0, 1.0)
+        val tx = (fxRaw - col0).coerceIn(0.0, 1.0)
+
+        fun sample(row: Int, col: Int): Double {
+            val index = row.toLong() * lonCount.toLong() + col.toLong()
+            val offset = 256L + index * 4L
+            return bb.getFloat(offset.toInt()).toDouble()
+        }
+
+        val q11 = sample(row0, col0)
+        val q12 = sample(row0, col0 + 1)
+        val q21 = sample(row0 + 1, col0)
+        val q22 = sample(row0 + 1, col0 + 1)
+
+        require(listOf(q11, q12, q21, q22).all { it.isFinite() && it in -250.0..250.0 }) {
+            "La grilla SGF contiene valores geoidales inválidos."
+        }
+
+        val south = q11 * (1.0 - tx) + q12 * tx
+        val north = q21 * (1.0 - tx) + q22 * tx
+        return south * (1.0 - ty) + north * ty
     }
 
     private fun nearestExact(nodes: List<Node>, lat: Double, lon: Double): Double? =
