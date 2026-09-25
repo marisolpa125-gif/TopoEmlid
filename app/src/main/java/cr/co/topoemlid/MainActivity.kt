@@ -361,17 +361,9 @@ private fun AppSettingsScreen(
     }
     var reachBleAdminMessage by remember { mutableStateOf<String?>(null) }
     var reachBleAdminBusy by remember { mutableStateOf(false) }
-    var bleWifiSessionReceiver by remember { mutableStateOf<ReceiverProfile?>(null) }
 
     DisposableEffect(reachBleAdmin) {
-        onDispose {
-            val receiverToRestore = bleWifiSessionReceiver
-            reachBleAdmin?.close()
-            bleWifiSessionReceiver = null
-            if (receiverToRestore != null) {
-                onResumeReceiverAfterBle(receiverToRestore)
-            }
-        }
+        onDispose { reachBleAdmin?.close() }
     }
     var shareMobileData by remember { mutableStateOf<Boolean?>(null) }
     var shareMobileDataBusy by remember { mutableStateOf(false) }
@@ -499,106 +491,49 @@ private fun AppSettingsScreen(
             .apply()
     }
 
-    suspend fun startBleWifiSession(operationLabel: String): ReachBleAdminClient {
+    suspend fun <T> withReachBleManagement(
+        operationLabel: String,
+        block: suspend (ReachBleAdminClient) -> T
+    ): T {
         val receiver = activeReceiverProfile
             ?: throw IllegalStateException("Seleccione primero el receptor Reach.")
         val client = reachBleAdmin
             ?: throw IllegalStateException("No se pudo preparar el canal BLE del Reach.")
 
-        if (client.connected && bleWifiSessionReceiver != null) {
-            return client
-        }
-
         reachBleAdminMessage =
             "Cambiando temporalmente de Bluetooth/NMEA a BLE para $operationLabel…"
 
-        // Comportamiento probado con el Reach: pausar NMEA, dejar liberar RFCOMM
-        // y abrir BLE sobre el mismo cliente. No cerrar/recrear GATT antes de tiempo.
+        // Flujo estable probado: una sola operación BLE por sesión.
+        // El Reach RS2+ admite una conexión Bluetooth activa a la vez.
         onPauseReceiverForBle()
-        kotlinx.coroutines.delay(1_800L)
+        kotlinx.coroutines.delay(1_400L)
 
         return try {
             client.ensureConnected().getOrThrow()
-            bleWifiSessionReceiver = receiver
             reachBleAdminMessage = "BLE conectado temporalmente para $operationLabel."
-            client
-        } catch (t: Throwable) {
+            block(client)
+        } finally {
             client.close()
-            bleWifiSessionReceiver = null
-            onResumeReceiverAfterBle(receiver)
-            throw t
-        }
-    }
-
-    suspend fun finishBleWifiSession(operationLabel: String) {
-        val receiver = bleWifiSessionReceiver ?: activeReceiverProfile
-        reachBleAdmin?.close()
-        bleWifiSessionReceiver = null
-        if (receiver != null) {
             kotlinx.coroutines.delay(700L)
             reachBleAdminMessage = "Restaurando Bluetooth/NMEA…"
             onResumeReceiverAfterBle(receiver)
             kotlinx.coroutines.delay(900L)
-            reachBleAdminMessage = "Bluetooth/NMEA restaurado después de $operationLabel."
-        }
-    }
-
-    suspend fun <T> withReachBleManagement(
-        operationLabel: String,
-        block: suspend (ReachBleAdminClient) -> T
-    ): T {
-        val client = startBleWifiSession(operationLabel)
-        return try {
-            block(client)
-        } finally {
-            finishBleWifiSession(operationLabel)
+            reachBleAdminMessage =
+                "Bluetooth/NMEA restaurado después de $operationLabel."
         }
     }
 
     fun scanWifiForReachFromTabletSection() {
         if (preferredInternetSource != "TABLET" || tabletReachWifiBusy) return
         tabletReachWifiBusy = true
-        tabletReachWifiMessage = "Buscando redes Wi‑Fi disponibles para el Reach…"
+        tabletReachWifiMessage = "Buscando redes Wi‑Fi por BLE…"
 
         settingsScope.launch {
-            try {
-                // Preferir la API local cuando la tablet puede llegar al Reach.
-                // Es la misma ruta lógica de Reach Panel: wifi_scan + /wifi/networks.
-                val localHost = runCatching {
-                    val fixed = ReachLocalApiClient("192.168.42.1")
-                    fixed.wifiStatus()
-                    "192.168.42.1"
-                }.getOrNull() ?: runCatching {
-                    ReachLocalApiClient.discoverReachOnLocalNetwork()
-                }.getOrNull()
-
-                val localNetworks = localHost?.let { host ->
-                    runCatching {
-                        tabletReachWifiMessage =
-                            "Reach accesible por IP $host. Escaneando redes por API local…"
-                        ReachLocalApiClient(host).wifiNetworks()
-                    }.getOrNull()
+            runCatching {
+                withReachBleManagement("buscar redes Wi‑Fi") { client ->
+                    client.scanWifiNetworks().getOrThrow()
                 }
-
-                if (localNetworks != null) {
-                    tabletReachWifiNetworks = localNetworks
-                    tabletReachWifiMessage =
-                        if (localNetworks.isEmpty()) {
-                            "El Reach respondió por API local, pero no reportó redes Wi‑Fi cercanas."
-                        } else {
-                            "Redes detectadas por el Reach: ${localNetworks.size} • API local."
-                        }
-                    reachBleAdminMessage =
-                        "No fue necesario usar BLE; el Reach respondió por su API local."
-                    return@launch
-                }
-
-                // Respaldo cuando no hay acceso IP al Reach.
-                tabletReachWifiMessage =
-                    "Sin acceso IP al Reach. Probando escaneo por BLE…"
-                val client = startBleWifiSession("buscar redes Wi‑Fi")
-                val networks = client.scanWifiNetworks().getOrThrow()
-
+            }.onSuccess { networks ->
                 tabletReachWifiNetworks = networks
                 tabletReachWifiMessage =
                     if (networks.isEmpty()) {
@@ -606,15 +541,11 @@ private fun AppSettingsScreen(
                     } else {
                         "Redes detectadas por el Reach vía BLE: ${networks.size}."
                     }
-                reachBleAdminMessage =
-                    "BLE listo para seleccionar la red. Bluetooth/NMEA se restaurará al terminar."
-            } catch (t: Throwable) {
-                tabletReachWifiMessage =
-                    t.message ?: "No se pudieron consultar las redes Wi‑Fi del Reach."
-                runCatching { finishBleWifiSession("buscar redes Wi‑Fi") }
-            } finally {
-                tabletReachWifiBusy = false
+            }.onFailure {
+                tabletReachWifiMessage = it.message
+                    ?: "No se pudieron consultar las redes Wi‑Fi del Reach por BLE."
             }
+            tabletReachWifiBusy = false
         }
     }
 
@@ -629,126 +560,30 @@ private fun AppSettingsScreen(
         tabletReachWifiBusy = true
         tabletReachWifiShowPasswordDialog = false
         returnReachHotspotActive = false
-        tabletReachWifiMessage = "Conectando el Reach a ${target.ssid}…"
+        tabletReachWifiMessage = "Conectando el Reach a ${target.ssid} por BLE…"
 
         settingsScope.launch {
-            try {
-                // Igual que en el escaneo: preferir API local si el Reach está
-                // accesible por IP. Esto NO pausa Bluetooth/NMEA.
-                val localHost = runCatching {
-                    val fixed = ReachLocalApiClient("192.168.42.1")
-                    fixed.wifiStatus()
-                    "192.168.42.1"
-                }.getOrNull() ?: runCatching {
-                    ReachLocalApiClient.discoverReachOnLocalNetwork()
-                }.getOrNull()
-
-                val localResult = localHost?.let { host ->
-                    runCatching {
-                        tabletReachWifiMessage =
-                            "Enviando conexión Wi‑Fi al Reach por API local…"
-                        ReachLocalApiClient(host).connectWifiNetwork(
-                            ssid = target.ssid,
-                            password = if (looksOpen) "" else tabletReachWifiPassword,
-                            security = target.security
-                        ).getOrThrow()
-                    }
+            runCatching {
+                withReachBleManagement("conectar el Reach a ${target.ssid}") { client ->
+                    client.connectWifiNetwork(
+                        ssid = target.ssid,
+                        password = if (looksOpen) "" else tabletReachWifiPassword,
+                        security = target.security
+                    ).getOrThrow()
                 }
-
-                if (localResult != null && localResult.isSuccess) {
-                    tabletReachWifiMessage =
-                        "Orden enviada. Esperando que el Reach abandone su hotspot y entre a ${target.ssid}…"
-
-                    // Verificar de verdad el cambio AP -> cliente.
-                    // No declarar éxito solo porque Socket.IO aceptó la orden.
-                    var verifiedClientHost: String? = null
-                    var verifiedStatus: ReachWifiStatus? = null
-                    repeat(12) { attempt ->
-                        kotlinx.coroutines.delay(if (attempt == 0) 1_500L else 1_000L)
-
-                        val discovered = runCatching {
-                            ReachLocalApiClient.discoverReachOnLocalNetwork()
-                        }.getOrNull()
-
-                        if (discovered != null && discovered != "192.168.42.1") {
-                            val status = runCatching {
-                                ReachLocalApiClient(discovered).wifiStatus()
-                            }.getOrNull()
-
-                            if (status?.ssid == target.ssid) {
-                                verifiedClientHost = discovered
-                                verifiedStatus = status
-                                return@repeat
-                            }
-                        }
-                    }
-
-                    if (verifiedClientHost != null) {
-                        val refreshedSignal = runCatching {
-                            ReachLocalApiClient(verifiedClientHost!!).wifiNetworks()
-                                .firstOrNull { it.ssid == target.ssid }
-                                ?.signal
-                        }.getOrNull()
-
-                        tabletReachWifiConnectedSsid = target.ssid
-                        tabletReachWifiConnectedSignal =
-                            refreshedSignal ?: target.signal
-                        tabletReachWifiConnectedSecurity =
-                            verifiedStatus?.security ?: target.security
-                        returnReachHotspotActive = false
-                        tabletReachWifiMessage =
-                            "Reach conectado como cliente a ${target.ssid} • IP ${verifiedClientHost}. " +
-                                wifiSignalText(tabletReachWifiConnectedSignal) + "."
-                        reachBleAdminMessage =
-                            "No fue necesario usar BLE; Bluetooth/NMEA se mantuvo activo."
-                        refreshTabletInternetStatus()
-                        return@launch
-                    }
-
-                    val stillAp = runCatching {
-                        ReachLocalApiClient("192.168.42.1").wifiStatus()
-                    }.getOrNull()
-
-                    if (stillAp != null) {
-                        throw IllegalStateException(
-                            "El Reach recibió la orden para ${target.ssid}, pero sigue accesible en 192.168.42.1. " +
-                                "Eso indica que permaneció o volvió al modo punto de acceso; revise contraseña y que la red sea 2,4 GHz."
-                        )
-                    }
-
-                    throw IllegalStateException(
-                        "El Reach recibió la orden para ${target.ssid}, pero TOPO EMLID no pudo confirmar que entrara a esa red."
-                    )
-                }
-
-                // Solo usar BLE si no fue posible administrar el Reach por IP.
-                tabletReachWifiMessage =
-                    "Sin acceso IP al Reach. Conectando la red por BLE…"
-                val client = startBleWifiSession("conectar el Reach a ${target.ssid}")
-                client.connectWifiNetwork(
-                    ssid = target.ssid,
-                    password = if (looksOpen) "" else tabletReachWifiPassword,
-                    security = target.security
-                ).getOrThrow()
-
+            }.onSuccess {
                 tabletReachWifiConnectedSsid = target.ssid
                 tabletReachWifiConnectedSignal = target.signal
                 tabletReachWifiConnectedSecurity = target.security
                 tabletReachWifiMessage =
-                    "Orden enviada por BLE. El Reach está cambiando a ${target.ssid}."
-                refreshTabletInternetStatus()
-            } catch (t: Throwable) {
-                tabletReachWifiMessage =
-                    t.message ?: "No se pudo conectar el Reach a ${target.ssid}."
-            } finally {
-                // Si hubo sesión BLE, cerrarla y restaurar NMEA. Si se usó API local,
-                // bleWifiSessionReceiver es null y esto no toca el receptor.
-                if (bleWifiSessionReceiver != null) {
-                    runCatching { finishBleWifiSession("conectar el Reach a ${target.ssid}") }
-                }
-                tabletReachWifiPassword = ""
-                tabletReachWifiBusy = false
+                    "Orden enviada por BLE. El Reach está cambiando a ${target.ssid}. " +
+                        wifiSignalText(target.signal) + "."
+            }.onFailure {
+                tabletReachWifiMessage = it.message
+                    ?: "No se pudo conectar el Reach a ${target.ssid} por BLE."
             }
+            tabletReachWifiPassword = ""
+            tabletReachWifiBusy = false
         }
     }
 
@@ -757,6 +592,7 @@ private fun AppSettingsScreen(
         returnReachHotspotBusy = true
         returnReachHotspotActive = false
         returnReachHotspotMessage = "Activando el punto de acceso del Reach por BLE…"
+
         settingsScope.launch {
             runCatching {
                 withReachBleManagement("activar el punto de acceso") { client ->
@@ -765,7 +601,7 @@ private fun AppSettingsScreen(
             }.onSuccess {
                 returnReachHotspotActive = true
                 returnReachHotspotMessage =
-                    "Punto de acceso del Reach: ACTIVADO. Después conecte la tablet a esa red para recuperar 192.168.42.1."
+                    "Punto de acceso del Reach: ACTIVADO."
                 tabletReachWifiConnectedSsid = null
                 tabletReachWifiConnectedSignal = null
                 tabletReachWifiConnectedSecurity = null
@@ -1355,8 +1191,6 @@ private fun AppSettingsScreen(
                     Text(
                         "Canal BLE de administración: " +
                             when {
-                                reachBleAdmin?.connected == true && bleWifiSessionReceiver != null ->
-                                    "Conectado temporalmente • esperando selección"
                                 reachBleAdmin?.connected == true -> "Conectado temporalmente"
                                 else -> "En espera"
                             },
