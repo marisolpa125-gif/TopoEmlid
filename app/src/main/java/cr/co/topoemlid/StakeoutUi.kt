@@ -1476,27 +1476,36 @@ private fun StakeoutMapPreview(
                             (targetLon - currentLon) * (111320.0 * cos(Math.toRadians(targetLat)))
                         )
 
-                        if (!closeView && distance > 20.0) {
+                        if (!closeView) {
+                            // En vista de mapa, mantener SIEMPRE antena y objetivo visibles.
                             val bounds = LatLngBounds.Builder()
                                 .include(current)
                                 .include(objective)
                                 .build()
-                            map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 70))
+                            map.animateCamera(
+                                CameraUpdateFactory.newLatLngBounds(
+                                    bounds,
+                                    110
+                                )
+                            )
                         } else {
-                            val zoom = if (closeView) {
-                                when {
-                                    distance > 5.0 -> 19.0
-                                    distance > 1.0 -> 20.5
-                                    else -> 21.5
-                                }
+                            // Vista cercana: aún deben verse ambos, pero con menos margen.
+                            if (distance > 1.0) {
+                                val bounds = LatLngBounds.Builder()
+                                    .include(current)
+                                    .include(objective)
+                                    .build()
+                                map.animateCamera(
+                                    CameraUpdateFactory.newLatLngBounds(
+                                        bounds,
+                                        70
+                                    )
+                                )
                             } else {
-                                when {
-                                    distance > 5.0 -> 18.0
-                                    distance > 0.5 -> 19.5
-                                    else -> 21.0
-                                }
+                                map.animateCamera(
+                                    CameraUpdateFactory.newLatLngZoom(current, 21.5)
+                                )
                             }
-                            map.animateCamera(CameraUpdateFactory.newLatLngZoom(current, zoom))
                         }
                     }
                 }
