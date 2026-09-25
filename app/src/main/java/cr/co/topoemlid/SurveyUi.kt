@@ -4272,7 +4272,7 @@ private fun findLineGeometryAt(
     return bestIndex
 }
 
-private fun geometryPath(geometry: CommittedGeometry): List<LatLng> = when (geometry.tool) {
+fun geometryPath(geometry: CommittedGeometry): List<LatLng> = when (geometry.tool) {
     MapFieldTool.RECTANGLE -> if (geometry.points.size >= 3) {
         rectangleFromControlPoints(geometry.points)
     } else geometry.points
@@ -4286,7 +4286,7 @@ private fun geometryPath(geometry: CommittedGeometry): List<LatLng> = when (geom
     else -> geometry.points
 }
 
-private fun geometrySupportsArea(geometry: CommittedGeometry): Boolean =
+fun geometrySupportsArea(geometry: CommittedGeometry): Boolean =
     geometry.tool == MapFieldTool.AREA ||
     geometry.tool == MapFieldTool.POLYGON ||
     geometry.tool == MapFieldTool.RECTANGLE ||
@@ -4320,7 +4320,7 @@ private fun distanceText(geometry: CommittedGeometry): String {
     }
 }
 
-private fun findGeometryAtScreen(
+fun findGeometryAtScreen(
     map: MapLibreMap,
     point: LatLng,
     geometries: List<CommittedGeometry>,
