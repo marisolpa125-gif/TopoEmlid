@@ -98,46 +98,66 @@ fun StakeoutScreen(
         toneGenerator.stopTone()
         if (!showGuidance || mode != StakeoutMode.POINT || selectedPointId == null) return@LaunchedEffect
 
-        while (true) {
-            val distance = latestStakeoutDistance
-            if (distance == null || !gnss.connected) {
-                delay(500)
-                continue
-            }
+        var continuousCenterTone = false
+        try {
+            while (true) {
+                val distance = latestStakeoutDistance
+                if (distance == null || !gnss.connected) {
+                    if (continuousCenterTone) {
+                        toneGenerator.stopTone()
+                        continuousCenterTone = false
+                    }
+                    delay(250)
+                    continue
+                }
 
-            when {
-                distance <= 0.005 -> {
-                    // Punto prácticamente coincidente: tono largo. Si se aleja,
-                    // vuelve automáticamente a los pulsos según la distancia.
-                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP2, 700)
-                    delay(950)
+                if (distance <= 0.005) {
+                    // Dentro de 5 mm en planta: tono continuo "piiiii".
+                    // La elevación NO interviene en este criterio.
+                    if (!continuousCenterTone) {
+                        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP2)
+                        continuousCenterTone = true
+                    }
+                    delay(100)
+                    continue
                 }
-                distance <= 0.05 -> {
-                    // Entre 5 cm y el centro: pulsos muy rápidos.
-                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 90)
-                    delay(150)
+
+                if (continuousCenterTone) {
+                    toneGenerator.stopTone()
+                    continuousCenterTone = false
+                    delay(40)
                 }
-                distance <= 0.50 -> {
-                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
-                    delay(230)
-                }
-                distance <= 2.0 -> {
-                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 110)
-                    delay(400)
-                }
-                distance <= 5.0 -> {
-                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 110)
-                    delay(650)
-                }
-                distance <= 20.0 -> {
-                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 110)
-                    delay(900)
-                }
-                else -> {
-                    toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
-                    delay(1250)
+
+                when {
+                    distance <= 0.05 -> {
+                        // Entre 5 cm y 5 mm: pulsos muy rápidos.
+                        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 90)
+                        delay(150)
+                    }
+                    distance <= 0.50 -> {
+                        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
+                        delay(230)
+                    }
+                    distance <= 2.0 -> {
+                        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 110)
+                        delay(400)
+                    }
+                    distance <= 5.0 -> {
+                        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 110)
+                        delay(650)
+                    }
+                    distance <= 20.0 -> {
+                        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 110)
+                        delay(900)
+                    }
+                    else -> {
+                        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
+                        delay(1250)
+                    }
                 }
             }
+        } finally {
+            toneGenerator.stopTone()
         }
     }
 
