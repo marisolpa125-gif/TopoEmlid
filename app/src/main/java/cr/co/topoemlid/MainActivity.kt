@@ -651,18 +651,61 @@ private fun AppSettingsScreen(
                 }
 
                 if (localResult != null && localResult.isSuccess) {
-                    tabletReachWifiConnectedSsid = target.ssid
-                    tabletReachWifiConnectedSignal = target.signal
-                    tabletReachWifiConnectedSecurity = target.security
                     tabletReachWifiMessage =
-                        "Orden enviada por API local. El Reach está cambiando a ${target.ssid}; Bluetooth/NMEA se mantiene activo."
-                    reachBleAdminMessage =
-                        "No fue necesario usar BLE para conectar el Wi‑Fi."
-                    // El Reach puede cambiar de IP al abandonar su hotspot.
-                    // No intentamos reconectar GNSS porque NMEA nunca se pausó.
-                    kotlinx.coroutines.delay(1_200L)
-                    refreshTabletInternetStatus()
-                    return@launch
+                        "Orden enviada. Esperando que el Reach abandone su hotspot y entre a ${target.ssid}…"
+
+                    // Verificar de verdad el cambio AP -> cliente.
+                    // No declarar éxito solo porque Socket.IO aceptó la orden.
+                    var verifiedClientHost: String? = null
+                    var verifiedStatus: ReachWifiStatus? = null
+                    repeat(12) { attempt ->
+                        kotlinx.coroutines.delay(if (attempt == 0) 1_500L else 1_000L)
+
+                        val discovered = runCatching {
+                            ReachLocalApiClient.discoverReachOnLocalNetwork()
+                        }.getOrNull()
+
+                        if (discovered != null && discovered != "192.168.42.1") {
+                            val status = runCatching {
+                                ReachLocalApiClient(discovered).wifiStatus()
+                            }.getOrNull()
+
+                            if (status?.ssid == target.ssid) {
+                                verifiedClientHost = discovered
+                                verifiedStatus = status
+                                return@repeat
+                            }
+                        }
+                    }
+
+                    if (verifiedClientHost != null) {
+                        tabletReachWifiConnectedSsid = target.ssid
+                        tabletReachWifiConnectedSignal = target.signal
+                        tabletReachWifiConnectedSecurity =
+                            verifiedStatus?.security ?: target.security
+                        returnReachHotspotActive = false
+                        tabletReachWifiMessage =
+                            "Reach conectado como cliente a ${target.ssid} • IP ${verifiedClientHost}. Su hotspot propio quedó fuera de uso."
+                        reachBleAdminMessage =
+                            "No fue necesario usar BLE; Bluetooth/NMEA se mantuvo activo."
+                        refreshTabletInternetStatus()
+                        return@launch
+                    }
+
+                    val stillAp = runCatching {
+                        ReachLocalApiClient("192.168.42.1").wifiStatus()
+                    }.getOrNull()
+
+                    if (stillAp != null) {
+                        throw IllegalStateException(
+                            "El Reach recibió la orden para ${target.ssid}, pero sigue accesible en 192.168.42.1. " +
+                                "Eso indica que permaneció o volvió al modo punto de acceso; revise contraseña y que la red sea 2,4 GHz."
+                        )
+                    }
+
+                    throw IllegalStateException(
+                        "El Reach recibió la orden para ${target.ssid}, pero TOPO EMLID no pudo confirmar que entrara a esa red."
+                    )
                 }
 
                 // Solo usar BLE si no fue posible administrar el Reach por IP.
