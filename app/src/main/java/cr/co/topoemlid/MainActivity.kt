@@ -422,6 +422,27 @@ private fun AppSettingsScreen(
     var tabletReachWifiConnectedSignal by remember { mutableStateOf<Int?>(null) }
     var tabletReachWifiConnectedSecurity by remember { mutableStateOf<String?>(null) }
 
+    fun wifiSignalText(value: Int?): String {
+        if (value == null) return "Señal: —"
+        return if (value < 0) {
+            val quality = when {
+                value >= -55 -> "Muy buena"
+                value >= -67 -> "Buena"
+                value >= -75 -> "Media"
+                else -> "Débil"
+            }
+            "Señal: $quality ($value dBm)"
+        } else {
+            val quality = when {
+                value >= 70 -> "Muy buena"
+                value >= 50 -> "Buena"
+                value >= 30 -> "Media"
+                else -> "Débil"
+            }
+            "Señal: $quality ($value)"
+        }
+    }
+
     fun refreshTabletInternetStatus() {
         val manager = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
             as ConnectivityManager
@@ -1323,7 +1344,9 @@ private fun AppSettingsScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            tabletReachWifiSelected?.ssid
+                            tabletReachWifiSelected?.let {
+                                it.ssid + " • " + wifiSignalText(it.signal)
+                            }
                                 ?: if (tabletReachWifiNetworks.isEmpty())
                                     "Red Wi‑Fi para el Reach"
                                 else
@@ -1336,7 +1359,15 @@ private fun AppSettingsScreen(
                     ) {
                         tabletReachWifiNetworks.forEach { network ->
                             DropdownMenuItem(
-                                text = { Text(network.ssid, fontWeight = FontWeight.Bold) },
+                                text = {
+                                    Column {
+                                        Text(network.ssid, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            wifiSignalText(network.signal),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                },
                                 onClick = {
                                     tabletReachWifiExpanded = false
                                     tabletReachWifiSelected = network
@@ -1374,18 +1405,7 @@ private fun AppSettingsScreen(
                             Text("Estado de conexión del Reach", fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(6.dp))
                             Text("Red: $connectedSsid")
-                            Text(
-                                "Señal Wi‑Fi: " + (
-                                    tabletReachWifiConnectedSignal?.let { value ->
-                                        when {
-                                            value >= 70 -> "Muy buena ($value)"
-                                            value >= 50 -> "Buena ($value)"
-                                            value >= 30 -> "Media ($value)"
-                                            else -> "Débil ($value)"
-                                        }
-                                    } ?: "—"
-                                )
-                            )
+                            Text(wifiSignalText(tabletReachWifiConnectedSignal).replace("Señal:", "Señal Wi‑Fi:"))
                             Text("Seguridad: ${tabletReachWifiConnectedSecurity ?: "—"}")
                             Text(
                                 "Internet en la tablet: " +
