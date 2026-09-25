@@ -227,6 +227,7 @@ fun SurveyScreen(
         drawLiveReceiverPosition(m, gnss, context)
         ensureSurveyGeometryOverlayOnTop(m, committedGeometries)
         ensureSurveyPointOverlayOnTop(m, savedPoints, gnss, pointDisplaySettings)
+        m.style?.let { pinBasemapBelowFieldOverlays(it) }
     }
 
     fun showGeometrySelection(index: Int?) {
@@ -2662,6 +2663,27 @@ private fun ensureSurveyGeometryOverlayOnTop(
         )
     )
 }
+private fun pinBasemapBelowFieldOverlays(style: Style) {
+    val anchor = style.layers.firstOrNull { layer ->
+        val id = layer.id
+        id == "survey-geometries-top-layer" ||
+            id.startsWith("survey-points-top-") ||
+            id == "gnss-live-top-layer" ||
+            id.startsWith("stakeout-")
+    }?.id ?: return
+
+    val source = style.getSource("basemap-source") ?: return
+    runCatching { style.removeLayer("basemap-layer") }
+    runCatching {
+        style.addLayerBelow(
+            RasterLayer("basemap-layer", "basemap-source").withProperties(
+                PropertyFactory.rasterOpacity(1f)
+            ),
+            anchor
+        )
+    }
+}
+
 private fun ensureSurveyPointOverlayOnTop(
     map: MapLibreMap,
     points: List<SurveyPoint>,
@@ -2966,7 +2988,8 @@ fun addSelectedBasemap(
     runCatching {
         val tileSet = TileSet("2.2.0", tileUrl)
         style.addSource(RasterSource(sourceId, tileSet, 256))
-        style.addLayer(
+        addRasterBelowFieldOverlays(
+            style,
             RasterLayer(layerId, sourceId).withProperties(
                 PropertyFactory.rasterOpacity(1f)
             )
