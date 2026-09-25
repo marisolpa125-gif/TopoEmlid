@@ -650,78 +650,156 @@ private fun AppSettingsScreen(
     fun activateReachInternetForTablet() {
         if (reachInternetBusy) return
         reachInternetBusy = true
-        reachInternetMessage = "Reiniciando la salida de Internet del Reach…"
+        reachInternetMessage = "Comprobando LTE y Compartir Internet del Reach…"
+
         settingsScope.launch {
             val client = ReachLocalApiClient("192.168.42.1")
 
-            // Reparación completa del puente celular -> hotspot.
-            // No toca Bluetooth/NMEA.
-            client.setMobileDataSharing(false)
-            kotlinx.coroutines.delay(500)
-
-            client.setMobileDataEnabled(false)
-            kotlinx.coroutines.delay(1200)
-
-            val dataResult = client.setMobileDataEnabled(true)
-            if (dataResult.isFailure) {
-                reachInternetMessage = dataResult.exceptionOrNull()?.message
-                    ?: "No se pudo volver a activar los datos móviles del Reach."
-                reachInternetBusy = false
-                return@launch
-            }
-
-            reachInternetMessage = "Esperando que el módem vuelva a conectar…"
-
-            var modemConnected = false
-            repeat(8) {
-                kotlinx.coroutines.delay(1000)
-                val info = runCatching { client.modemInfo() }.getOrNull()
-                if (info?.state?.equals("CONNECTED", ignoreCase = true) == true) {
-                    modemConnected = true
-                    return@repeat
+            suspend fun waitForModemConnected(timeoutMs: Long): ReachModemInfo? {
+                val deadline = System.currentTimeMillis() + timeoutMs
+                var last: ReachModemInfo? = null
+                while (System.currentTimeMillis() < deadline) {
+                    last = runCatching { client.modemInfo() }.getOrNull()
+                    if (
+                        last?.connected == true ||
+                        last?.state?.equals("CONNECTED", ignoreCase = true) == true
+                    ) {
+                        return last
+                    }
+                    kotlinx.coroutines.delay(1200L)
                 }
+                return last
             }
 
-            if (!modemConnected) {
-                reachInternetMessage = "El módem del Reach no volvió a estado CONNECTED. Revise señal/SIM."
-                reachInternetBusy = false
-                return@launch
+            suspend fun verifySharingEnabled(timeoutMs: Long): Boolean {
+                val deadline = System.currentTimeMillis() + timeoutMs
+                while (System.currentTimeMillis() < deadline) {
+                    val settings = runCatching { client.modemSettings() }.getOrNull()
+                    if (settings?.dataSharing == true) return true
+                    kotlinx.coroutines.delay(900L)
+                }
+                return false
             }
 
-            val sharingResult = client.setMobileDataSharing(true)
-            if (sharingResult.isFailure) {
-                reachInternetMessage = sharingResult.exceptionOrNull()?.message
-                    ?: "El módem conectó, pero no se pudo reactivar Compartir Internet."
-                reachInternetBusy = false
-                return@launch
-            }
+            try {
+                // 1) No reiniciar LTE si ya está conectado: evita cortes innecesarios.
+                var info = runCatching { client.modemInfo() }.getOrNull()
+                var connectedNow =
+                    info?.connected == true ||
+                        info?.state?.equals("CONNECTED", ignoreCase = true) == true
 
-            mobileDataEnabled = true
-            shareMobileData = true
-            preferredInternetSource = "REACH"
-            saveConnectivityProfile()
+                if (!connectedNow) {
+                    reachInternetMessage = "LTE del Reach desconectado. Activando datos móviles…"
 
-            reachInternetMessage = "Reach listo. Comprobando Internet en la tablet…"
-            kotlinx.coroutines.delay(2500)
-            refreshTabletInternetStatus()
+                    // Intento normal primero.
+                    val enable = client.setMobileDataEnabled(true)
+                    if (enable.isFailure) {
+                        throw IllegalStateException(
+                            enable.exceptionOrNull()?.message
+                                ?: "No se pudieron activar los datos móviles del Reach."
+                        )
+                    }
 
-            reachInternetMessage =
-                if (tabletInternetAvailable == true) {
-                    "Internet del Reach disponible en la tablet."
-                } else {
-                    "El Reach ya reinició datos y Compartir Internet, pero Android sigue sin salida. Desconecte y vuelva a conectar el Wi‑Fi del Reach una sola vez."
+                    info = waitForModemConnected(14_000L)
+                    connectedNow =
+                        info?.connected == true ||
+                            info?.state?.equals("CONNECTED", ignoreCase = true) == true
+
+                    // Si no conectó, hacer un único reinicio controlado del módem.
+                    if (!connectedNow) {
+                        reachInternetMessage =
+                            "LTE aún sin conectar. Reiniciando el módem una vez…"
+                        client.setMobileDataEnabled(false)
+                        kotlinx.coroutines.delay(1_500L)
+                        client.setMobileDataEnabled(true).getOrThrow()
+
+                        info = waitForModemConnected(18_000L)
+                        connectedNow =
+                            info?.connected == true ||
+                                info?.state?.equals("CONNECTED", ignoreCase = true) == true
+                    }
                 }
 
-            runCatching {
-                Pair(client.modemInfo(), client.modemSettings())
-            }.onSuccess { (info, settings) ->
-                modemInfo = info
-                shareMobileData = settings.dataSharing
-                mobileRoaming = settings.roaming
-                mobileUpgrades = settings.gsmUpgrades
-                mobileDataEnabled = info.state?.equals("CONNECTED", ignoreCase = true)
+                if (!connectedNow) {
+                    throw IllegalStateException(
+                        "El módem del Reach no llegó a CONNECTED. Revise señal LTE, SIM Kolbi y APN."
+                    )
+                }
+
+                reachInternetMessage = "LTE conectado. Verificando Compartir Internet…"
+
+                // 2) Activar sharing solo si realmente está apagado.
+                var settings = runCatching { client.modemSettings() }.getOrNull()
+                if (settings?.dataSharing != true) {
+                    val share = client.setMobileDataSharing(true)
+                    if (share.isFailure) {
+                        throw IllegalStateException(
+                            share.exceptionOrNull()?.message
+                                ?: "No se pudo activar Compartir Internet en el Reach."
+                        )
+                    }
+                }
+
+                var sharingOk = verifySharingEnabled(7_000L)
+                if (!sharingOk) {
+                    reachInternetMessage =
+                        "Compartir Internet no confirmó. Reintentando una vez…"
+                    client.setMobileDataSharing(false)
+                    kotlinx.coroutines.delay(700L)
+                    client.setMobileDataSharing(true).getOrThrow()
+                    sharingOk = verifySharingEnabled(8_000L)
+                }
+
+                if (!sharingOk) {
+                    throw IllegalStateException(
+                        "LTE está conectado, pero el Reach no confirmó Compartir Internet."
+                    )
+                }
+
+                mobileDataEnabled = true
+                shareMobileData = true
+                preferredInternetSource = "REACH"
+                saveConnectivityProfile()
+
+                // 3) Confirmar hotspot/red del Reach y salida real de la tablet.
+                reachInternetMessage =
+                    "LTE y Compartir Internet activos. Comprobando la tablet…"
+
+                var internetOk = false
+                repeat(6) {
+                    kotlinx.coroutines.delay(1_200L)
+                    refreshTabletInternetStatus()
+                    if (tabletInternetAvailable == true) {
+                        internetOk = true
+                        return@repeat
+                    }
+                }
+
+                runCatching {
+                    Pair(client.modemInfo(), client.modemSettings())
+                }.onSuccess { (latestInfo, latestSettings) ->
+                    modemInfo = latestInfo
+                    shareMobileData = latestSettings.dataSharing
+                    mobileRoaming = latestSettings.roaming
+                    mobileUpgrades = latestSettings.gsmUpgrades
+                    mobileDataEnabled =
+                        latestInfo.connected == true ||
+                            latestInfo.state?.equals("CONNECTED", ignoreCase = true) == true
+                }
+
+                reachInternetMessage =
+                    if (internetOk) {
+                        "Internet del Reach disponible en la tablet • LTE conectado • Compartir Internet activo."
+                    } else {
+                        "Reach listo: LTE conectado y Compartir Internet activo. Android aún no valida Internet; reconecte una vez el Wi‑Fi de la tablet al hotspot del Reach."
+                    }
+            } catch (t: Throwable) {
+                reachInternetMessage =
+                    "No se completó Reach → tablet: " +
+                        (t.message ?: t.javaClass.simpleName)
+            } finally {
+                reachInternetBusy = false
             }
-            reachInternetBusy = false
         }
     }
 
