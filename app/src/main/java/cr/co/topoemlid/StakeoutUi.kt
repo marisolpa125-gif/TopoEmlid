@@ -2,6 +2,9 @@ package cr.co.topoemlid
 
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.graphics.Bitmap
+import android.graphics.Canvas as AndroidCanvas
+import android.graphics.Paint
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
@@ -626,6 +629,44 @@ private fun StakeoutCompactOverlay(
     }
 }
 
+private fun makeStakeoutTargetBitmap(): Bitmap {
+    val size = 72
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = AndroidCanvas(bitmap)
+
+    val yellow = android.graphics.Color.rgb(255, 214, 0)
+    val black = android.graphics.Color.BLACK
+
+    val outer = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = yellow
+        style = Paint.Style.STROKE
+        strokeWidth = 7f
+    }
+    val cross = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = yellow
+        style = Paint.Style.STROKE
+        strokeWidth = 7f
+        strokeCap = Paint.Cap.ROUND
+    }
+    val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = black
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f
+    }
+
+    val cx = size / 2f
+    val cy = size / 2f
+    canvas.drawCircle(cx, cy, 20f, outer)
+    canvas.drawCircle(cx, cy, 20f, outline)
+
+    canvas.drawLine(cx - 30f, cy, cx - 10f, cy, cross)
+    canvas.drawLine(cx + 10f, cy, cx + 30f, cy, cross)
+    canvas.drawLine(cx, cy - 30f, cx, cy - 10f, cross)
+    canvas.drawLine(cx, cy + 10f, cx, cy + 30f, cross)
+
+    return bitmap
+}
+
 @Composable
 private fun PointSingleSelector(
     points: List<SurveyPoint>,
@@ -749,10 +790,18 @@ private fun StakeoutMapPreview(
             makeTopoPointBitmap(android.graphics.Color.rgb(255, 45, 45))
         )
         val targetIcon = iconFactory.fromBitmap(
-            makeTopoPointBitmap(android.graphics.Color.rgb(255, 214, 0))
+            makeStakeoutTargetBitmap()
         )
+        val rtkColor = when {
+            gnss.solution.contains("FIX", ignoreCase = true) ->
+                android.graphics.Color.rgb(46, 125, 50)
+            gnss.solution.contains("FLOAT", ignoreCase = true) ->
+                android.graphics.Color.rgb(251, 192, 45)
+            else ->
+                android.graphics.Color.rgb(211, 47, 47)
+        }
         val rtkIcon = iconFactory.fromBitmap(
-            makeTopoPointBitmap(android.graphics.Color.rgb(0, 188, 212))
+            makeTopoPointBitmap(rtkColor)
         )
 
         points.forEach { point ->
