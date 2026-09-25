@@ -62,7 +62,6 @@ fun StakeoutScreen(
     var bearingText by remember { mutableStateOf("") }
     var distanceText by remember { mutableStateOf("") }
     var showGuidance by remember { mutableStateOf(false) }
-    var stakeoutView by remember { mutableStateOf(StakeoutViewMode.MAP) }
     val pointDisplayStore = remember { PointDisplaySettingsStore(context) }
     var pointDisplaySettings by remember { mutableStateOf(pointDisplayStore.load()) }
     var showPointDisplayPanel by remember { mutableStateOf(false) }
@@ -156,8 +155,6 @@ fun StakeoutScreen(
             target = selectedTarget,
             gnss = gnss,
             pointDisplaySettings = pointDisplaySettings,
-            viewMode = stakeoutView,
-            onViewModeChange = { stakeoutView = it },
             onStop = {
                 showGuidance = false
                 toneGenerator.stopTone()
@@ -347,11 +344,41 @@ private fun StakeoutActiveView(
     target: SurveyPoint,
     gnss: GnssStatus,
     pointDisplaySettings: PointDisplaySettings,
-    viewMode: StakeoutViewMode,
-    onViewModeChange: (StakeoutViewMode) -> Unit,
     onStop: () -> Unit
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
+    val currentDistanceM = run {
+        val lat = gnss.latitude
+        val lon = gnss.longitude
+        val tLat = target.latitude
+        val tLon = target.longitude
+        if (lat != null && lon != null && tLat != null && tLon != null) {
+            val north = (tLat - lat) * 111132.0
+            val east = (tLon - lon) * (111320.0 * cos(Math.toRadians(tLat)))
+            hypot(north, east)
+        } else null
+    }
+
+    var viewMode by remember(target.id) { mutableStateOf(StakeoutViewMode.MAP) }
+
+    LaunchedEffect(currentDistanceM, target.id) {
+        val d = currentDistanceM ?: return@LaunchedEffect
+        viewMode = when (viewMode) {
+            StakeoutViewMode.MAP -> when {
+                d <= 4.8 -> StakeoutViewMode.PRECISION
+                d <= 14.5 -> StakeoutViewMode.CLOSE
+                else -> StakeoutViewMode.MAP
+            }
+            StakeoutViewMode.CLOSE -> when {
+                d <= 4.8 -> StakeoutViewMode.PRECISION
+                d >= 15.5 -> StakeoutViewMode.MAP
+                else -> StakeoutViewMode.CLOSE
+            }
+            StakeoutViewMode.PRECISION -> when {
+                d >= 5.5 -> StakeoutViewMode.CLOSE
+                else -> StakeoutViewMode.PRECISION
+            }
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         when (viewMode) {
@@ -383,26 +410,14 @@ private fun StakeoutActiveView(
             shadowElevation = 8.dp
         ) {
             Row(
-                Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
             ) {
-                Box {
-                    OutlinedButton(onClick = { menuOpen = true }) {
-                        Text(viewMode.label + " ▾")
-                    }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        StakeoutViewMode.entries.forEach { item ->
-                            DropdownMenuItem(
-                                text = { Text(item.label) },
-                                onClick = {
-                                    onViewModeChange(item)
-                                    menuOpen = false
-                                }
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.width(8.dp))
+                Text(
+                    viewMode.label + (currentDistanceM?.let { " • " + "%.2f m".format(it) } ?: ""),
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.width(10.dp))
                 Button(onClick = onStop) { Text("Salir") }
             }
         }
