@@ -1716,102 +1716,272 @@ private fun StakeoutGuidancePanel(
         targetElevation - currentElevation
     } else null
 
-    val stage = when {
-        distanceM > 5.0 -> "Aproximación"
-        distanceM > 0.5 -> "Zona de tolerancia"
-        else -> "Mira de precisión"
+    val nsLabel = when {
+        northM > 0.0005 -> "AL NORTE"
+        northM < -0.0005 -> "AL SUR"
+        else -> "N/S OK"
+    }
+    val ewLabel = when {
+        eastM > 0.0005 -> "AL ESTE"
+        eastM < -0.0005 -> "AL OESTE"
+        else -> "E/O OK"
+    }
+    val verticalLabel = when {
+        verticalDelta == null -> "SIN COTA"
+        verticalDelta > 0.005 -> "RELLENO"
+        verticalDelta < -0.005 -> "CORTE"
+        else -> "COTA OK"
     }
 
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp)) {
-            Text(stage, fontWeight = FontWeight.Bold)
-            Text("Distancia al punto: %.3f m".format(distanceM))
-            Text("Corrección E/O: %.3f m".format(eastM))
-            Text("Corrección N/S: %.3f m".format(northM))
-            if (verticalDelta != null) {
-                val verticalText = when {
-                    verticalDelta > 0.005 -> "RELLENO %.3f m".format(verticalDelta)
-                    verticalDelta < -0.005 -> "CORTE %.3f m".format(abs(verticalDelta))
-                    else -> "COTA OK ±0.005 m"
-                }
-                Text(verticalText, fontWeight = FontWeight.Bold)
-                Text("Diferencia vertical: %.3f m".format(verticalDelta))
-                Text("Cota objetivo: %.3f m".format(targetElevation))
-                Text("Cota actual: %.3f m".format(currentElevation))
-                Text(
-                    if (useGeoid) "Vertical: EGM2008 / geoide del proyecto" else "Vertical: elipsoidal",
-                    style = MaterialTheme.typography.bodySmall
-                )
-            } else {
-                Text("Sin comparación vertical: falta cota objetivo o cota GNSS.")
-            }
-            Spacer(Modifier.height(12.dp))
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        )
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                "Mira de precisión",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                "Distancia al objetivo: %.3f m".format(distanceM),
+                style = MaterialTheme.typography.bodySmall
+            )
 
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(240.dp),
-                contentAlignment = androidx.compose.ui.Alignment.Center
+            Spacer(Modifier.height(10.dp))
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Canvas(Modifier.fillMaxSize()) {
-                    val center = Offset(size.width / 2f, size.height / 2f)
-                    val maxR = min(size.width, size.height) * 0.42f
-
-                    drawCircle(
-                        color = Color(0x22000000),
-                        radius = maxR,
-                        center = center
-                    )
-
-                    drawCircle(
-                        color = Color(0x33000000),
-                        radius = maxR * 0.66f,
-                        center = center
-                    )
-
-                    drawCircle(
-                        color = Color(0x55000000),
-                        radius = maxR * 0.33f,
-                        center = center
-                    )
-
-                    drawLine(
-                        color = Color.Black,
-                        start = Offset(center.x - maxR, center.y),
-                        end = Offset(center.x + maxR, center.y),
-                        strokeWidth = 2f
-                    )
-                    drawLine(
-                        color = Color.Black,
-                        start = Offset(center.x, center.y - maxR),
-                        end = Offset(center.x, center.y + maxR),
-                        strokeWidth = 2f
-                    )
-
-                    val displayScaleM = when {
-                        distanceM > 5.0 -> 10.0
-                        distanceM > 0.5 -> 2.0
-                        else -> 0.5
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    tonalElevation = 3.dp,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+                ) {
+                    Column(
+                        Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            when {
+                                northM > 0.0005 -> "↑"
+                                northM < -0.0005 -> "↓"
+                                else -> "✓"
+                            },
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(nsLabel, fontWeight = FontWeight.Bold)
+                        Text("%.3f m".format(abs(northM)))
                     }
-                    val dx = (eastM / displayScaleM * maxR).toFloat().coerceIn(-maxR, maxR)
-                    val dy = (-northM / displayScaleM * maxR).toFloat().coerceIn(-maxR, maxR)
+                }
 
-                    drawCircle(
-                        color = Color.Black,
-                        radius = 10f,
-                        center = Offset(center.x + dx, center.y + dy)
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    tonalElevation = 3.dp,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+                ) {
+                    Column(
+                        Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            when {
+                                eastM > 0.0005 -> "→"
+                                eastM < -0.0005 -> "←"
+                                else -> "✓"
+                            },
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(ewLabel, fontWeight = FontWeight.Bold)
+                        Text("%.3f m".format(abs(eastM)))
+                    }
+                }
+
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    tonalElevation = 3.dp,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+                ) {
+                    Column(
+                        Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            when {
+                                verticalDelta == null -> "—"
+                                verticalDelta > 0.005 -> "↑"
+                                verticalDelta < -0.005 -> "↓"
+                                else -> "✓"
+                            },
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(verticalLabel, fontWeight = FontWeight.Bold)
+                        Text(verticalDelta?.let { "%.3f m".format(abs(it)) } ?: "—")
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                tonalElevation = 2.dp,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(300.dp),
+                    contentAlignment = androidx.compose.ui.Alignment.Center
+                ) {
+                    Canvas(Modifier.fillMaxSize()) {
+                        val center = Offset(size.width / 2f, size.height / 2f)
+                        val maxR = min(size.width, size.height) * 0.39f
+
+                        drawCircle(
+                            color = Color(0xFFE7EEF7),
+                            radius = maxR,
+                            center = center
+                        )
+                        drawCircle(
+                            color = Color(0xFFB7C8DD),
+                            radius = maxR,
+                            center = center,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)
+                        )
+                        drawCircle(
+                            color = Color(0xFF90A9C4),
+                            radius = maxR * 0.67f,
+                            center = center,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
+                        )
+                        drawCircle(
+                            color = Color(0xFF6F8EAE),
+                            radius = maxR * 0.34f,
+                            center = center,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
+                        )
+
+                        drawLine(
+                            color = Color(0xFF355A7A),
+                            start = Offset(center.x - maxR, center.y),
+                            end = Offset(center.x + maxR, center.y),
+                            strokeWidth = 2.5f
+                        )
+                        drawLine(
+                            color = Color(0xFF355A7A),
+                            start = Offset(center.x, center.y - maxR),
+                            end = Offset(center.x, center.y + maxR),
+                            strokeWidth = 2.5f
+                        )
+
+                        val displayScaleM = when {
+                            distanceM > 5.0 -> 10.0
+                            distanceM > 0.5 -> 2.0
+                            distanceM > 0.10 -> 0.5
+                            else -> 0.10
+                        }
+                        val dx = (eastM / displayScaleM * maxR).toFloat().coerceIn(-maxR, maxR)
+                        val dy = (-northM / displayScaleM * maxR).toFloat().coerceIn(-maxR, maxR)
+
+                        drawCircle(
+                            color = Color(0xFFFFC107),
+                            radius = 14f,
+                            center = Offset(center.x + dx, center.y + dy)
+                        )
+                        drawCircle(
+                            color = Color(0xFF1F2937),
+                            radius = 14f,
+                            center = Offset(center.x + dx, center.y + dy),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)
+                        )
+
+                        drawLine(
+                            color = Color(0xFF1F2937),
+                            start = Offset(center.x - 11f, center.y),
+                            end = Offset(center.x + 11f, center.y),
+                            strokeWidth = 3f
+                        )
+                        drawLine(
+                            color = Color(0xFF1F2937),
+                            start = Offset(center.x, center.y - 11f),
+                            end = Offset(center.x, center.y + 11f),
+                            strokeWidth = 3f
+                        )
+                    }
+
+                    Text(
+                        "N",
+                        modifier = Modifier
+                            .align(androidx.compose.ui.Alignment.TopCenter)
+                            .padding(top = 10.dp),
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Text(
+                        "S",
+                        modifier = Modifier
+                            .align(androidx.compose.ui.Alignment.BottomCenter)
+                            .padding(bottom = 10.dp),
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Text(
+                        "O",
+                        modifier = Modifier
+                            .align(androidx.compose.ui.Alignment.CenterStart)
+                            .padding(start = 14.dp),
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Text(
+                        "E",
+                        modifier = Modifier
+                            .align(androidx.compose.ui.Alignment.CenterEnd)
+                            .padding(end = 14.dp),
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge
                     )
                 }
             }
+
+            Spacer(Modifier.height(10.dp))
 
             Text(
                 when {
-                    distanceM > 5.0 -> "Acérquese al objetivo siguiendo el mapa."
-                    distanceM > 0.5 -> "Entre en el círculo de tolerancia."
-                    else -> "Lleve el punto negro al centro de la mira."
+                    distanceM <= 0.005 ->
+                        "OBJETIVO ALCANZADO • posición horizontal dentro de 5 mm"
+                    distanceM <= 0.05 ->
+                        "Ajuste final: siga las flechas en centímetros o milímetros."
+                    distanceM <= 0.5 ->
+                        "Lleve la mira amarilla al centro."
+                    else ->
+                        "Acérquese siguiendo las indicaciones Norte/Sur y Este/Oeste."
                 },
-                style = MaterialTheme.typography.bodySmall
+                fontWeight = if (distanceM <= 0.005) FontWeight.Bold else FontWeight.Normal,
+                style = MaterialTheme.typography.bodyMedium
             )
+
+            if (verticalDelta != null && targetElevation != null && currentElevation != null) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Cota objetivo: %.3f m • Cota actual: %.3f m".format(
+                        targetElevation,
+                        currentElevation
+                    ),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    if (useGeoid) "Vertical: geoide del proyecto" else "Vertical: elipsoidal",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
         }
     }
 }
