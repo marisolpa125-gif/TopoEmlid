@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.io.PushbackInputStream
 import java.util.UUID
 import kotlin.concurrent.thread
 
@@ -227,7 +228,49 @@ class ReceiverConnectionManager(context: Context) {
                 val candidates = (listOf(spp) + advertised).distinct()
 
                 var connectedSocket: BluetoothSocket? = null
+                var connectedInput: PushbackInputStream? = null
+                var connectedRoute: String? = null
                 var lastConnectError: Throwable? = null
+
+                fun verifyNmeaStream(candidate: BluetoothSocket): PushbackInputStream? {
+                    val input = PushbackInputStream(candidate.inputStream, 8192)
+                    val probe = java.io.ByteArrayOutputStream()
+                    val deadline = System.currentTimeMillis() + 4500L
+
+                    while (System.currentTimeMillis() < deadline &&
+                        !Thread.currentThread().isInterrupted
+                    ) {
+                        val available = runCatching { input.available() }.getOrElse {
+                            lastConnectError = it
+                            return null
+                        }
+
+                        if (available > 0) {
+                            val chunk = ByteArray(minOf(available, 2048))
+                            val read = runCatching { input.read(chunk) }.getOrElse {
+                                lastConnectError = it
+                                return null
+                            }
+                            if (read > 0) {
+                                probe.write(chunk, 0, read)
+                                val text = probe.toString(Charsets.US_ASCII.name())
+                                if (text.contains("$")) {
+                                    val bytes = probe.toByteArray()
+                                    input.unread(bytes)
+                                    return input
+                                }
+                                if (probe.size() >= 8192) break
+                            }
+                        } else {
+                            Thread.sleep(80L)
+                        }
+                    }
+
+                    lastConnectError = IllegalStateException(
+                        "El canal Bluetooth abrió, pero no apareció ninguna sentencia NMEA en 4,5 s."
+                    )
+                    return null
+                }
 
                 // Some rugged Android devices keep the RFCOMM channel busy for
                 // a fraction of a second after disconnecting. Retry the complete
@@ -249,8 +292,16 @@ class ReceiverConnectionManager(context: Context) {
                             try {
                                 adapter?.cancelDiscovery()
                                 candidate.connect()
-                                connectedSocket = candidate
-                                break
+                                val verified = verifyNmeaStream(candidate)
+                                if (verified != null) {
+                                    connectedSocket = candidate
+                                    connectedInput = verified
+                                    connectedRoute =
+                                        if (createSocket === attempts.first()) "SPP seguro" else "SPP inseguro"
+                                    break
+                                } else {
+                                    runCatching { candidate.close() }
+                                }
                             } catch (t: Throwable) {
                                 lastConnectError = t
                                 runCatching { candidate.close() }
@@ -278,7 +329,14 @@ class ReceiverConnectionManager(context: Context) {
                         val direct = method.invoke(device, 1) as BluetoothSocket
                         try {
                             direct.connect()
-                            connectedSocket = direct
+                            val verified = verifyNmeaStream(direct)
+                            if (verified != null) {
+                                connectedSocket = direct
+                                connectedInput = verified
+                                connectedRoute = "RFCOMM directo"
+                            } else {
+                                runCatching { direct.close() }
+                            }
                         } catch (t: Throwable) {
                             lastConnectError = t
                             runCatching { direct.close() }
@@ -311,12 +369,13 @@ class ReceiverConnectionManager(context: Context) {
                         connected = true,
                         receiverName = profile.name,
                         connectionTransport = "Bluetooth / NMEA",
-                        solution = "ESPERANDO NMEA"
+                        solution = "NMEA • " + (connectedRoute ?: "Bluetooth")
                     )
                 )
                 mainHandler.post { connecting = false }
 
-                val reader = BufferedReader(InputStreamReader(s.inputStream))
+                val verifiedInput = connectedInput ?: PushbackInputStream(s.inputStream, 8192)
+                val reader = BufferedReader(InputStreamReader(verifiedInput))
 
                 // Watch actual NMEA traffic, not just the Bluetooth socket state.
                 // If no sentence arrives for several seconds, force the socket closed
@@ -473,7 +532,7 @@ class ReceiverConnectionManager(context: Context) {
                             connecting = false
                             lastError = when {
                                 e.message?.contains("read failed", ignoreCase = true) == true ->
-                                    "Bluetooth se abrió, pero el receptor cerró el canal o no entregó datos NMEA. Active la salida NMEA por Bluetooth en el receptor y vuelva a intentar."
+                                    "El canal Bluetooth se abrió pero se cerró antes de mantener el flujo NMEA. La salida NMEA del Reach está configurada; se probarán rutas alternativas en el próximo intento."
                                 else -> e.message ?: "No se pudo conectar con el receptor."
                             }
                             status = status.copy(connected = false, solution = "SIN SEÑAL")
