@@ -2974,6 +2974,27 @@ fun addSelectedBasemap(
     }
 }
 
+private fun addRasterBelowFieldOverlays(
+    style: Style,
+    layer: RasterLayer
+) {
+    // Cualquier capa cartográfica debe quedar SIEMPRE debajo de los elementos
+    // de trabajo de campo. Elegimos la primera capa de puntos conocida como ancla.
+    val anchor = style.layers.firstOrNull { existing ->
+        val id = existing.id
+        id.startsWith("survey-points-top-") ||
+            id.startsWith("stakeout-points-") ||
+            id == "gnss-live-top-layer" ||
+            id.startsWith("stakeout-critical-")
+    }?.id
+
+    if (anchor != null) {
+        style.addLayerBelow(layer, anchor)
+    } else {
+        style.addLayer(layer)
+    }
+}
+
 fun addProjectRasterLayers(
     style: Style,
     layers: List<LayerItem>
@@ -2993,7 +3014,8 @@ fun addProjectRasterLayers(
             runCatching {
                 val tileSet = TileSet("2.2.0", tileUrl)
                 style.addSource(RasterSource(sourceId, tileSet, 256))
-                style.addLayer(
+                addRasterBelowFieldOverlays(
+                    style,
                     RasterLayer(layerId, sourceId).withProperties(
                         PropertyFactory.rasterOpacity(layer.opacity)
                     )
@@ -3119,7 +3141,8 @@ fun refreshViewportWmsLayers(
                         runCatching { style.removeSource(sourceId) }
                     }
                     style.addSource(ImageSource(sourceId, quad, URI.create(uri)))
-                    style.addLayer(
+                    addRasterBelowFieldOverlays(
+                        style,
                         RasterLayer(layerId, sourceId).withProperties(
                             PropertyFactory.rasterOpacity(layer.opacity)
                         )
@@ -3251,7 +3274,8 @@ fun refreshViewportWmsLayers(
                                 currentStyle.addSource(
                                     ImageSource(sourceId, quad, result.bitmap)
                                 )
-                                currentStyle.addLayer(
+                                addRasterBelowFieldOverlays(
+                                    currentStyle,
                                     RasterLayer(layerId, sourceId).withProperties(
                                         PropertyFactory.rasterOpacity(layer.opacity)
                                     )
