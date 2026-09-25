@@ -258,13 +258,13 @@ jobs:
       - name: Preparar APK para descarga
         run: |
           mkdir -p release
-          cp app/build/outputs/apk/debug/app-debug.apk release/TopoEmlid-v0.3-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk "release/TopoEmlid-run-${GITHUB_RUN_NUMBER}.apk"
 
       - name: Publicar APK como artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: TopoEmlid-v0.3-debug
-          path: release/TopoEmlid-v0.3-debug.apk
+          name: TopoEmlid-run-${{ github.run_number }}
+          path: release/TopoEmlid-run-${{ github.run_number }}.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -274,7 +274,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="topoemlid-latest-debug"
-          APK="release/TopoEmlid-v0.3-debug.apk"
+          APK="release/TopoEmlid-run-${GITHUB_RUN_NUMBER}.apk"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Actualizando release existente $TAG"
