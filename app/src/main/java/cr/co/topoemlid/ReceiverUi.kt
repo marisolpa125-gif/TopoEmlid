@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Build
 import android.os.Handler
@@ -195,6 +196,8 @@ private fun ReceiversScreen(
 
     var nearby by remember { mutableStateOf<List<NearbyReceiver>>(emptyList()) }
     var scanning by remember { mutableStateOf(false) }
+    var bleSeen by remember { mutableIntStateOf(0) }
+    var classicSeen by remember { mutableIntStateOf(0) }
     var connectedActions by remember { mutableStateOf<ReceiverProfile?>(null) }
     var permissionGranted by remember {
         mutableStateOf(
@@ -237,10 +240,12 @@ private fun ReceiversScreen(
     val callback = remember {
         object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
+                bleSeen += 1
                 val device = result.device
                 val known = profiles.firstOrNull { it.address.equals(device.address, ignoreCase = true) }
                 val name = runCatching { device.name }.getOrNull()
                     ?: result.scanRecord?.deviceName
+                    ?: runCatching { device.alias }.getOrNull()
                     ?: known?.name
                     ?: pairedNameFor(device.address)
                     ?: return
@@ -266,6 +271,7 @@ private fun ReceiversScreen(
                     return
                 }
                 if (intent?.action != BluetoothDevice.ACTION_FOUND) return
+                classicSeen += 1
 
                 val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
@@ -277,6 +283,7 @@ private fun ReceiversScreen(
                 val known = profiles.firstOrNull { it.address.equals(device.address, ignoreCase = true) }
                 val name = runCatching { device.name }.getOrNull()
                     ?: intent.getStringExtra(BluetoothDevice.EXTRA_NAME)
+                    ?: runCatching { device.alias }.getOrNull()
                     ?: known?.name
                     ?: pairedNameFor(device.address)
                     ?: return
@@ -308,20 +315,30 @@ private fun ReceiversScreen(
         if (!permissionGranted || adapter?.isEnabled != true) return
 
         nearby = emptyList()
+        bleSeen = 0
+        classicSeen = 0
         scanning = true
 
-        // Buscar por las dos vías. Reach puede aparecer como BLE para
-        // administración o como Bluetooth Classic para NMEA/SPP.
-        runCatching { scanner?.startScan(callback) }
-        runCatching {
-            if (adapter.isDiscovering) adapter.cancelDiscovery()
-            adapter.startDiscovery()
-        }
+        // Primero BLE en modo de baja latencia para capturar rápidamente el anuncio
+        // del Reach. Luego arrancar Classic/NMEA unos segundos después para evitar
+        // que ambas búsquedas compitan desde el primer instante en algunas tablets.
+        val scanSettings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build()
+        runCatching { scanner?.startScan(null, scanSettings, callback) }
 
-        // No reducir este tiempo: Bluetooth Classic suele necesitar ~12 s para
-        // completar una búsqueda. A 9 s el Reach RS2+ podía quedar fuera y la
-        // pantalla informaba falsamente que no había receptores cercanos.
-        handler.postDelayed({ stopScan() }, 15000)
+        handler.postDelayed({
+            if (scanning) {
+                runCatching {
+                    if (adapter.isDiscovering) adapter.cancelDiscovery()
+                    adapter.startDiscovery()
+                }
+            }
+        }, 3000)
+
+        // Dar tiempo suficiente para que Classic complete su ciclo si BLE no encuentra
+        // al Reach. No reducir sin probar físicamente con el RS2+.
+        handler.postDelayed({ stopScan() }, 18000)
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -509,7 +526,10 @@ private fun ReceiversScreen(
         }
 
         if (!gnss.connected && !scanning && nearby.isEmpty()) {
-            InfoCard("No se detectó ningún receptor GNSS cercano en la última búsqueda. Si la antena está apagada, este es el comportamiento esperado.")
+            InfoCard(
+                "No se detectó ningún receptor GNSS cercano. Diagnóstico: BLE vistos $bleSeen • Bluetooth Classic vistos $classicSeen. " +
+                    "Si la antena está encendida y cercana, estos contadores ayudan a identificar si Android la está entregando a TOPO EMLID."
+            )
         }
 
     }
