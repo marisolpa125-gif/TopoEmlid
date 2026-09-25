@@ -1274,8 +1274,11 @@ private fun StakeoutMapPreview(
             )
         }
 
-        // Receptor y objetivo se dibujan también como capas de estilo superiores.
-        // Esto evita que una WMS/XYZ agregada después los cubra al acercar el zoom.
+        // Línea guía como capa de estilo superior; no puede quedar debajo
+        // del mapa base, satélite o WMS al refrescarse.
+        ensureStakeoutGuidanceLineOnTop(map, gnss, target)
+
+        // Receptor y objetivo encima de la línea y de todas las capas cartográficas.
         ensureStakeoutCriticalOverlayOnTop(map, target, gnss)
 
         val lat = gnss.latitude
@@ -1525,6 +1528,65 @@ private fun StakeoutMapPreview(
 }
 
 
+
+private fun ensureStakeoutGuidanceLineOnTop(
+    map: MapLibreMap,
+    gnss: GnssStatus,
+    target: SurveyPoint?
+) {
+    val style = map.style ?: return
+    val lat = gnss.latitude
+    val lon = gnss.longitude
+    val tLat = target?.latitude
+    val tLon = target?.longitude
+
+    val sourceId = "stakeout-guidance-line-source"
+    val layerId = "stakeout-guidance-line-layer"
+
+    val features = mutableListOf<Feature>()
+    if (lat != null && lon != null && tLat != null && tLon != null) {
+        val north = (tLat - lat) * 111132.0
+        val east = (tLon - lon) * (111320.0 * cos(Math.toRadians(tLat)))
+        val totalM = hypot(north, east)
+        val dashM = when {
+            totalM > 1000.0 -> 40.0
+            totalM > 250.0 -> 20.0
+            totalM > 50.0 -> 8.0
+            totalM > 10.0 -> 3.0
+            else -> 1.0
+        }
+        val pieces = max(1, ceil(totalM / dashM).toInt())
+        for (i in 0 until pieces step 2) {
+            val t0 = i.toDouble() / pieces.toDouble()
+            val t1 = min(1.0, (i + 1).toDouble() / pieces.toDouble())
+            val a = Point.fromLngLat(
+                lon + (tLon - lon) * t0,
+                lat + (tLat - lat) * t0
+            )
+            val b = Point.fromLngLat(
+                lon + (tLon - lon) * t1,
+                lat + (tLat - lat) * t1
+            )
+            features += Feature.fromGeometry(LineString.fromLngLats(listOf(a, b)))
+        }
+    }
+
+    val source = style.getSourceAs<GeoJsonSource>(sourceId)
+    if (source == null) {
+        style.addSource(GeoJsonSource(sourceId, FeatureCollection.fromFeatures(features)))
+    } else {
+        source.setGeoJson(FeatureCollection.fromFeatures(features))
+    }
+
+    runCatching { style.removeLayer(layerId) }
+    style.addLayer(
+        LineLayer(layerId, sourceId).withProperties(
+            PropertyFactory.lineColor(android.graphics.Color.rgb(103, 58, 183)),
+            PropertyFactory.lineWidth(7f),
+            PropertyFactory.lineOpacity(1f)
+        )
+    )
+}
 
 private fun ensureStakeoutCriticalOverlayOnTop(
     map: MapLibreMap,
