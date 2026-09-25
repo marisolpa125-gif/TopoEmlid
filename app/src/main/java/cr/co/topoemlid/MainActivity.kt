@@ -2240,6 +2240,7 @@ private fun ActiveProjectTransferScreen(project: TopoProject?) {
     var importSourceCrs by remember(project.id) { mutableStateOf(ImportSourceCrs.PROJECT) }
     var pendingImportUri by remember(project.id) { mutableStateOf<Uri?>(null) }
     var showImportDialog by remember(project.id) { mutableStateOf(false) }
+    var showImportPickerConfirm by remember(project.id) { mutableStateOf(false) }
 
     val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
