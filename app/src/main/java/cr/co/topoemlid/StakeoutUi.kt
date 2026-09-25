@@ -933,11 +933,7 @@ private fun StakeoutActiveView(
                     color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier
-                        .background(
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
-                            shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
-                        )
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
                 )
                 FilledTonalButton(
                     onClick = onStop,
