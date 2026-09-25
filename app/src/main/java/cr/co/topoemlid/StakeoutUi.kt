@@ -29,6 +29,13 @@ import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
+import org.maplibre.geojson.Feature
+import org.maplibre.geojson.FeatureCollection
+import org.maplibre.geojson.Point
+import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.SymbolLayer
+import org.maplibre.android.style.layers.PropertyFactory
 import kotlin.math.*
 
 enum class StakeoutViewMode(val label: String) {
@@ -794,6 +801,10 @@ private fun StakeoutMapPreview(
             )
         }
 
+        // Receptor y objetivo se dibujan también como capas de estilo superiores.
+        // Esto evita que una WMS/XYZ agregada después los cubra al acercar el zoom.
+        ensureStakeoutCriticalOverlayOnTop(map, target, gnss)
+
         val lat = gnss.latitude
         val lon = gnss.longitude
         val tLat = target?.latitude
@@ -1040,6 +1051,83 @@ private fun StakeoutMapPreview(
     }
 }
 
+
+
+private fun ensureStakeoutCriticalOverlayOnTop(
+    map: MapLibreMap,
+    target: SurveyPoint?,
+    gnss: GnssStatus
+) {
+    val style = map.style ?: return
+
+    // Objetivo seleccionado: mira amarilla como capa de estilo superior.
+    val targetSourceId = "stakeout-critical-target-source"
+    val targetLayerId = "stakeout-critical-target-layer"
+    val targetFeatures = if (target?.latitude != null && target.longitude != null) {
+        listOf(
+            Feature.fromGeometry(
+                Point.fromLngLat(target.longitude!!, target.latitude!!)
+            )
+        )
+    } else emptyList()
+
+    val targetSource = style.getSourceAs<GeoJsonSource>(targetSourceId)
+    if (targetSource == null) {
+        style.addSource(GeoJsonSource(targetSourceId, FeatureCollection.fromFeatures(targetFeatures)))
+    } else {
+        targetSource.setGeoJson(FeatureCollection.fromFeatures(targetFeatures))
+    }
+
+    if (style.getImage("stakeout-critical-target-image") == null) {
+        style.addImage("stakeout-critical-target-image", makeStakeoutTargetBitmap())
+    }
+    runCatching { style.removeLayer(targetLayerId) }
+    style.addLayer(
+        SymbolLayer(targetLayerId, targetSourceId).withProperties(
+            PropertyFactory.iconImage("stakeout-critical-target-image"),
+            PropertyFactory.iconSize(1.05f),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconIgnorePlacement(true)
+        )
+    )
+
+    // Posición actual: color por solución GNSS, siempre por encima del mapa/WMS.
+    val gnssSourceId = "stakeout-critical-gnss-source"
+    val gnssLayerId = "stakeout-critical-gnss-layer"
+    val gnssFeatures = if (gnss.connected && gnss.latitude != null && gnss.longitude != null) {
+        listOf(
+            Feature.fromGeometry(
+                Point.fromLngLat(gnss.longitude!!, gnss.latitude!!)
+            )
+        )
+    } else emptyList()
+
+    val gnssSource = style.getSourceAs<GeoJsonSource>(gnssSourceId)
+    if (gnssSource == null) {
+        style.addSource(GeoJsonSource(gnssSourceId, FeatureCollection.fromFeatures(gnssFeatures)))
+    } else {
+        gnssSource.setGeoJson(FeatureCollection.fromFeatures(gnssFeatures))
+    }
+
+    val color = when {
+        gnss.solution.contains("FIX", ignoreCase = true) ->
+            android.graphics.Color.rgb(46, 125, 50)
+        gnss.solution.contains("FLOAT", ignoreCase = true) ->
+            android.graphics.Color.rgb(251, 192, 45)
+        else ->
+            android.graphics.Color.rgb(211, 47, 47)
+    }
+
+    runCatching { style.removeLayer(gnssLayerId) }
+    style.addLayer(
+        CircleLayer(gnssLayerId, gnssSourceId).withProperties(
+            PropertyFactory.circleColor(color),
+            PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
+            PropertyFactory.circleStrokeWidth(4f),
+            PropertyFactory.circleRadius(11f)
+        )
+    )
+}
 
 @Composable
 private fun StakeoutGuidancePanel(
