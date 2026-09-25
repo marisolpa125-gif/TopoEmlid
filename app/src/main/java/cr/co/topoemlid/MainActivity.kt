@@ -423,21 +423,26 @@ private fun AppSettingsScreen(
     var tabletReachWifiConnectedSecurity by remember { mutableStateOf<String?>(null) }
 
     fun wifiSignalText(value: Int?): String {
-        if (value == null) return "Señal: —"
+        if (value == null) return "Señal: No disponible"
+
         return if (value < 0) {
             val quality = when {
-                value >= -55 -> "Muy buena"
+                value >= -50 -> "Excelente"
+                value >= -60 -> "Muy buena"
                 value >= -67 -> "Buena"
-                value >= -75 -> "Media"
-                else -> "Débil"
+                value >= -75 -> "Regular"
+                value >= -85 -> "Mala"
+                else -> "Muy mala"
             }
             "Señal: $quality ($value dBm)"
         } else {
             val quality = when {
-                value >= 70 -> "Muy buena"
-                value >= 50 -> "Buena"
-                value >= 30 -> "Media"
-                else -> "Débil"
+                value >= 90 -> "Excelente"
+                value >= 75 -> "Muy buena"
+                value >= 60 -> "Buena"
+                value >= 45 -> "Regular"
+                value >= 25 -> "Mala"
+                else -> "Muy mala"
             }
             "Señal: $quality ($value)"
         }
@@ -679,13 +684,21 @@ private fun AppSettingsScreen(
                     }
 
                     if (verifiedClientHost != null) {
+                        val refreshedSignal = runCatching {
+                            ReachLocalApiClient(verifiedClientHost!!).wifiNetworks()
+                                .firstOrNull { it.ssid == target.ssid }
+                                ?.signal
+                        }.getOrNull()
+
                         tabletReachWifiConnectedSsid = target.ssid
-                        tabletReachWifiConnectedSignal = target.signal
+                        tabletReachWifiConnectedSignal =
+                            refreshedSignal ?: target.signal
                         tabletReachWifiConnectedSecurity =
                             verifiedStatus?.security ?: target.security
                         returnReachHotspotActive = false
                         tabletReachWifiMessage =
-                            "Reach conectado como cliente a ${target.ssid} • IP ${verifiedClientHost}. Su hotspot propio quedó fuera de uso."
+                            "Reach conectado como cliente a ${target.ssid} • IP ${verifiedClientHost}. " +
+                                wifiSignalText(tabletReachWifiConnectedSignal) + "."
                         reachBleAdminMessage =
                             "No fue necesario usar BLE; Bluetooth/NMEA se mantuvo activo."
                         refreshTabletInternetStatus()
