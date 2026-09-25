@@ -352,6 +352,7 @@ private fun AppSettingsScreen(
     var confirmExit by remember { mutableStateOf(false) }
     var soundVersion by remember { mutableIntStateOf(0) }
     var pendingSoundEvent by remember { mutableStateOf<FieldSoundEvent?>(null) }
+    var showSoundPickerConfirm by remember { mutableStateOf(false) }
     val settingsScope = rememberCoroutineScope()
     val reachBleAdmin = remember(activeReceiverProfile?.address, activeReceiverProfile?.name) {
         activeReceiverProfile?.address?.let {
@@ -748,6 +749,37 @@ private fun AppSettingsScreen(
         }
     }
 
+    if (showSoundPickerConfirm && pendingSoundEvent != null) {
+        AlertDialog(
+            onDismissRequest = {
+                showSoundPickerConfirm = false
+                pendingSoundEvent = null
+            },
+            title = { Text("Seleccionar sonido") },
+            text = {
+                Text(
+                    "Se abrirá el explorador de archivos de Android. Dentro de ese explorador, use el botón o gesto Atrás del sistema para cancelar y volver a TOPO EMLID."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showSoundPickerConfirm = false
+                        soundPicker.launch(arrayOf("audio/*"))
+                    }
+                ) { Text("Abrir memoria") }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = {
+                        showSoundPickerConfirm = false
+                        pendingSoundEvent = null
+                    }
+                ) { Text("Cancelar") }
+            }
+        )
+    }
+
     DisposableEffect(Unit) {
         onDispose { soundManager.release() }
     }
@@ -895,7 +927,7 @@ private fun AppSettingsScreen(
                                     OutlinedButton(
                                         onClick = {
                                             pendingSoundEvent = event
-                                            soundPicker.launch(arrayOf("audio/*"))
+                                            showSoundPickerConfirm = true
                                         },
                                         modifier = Modifier.weight(1f)
                                     ) {
@@ -1809,6 +1841,7 @@ private fun ProjectDetails(
     var importSourceCrs by remember(project.id) { mutableStateOf(ImportSourceCrs.PROJECT) }
     var pendingImportUri by remember(project.id) { mutableStateOf<Uri?>(null) }
     var showImportDialog by remember(project.id) { mutableStateOf(false) }
+    var showImportPickerConfirm by remember(project.id) { mutableStateOf(false) }
 
     val geoidPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
@@ -2189,6 +2222,42 @@ private fun ActiveProjectTransferScreen(project: TopoProject?) {
         }
     }
 
+    if (showImportPickerConfirm) {
+        AlertDialog(
+            onDismissRequest = { showImportPickerConfirm = false },
+            title = { Text("Seleccionar archivo para importar") },
+            text = {
+                Text(
+                    "Se abrirá el explorador de archivos de Android. Si decide no importar nada, use el botón o gesto Atrás del sistema para regresar inmediatamente a TOPO EMLID."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showImportPickerConfirm = false
+                        importPicker.launch(
+                            arrayOf(
+                                "text/plain",
+                                "text/csv",
+                                "application/json",
+                                "application/geo+json",
+                                "application/vnd.google-earth.kml+xml",
+                                "application/dxf",
+                                "application/zip",
+                                "*/*"
+                            )
+                        )
+                    }
+                ) { Text("Abrir memoria") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showImportPickerConfirm = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
     if (showImportDialog && pendingImportUri != null) {
         AlertDialog(
             onDismissRequest = { showImportDialog = false; pendingImportUri = null },
@@ -2325,9 +2394,10 @@ private fun ActiveProjectTransferScreen(project: TopoProject?) {
                 Text("Importar", fontWeight = FontWeight.Bold)
                 Text("Agregar puntos, líneas o polígonos al proyecto activo desde un archivo externo.", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(8.dp))
-                Button(onClick = {
-                    importPicker.launch(arrayOf("text/plain","text/csv","application/json","application/geo+json","application/vnd.google-earth.kml+xml","application/dxf","application/zip","*/*"))
-                }, modifier = Modifier.fillMaxWidth()) { Text("Importar al proyecto activo") }
+                Button(
+                    onClick = { showImportPickerConfirm = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Importar al proyecto activo") }
                 importMessage?.let { Spacer(Modifier.height(6.dp)); Text(it, style = MaterialTheme.typography.bodySmall) }
             }
         }
