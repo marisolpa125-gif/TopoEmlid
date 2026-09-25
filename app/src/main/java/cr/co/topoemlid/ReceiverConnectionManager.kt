@@ -210,6 +210,7 @@ class ReceiverConnectionManager(context: Context) {
 
         worker = thread(name = "gnss-nmea") {
             var ownedSocket: BluetoothSocket? = null
+            var openedSuccessfully = false
             try {
                 // Give Android's Bluetooth stack a short moment to release any
                 // previous RFCOMM session before opening a new one.
@@ -265,6 +266,7 @@ class ReceiverConnectionManager(context: Context) {
                     )
                 ownedSocket = s
                 socket = s
+                openedSuccessfully = true
 
                 postStatus(
                     status.copy(
@@ -450,7 +452,11 @@ class ReceiverConnectionManager(context: Context) {
                     if (socket === mine) socket = null
                 }
 
+                // Reconectar automáticamente solo si el canal llegó a abrirse y
+                // posteriormente se perdió. Si la apertura inicial falló, conservar
+                // el error visible y NO volver a pisarlo con "RECONECTANDO".
                 val shouldReconnect =
+                    openedSuccessfully &&
                     requestedProfileId == profile.id &&
                     !Thread.currentThread().isInterrupted
 
