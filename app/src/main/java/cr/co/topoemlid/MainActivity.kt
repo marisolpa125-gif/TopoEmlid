@@ -486,17 +486,44 @@ private fun AppSettingsScreen(
         reachBleAdminMessage =
             "Cambiando temporalmente de Bluetooth/NMEA a BLE para $operationLabel…"
 
+        // Cerrar cualquier GATT anterior y después pausar SPP/NMEA. Con el Reach RS2+
+        // el stack Bluetooth de algunas tablets tarda varios segundos en liberar
+        // completamente RFCOMM antes de aceptar GATT BLE.
+        client.close()
         onPauseReceiverForBle()
-        kotlinx.coroutines.delay(1_800L)
+        kotlinx.coroutines.delay(3_500L)
 
         return try {
-            client.ensureConnected().getOrThrow()
+            var firstError: Throwable? = null
+
+            val first = client.ensureConnected()
+            if (first.isFailure) {
+                firstError = first.exceptionOrNull()
+                client.close()
+                reachBleAdminMessage =
+                    "El primer enlace BLE no abrió; liberando Bluetooth y reintentando…"
+                kotlinx.coroutines.delay(2_200L)
+            }
+
+            if (first.isFailure) {
+                client.ensureConnected().getOrElse { second ->
+                    throw IllegalStateException(
+                        "No se pudo abrir BLE después de liberar Bluetooth/NMEA y reintentar. " +
+                            "Primer intento: " + (firstError?.message ?: "sin detalle") +
+                            " • Segundo intento: " + (second.message ?: "sin detalle"),
+                        second
+                    )
+                }
+            }
+
             bleWifiSessionReceiver = receiver
             reachBleAdminMessage = "BLE conectado temporalmente para $operationLabel."
             client
         } catch (t: Throwable) {
             client.close()
             bleWifiSessionReceiver = null
+            // Si BLE falla, recuperar siempre la telemetría NMEA.
+            kotlinx.coroutines.delay(900L)
             onResumeReceiverAfterBle(receiver)
             throw t
         }
