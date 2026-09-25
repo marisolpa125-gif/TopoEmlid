@@ -96,59 +96,47 @@ class ReachBleAdminClient(
 
             var lastError: Throwable? = null
 
-            // Ahora que Bluetooth/NMEA ya se pausa antes de llegar aquí, probamos
-            // primero conexión GATT directa (autoConnect=false). Si Android no la
-            // completa, hacemos un segundo intento con autoConnect=true.
-            for ((candidateIndex, device) in candidates.take(4).withIndex()) {
-                val modes = listOf(false, true)
-                for ((modeIndex, autoConnect) in modes.withIndex()) {
-                    try {
-                        closeGattOnly()
+            // Restaurado al comportamiento que funcionó en Run #365:
+            // autoConnect=true desde el inicio y hasta 15 s para completar GATT.
+            for ((index, device) in candidates.take(4).withIndex()) {
+                try {
+                    closeGattOnly()
+                    delay(if (index == 0) 500L else 1_100L)
 
-                        // Después de cerrar NMEA y/o de un intento GATT previo,
-                        // dejar un margen para que el stack Bluetooth libere recursos.
-                        delay(
-                            when {
-                                candidateIndex == 0 && modeIndex == 0 -> 1_800L
-                                modeIndex == 1 -> 1_200L
-                                else -> 900L
-                            }
+                    val waiter = CompletableDeferred<Unit>()
+                    connectWaiter = waiter
+
+                    gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        device.connectGatt(
+                            appContext,
+                            true,
+                            callback,
+                            android.bluetooth.BluetoothDevice.TRANSPORT_LE
                         )
-
-                        val waiter = CompletableDeferred<Unit>()
-                        connectWaiter = waiter
-
-                        gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                            device.connectGatt(
-                                appContext,
-                                autoConnect,
-                                callback,
-                                android.bluetooth.BluetoothDevice.TRANSPORT_LE
-                            )
-                        } else {
-                            device.connectGatt(appContext, autoConnect, callback)
-                        }
-
-                        try {
-                            withTimeout(if (autoConnect) 12_000L else 8_000L) {
-                                waiter.await()
-                            }
-                        } finally {
-                            if (connectWaiter === waiter) connectWaiter = null
-                        }
-
-                        return@runCatching
-                    } catch (t: Throwable) {
-                        lastError = t
-                        closeGattOnly()
+                    } else {
+                        device.connectGatt(appContext, true, callback)
                     }
+
+                    try {
+                        withTimeout(15_000L) { waiter.await() }
+                    } finally {
+                        if (connectWaiter === waiter) connectWaiter = null
+                    }
+
+                    return@runCatching
+                } catch (t: Throwable) {
+                    lastError = t
+                    closeGattOnly()
                 }
             }
 
-            val attempted = minOf(candidates.size, 4)
+            val suffix = if (candidates.size > 1)
+                " Se probaron ${minOf(candidates.size, 4)} anuncios BLE encontrados."
+            else
+                ""
+
             throw IllegalStateException(
-                (lastError?.message ?: "No se pudo abrir el canal BLE del Reach.") +
-                    " Se probaron $attempted anuncio(s) BLE en modo directo y automático.",
+                (lastError?.message ?: "No se pudo abrir el canal BLE del Reach.") + suffix,
                 lastError
             )
         }
