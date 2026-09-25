@@ -919,23 +919,31 @@ private fun StakeoutActiveView(
                 gnss = gnss,
                 ntrip = ntrip
             )
-            Spacer(Modifier.height(6.dp))
-            Surface(
-                tonalElevation = 8.dp,
-                shadowElevation = 8.dp
+            Spacer(Modifier.height(4.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
             ) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                Text(
+                    viewMode.label + (currentDistanceM?.let { " • " + "%.2f m".format(it) } ?: ""),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier
+                        .background(
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                )
+                FilledTonalButton(
+                    onClick = onStop,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
                 ) {
-                    Text(
-                        viewMode.label + (currentDistanceM?.let { " • " + "%.2f m".format(it) } ?: ""),
-                        fontWeight = FontWeight.Bold
-                    )
-                    Button(onClick = onStop) { Text("Salir") }
+                    Text("Salir", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -946,8 +954,8 @@ private fun StakeoutActiveView(
                 target = target,
                 gnss = gnss,
                 modifier = Modifier
-                    .align(androidx.compose.ui.Alignment.BottomCenter)
-                    .padding(10.dp)
+                    .align(androidx.compose.ui.Alignment.TopCenter)
+                    .padding(top = 146.dp, start = 10.dp, end = 10.dp)
             )
         }
     }
