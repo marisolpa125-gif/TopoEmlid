@@ -540,7 +540,7 @@ class ReachBleAdminClient(
                 is JSONObject -> {
                     val ssid = value.optString("ssid", "").trim()
                     if (ssid.isNotEmpty()) {
-                        val signal = listOf("signal", "rssi", "quality", "signal_strength")
+                        val signal = listOf("signal", "rssi", "quality", "signal_strength", "strength", "level", "signal_level")
                             .firstNotNullOfOrNull { key ->
                                 if (value.has(key) && !value.isNull(key)) {
                                     runCatching { value.getInt(key) }.getOrNull()
