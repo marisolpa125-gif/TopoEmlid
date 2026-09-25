@@ -372,6 +372,9 @@ class ReachLocalApiClient(
                 item.has("rssi") -> item.optInt("rssi")
                 item.has("quality") -> item.optInt("quality")
                 item.has("signal_strength") -> item.optInt("signal_strength")
+                item.has("strength") -> item.optInt("strength")
+                item.has("level") -> item.optInt("level")
+                item.has("signal_level") -> item.optInt("signal_level")
                 else -> null
             }
             return ReachWifiNetwork(
