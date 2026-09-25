@@ -64,9 +64,14 @@ fun StakeoutScreen(
     val points = remember(project?.id) {
         project?.let { pointStore.load(it.id) } ?: emptyList()
     }
+    val geometries = remember(project?.id) {
+        project?.id?.let { loadCommittedGeometries(context, it) } ?: emptyList()
+    }
 
     var mode by remember { mutableStateOf(StakeoutMode.POINT) }
     var selectedPointId by remember { mutableStateOf<String?>(null) }
+    var selectedGeometryId by remember { mutableStateOf<String?>(null) }
+    var showMapPicker by remember { mutableStateOf(false) }
     var startPointId by remember { mutableStateOf<String?>(null) }
     var endPointId by remember { mutableStateOf<String?>(null) }
     var offsetText by remember { mutableStateOf("1.00") }
@@ -78,6 +83,7 @@ fun StakeoutScreen(
     var showPointDisplayPanel by remember { mutableStateOf(false) }
 
     val selectedTarget = points.firstOrNull { it.id == selectedPointId }
+    val selectedGeometry = geometries.firstOrNull { it.id == selectedGeometryId }
     val currentStakeoutDistanceM = run {
         val lat = gnss.latitude
         val lon = gnss.longitude
@@ -168,6 +174,35 @@ fun StakeoutScreen(
         }
     }
 
+    if (showMapPicker) {
+        StakeoutMapPicker(
+            project = project,
+            points = points,
+            geometries = geometries,
+            gnss = gnss,
+            pointDisplaySettings = pointDisplaySettings,
+            selectedPointId = selectedPointId,
+            selectedGeometryId = selectedGeometryId,
+            onPointSelected = { id ->
+                selectedPointId = id
+                selectedGeometryId = null
+                mode = StakeoutMode.POINT
+            },
+            onGeometrySelected = { id, tool ->
+                selectedGeometryId = id
+                selectedPointId = null
+                mode = when (tool) {
+                    MapFieldTool.LINE, MapFieldTool.DISTANCE -> StakeoutMode.LINE
+                    MapFieldTool.PARALLEL -> StakeoutMode.PARALLEL
+                    else -> StakeoutMode.POLYLINE
+                }
+            },
+            onUseSelection = { showMapPicker = false },
+            onCancel = { showMapPicker = false }
+        )
+        return
+    }
+
     if (showPointDisplayPanel) {
         PointDisplaySettingsSheet(
             value = pointDisplaySettings,
@@ -210,11 +245,19 @@ fun StakeoutScreen(
                 Text("Replanteo", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text(project?.name ?: "Sin proyecto activo", style = MaterialTheme.typography.bodySmall)
             }
-            OutlinedButton(
-                onClick = { showPointDisplayPanel = true },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-            ) {
-                Text("👁 Visualización")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(
+                    onClick = { showMapPicker = true },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                ) {
+                    Text("⌖ Escoger del mapa")
+                }
+                OutlinedButton(
+                    onClick = { showPointDisplayPanel = true },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                ) {
+                    Text("👁 Visualización")
+                }
             }
         }
 
@@ -332,6 +375,27 @@ fun StakeoutScreen(
 
         Spacer(Modifier.height(18.dp))
 
+        selectedGeometry?.let { geometry ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("Elemento escogido del mapa", fontWeight = FontWeight.Bold)
+                    Text(
+                        when {
+                            geometrySupportsArea(geometry) -> "Polígono / figura cerrada"
+                            geometry.tool == MapFieldTool.LINE || geometry.tool == MapFieldTool.DISTANCE -> "Línea"
+                            geometry.tool == MapFieldTool.PARALLEL -> "Línea paralela"
+                            else -> "Geometría"
+                        }
+                    )
+                    Text(
+                        "Vértices: " + geometryPath(geometry).size,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp)) {
                 Text("Estado GNSS", fontWeight = FontWeight.Bold)
@@ -353,7 +417,10 @@ fun StakeoutScreen(
                 }
             },
             enabled = project != null && gnss.connected &&
-                (mode != StakeoutMode.POINT || selectedTarget != null),
+                (
+                    (mode == StakeoutMode.POINT && selectedTarget != null) ||
+                    (mode != StakeoutMode.POINT && selectedGeometry != null)
+                ),
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(if (showGuidance) "Detener replanteo" else "Iniciar replanteo")
