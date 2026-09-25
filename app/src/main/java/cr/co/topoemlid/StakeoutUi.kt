@@ -28,6 +28,12 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
 import kotlin.math.*
 
+enum class StakeoutViewMode(val label: String) {
+    MAP("Vista de mapa"),
+    CLOSE("Vista cercana"),
+    PRECISION("Vista mira")
+}
+
 enum class StakeoutMode(val label: String, val description: String) {
     POINT("Punto", "Replantear un punto levantado o ingresado"),
     LINE("Línea", "Replantear sobre una línea entre dos puntos"),
@@ -56,6 +62,7 @@ fun StakeoutScreen(
     var bearingText by remember { mutableStateOf("") }
     var distanceText by remember { mutableStateOf("") }
     var showGuidance by remember { mutableStateOf(false) }
+    var stakeoutView by remember { mutableStateOf(StakeoutViewMode.MAP) }
     val pointDisplayStore = remember { PointDisplaySettingsStore(context) }
     var pointDisplaySettings by remember { mutableStateOf(pointDisplayStore.load()) }
     var showPointDisplayPanel by remember { mutableStateOf(false) }
@@ -140,6 +147,23 @@ fun StakeoutScreen(
             },
             onDismiss = { showPointDisplayPanel = false }
         )
+    }
+
+    if (showGuidance && mode == StakeoutMode.POINT && selectedTarget != null) {
+        StakeoutActiveView(
+            project = project,
+            points = points,
+            target = selectedTarget,
+            gnss = gnss,
+            pointDisplaySettings = pointDisplaySettings,
+            viewMode = stakeoutView,
+            onViewModeChange = { stakeoutView = it },
+            onStop = {
+                showGuidance = false
+                toneGenerator.stopTone()
+            }
+        )
+        return
     }
 
     Column(
@@ -279,24 +303,6 @@ fun StakeoutScreen(
 
         Spacer(Modifier.height(18.dp))
 
-        if (showGuidance && mode == StakeoutMode.POINT) {
-            StakeoutMapPreview(
-                project = project,
-                points = points,
-                target = selectedTarget,
-                gnss = gnss,
-                pointDisplaySettings = pointDisplaySettings
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            // Este recuadro se mantiene compacto; la navegación principal
-            // ocurre sobre el mapa y la guía siempre se dibuja por encima.
-            StakeoutGuidancePanel(target = selectedTarget, gnss = gnss)
-
-            Spacer(Modifier.height(12.dp))
-        }
-
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp)) {
                 Text("Estado GNSS", fontWeight = FontWeight.Bold)
@@ -330,6 +336,141 @@ fun StakeoutScreen(
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 6.dp)
             )
+        }
+    }
+}
+
+@Composable
+private fun StakeoutActiveView(
+    project: TopoProject?,
+    points: List<SurveyPoint>,
+    target: SurveyPoint,
+    gnss: GnssStatus,
+    pointDisplaySettings: PointDisplaySettings,
+    viewMode: StakeoutViewMode,
+    onViewModeChange: (StakeoutViewMode) -> Unit,
+    onStop: () -> Unit
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize()) {
+        when (viewMode) {
+            StakeoutViewMode.MAP -> StakeoutMapPreview(
+                project, points, target, gnss, pointDisplaySettings,
+                modifier = Modifier.fillMaxSize(), closeView = false
+            )
+            StakeoutViewMode.CLOSE -> StakeoutMapPreview(
+                project, points, target, gnss, pointDisplaySettings,
+                modifier = Modifier.fillMaxSize(), closeView = true
+            )
+            StakeoutViewMode.PRECISION -> Surface(Modifier.fillMaxSize()) {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(top = 76.dp, start = 12.dp, end = 12.dp, bottom = 12.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    StakeoutGuidancePanel(project = project, target = target, gnss = gnss)
+                }
+            }
+        }
+
+        Surface(
+            modifier = Modifier
+                .align(androidx.compose.ui.Alignment.TopCenter)
+                .padding(10.dp),
+            tonalElevation = 8.dp,
+            shadowElevation = 8.dp
+        ) {
+            Row(
+                Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Box {
+                    OutlinedButton(onClick = { menuOpen = true }) {
+                        Text(viewMode.label + " ▾")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        StakeoutViewMode.entries.forEach { item ->
+                            DropdownMenuItem(
+                                text = { Text(item.label) },
+                                onClick = {
+                                    onViewModeChange(item)
+                                    menuOpen = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = onStop) { Text("Salir") }
+            }
+        }
+
+        if (viewMode != StakeoutViewMode.PRECISION) {
+            StakeoutCompactOverlay(
+                project = project,
+                target = target,
+                gnss = gnss,
+                modifier = Modifier
+                    .align(androidx.compose.ui.Alignment.BottomCenter)
+                    .padding(10.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun StakeoutCompactOverlay(
+    project: TopoProject?,
+    target: SurveyPoint,
+    gnss: GnssStatus,
+    modifier: Modifier = Modifier
+) {
+    val lat = gnss.latitude
+    val lon = gnss.longitude
+    val tLat = target.latitude
+    val tLon = target.longitude
+    if (lat == null || lon == null || tLat == null || tLon == null) return
+
+    val northM = (tLat - lat) * 111132.0
+    val eastM = (tLon - lon) * (111320.0 * cos(Math.toRadians(tLat)))
+    val distanceM = hypot(northM, eastM)
+
+    val context = LocalContext.current
+    val useGeoid = !project?.geoidFileUri.isNullOrBlank()
+    val targetElevation = if (useGeoid) {
+        target.orthometricHeightM ?: target.ellipsoidalHeightM?.let { h ->
+            GeoidGridService.undulation(
+                context, project?.geoidFileUri, project?.geoidFileName, tLat, tLon
+            ).getOrNull()?.let { h - it.undulationM }
+        }
+    } else target.ellipsoidalHeightM
+
+    val currentElevation = if (useGeoid) {
+        gnss.ellipsoidalHeightM?.let { h ->
+            GeoidGridService.undulation(
+                context, project?.geoidFileUri, project?.geoidFileName, lat, lon
+            ).getOrNull()?.let { h - it.undulationM }
+        }
+    } else gnss.ellipsoidalHeightM
+
+    val dz = if (targetElevation != null && currentElevation != null) targetElevation - currentElevation else null
+
+    Card(modifier) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Text("Punto " + target.pointNumber + " • " + "%.3f m".format(distanceM), fontWeight = FontWeight.Bold)
+            Text("E/O " + "%.3f".format(eastM) + " m • N/S " + "%.3f".format(northM) + " m")
+            if (dz != null) {
+                Text(
+                    when {
+                        dz > 0.005 -> "RELLENO " + "%.3f".format(dz) + " m"
+                        dz < -0.005 -> "CORTE " + "%.3f".format(abs(dz)) + " m"
+                        else -> "COTA OK ±0.005 m"
+                    },
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
@@ -406,7 +547,9 @@ private fun StakeoutMapPreview(
     points: List<SurveyPoint>,
     target: SurveyPoint?,
     gnss: GnssStatus,
-    pointDisplaySettings: PointDisplaySettings
+    pointDisplaySettings: PointDisplaySettings,
+    modifier: Modifier = Modifier.fillMaxWidth().height(280.dp),
+    closeView: Boolean = false
 ) {
     val context = LocalContext.current
     val layerStore = remember(project?.id) { LayerStore(context) }
@@ -531,11 +674,7 @@ private fun StakeoutMapPreview(
         hypot(north, east)
     } else null
 
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(280.dp)
-    ) {
+    Box(modifier) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { mapContext ->
@@ -550,12 +689,21 @@ private fun StakeoutMapPreview(
                             else -> LatLng(9.93, -84.08)
                         }
 
-                        val zoom = when {
-                            distanceM == null -> 8.0
-                            distanceM > 500.0 -> 14.0
-                            distanceM > 100.0 -> 16.0
-                            distanceM > 20.0 -> 17.5
-                            else -> 19.0
+                        val zoom = if (closeView) {
+                            when {
+                                distanceM == null -> 19.0
+                                distanceM > 5.0 -> 19.0
+                                distanceM > 1.0 -> 20.5
+                                else -> 21.5
+                            }
+                        } else {
+                            when {
+                                distanceM == null -> 8.0
+                                distanceM > 500.0 -> 14.0
+                                distanceM > 100.0 -> 16.0
+                                distanceM > 20.0 -> 17.5
+                                else -> 19.0
+                            }
                         }
 
                         map.moveCamera(CameraUpdateFactory.newLatLngZoom(center, zoom))
@@ -613,17 +761,25 @@ private fun StakeoutMapPreview(
                             (targetLon - currentLon) * (111320.0 * cos(Math.toRadians(targetLat)))
                         )
 
-                        if (distance > 20.0) {
+                        if (!closeView && distance > 20.0) {
                             val bounds = LatLngBounds.Builder()
                                 .include(current)
                                 .include(objective)
                                 .build()
                             map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 70))
                         } else {
-                            val zoom = when {
-                                distance > 5.0 -> 18.0
-                                distance > 0.5 -> 19.5
-                                else -> 21.0
+                            val zoom = if (closeView) {
+                                when {
+                                    distance > 5.0 -> 19.0
+                                    distance > 1.0 -> 20.5
+                                    else -> 21.5
+                                }
+                            } else {
+                                when {
+                                    distance > 5.0 -> 18.0
+                                    distance > 0.5 -> 19.5
+                                    else -> 21.0
+                                }
                             }
                             map.animateCamera(CameraUpdateFactory.newLatLngZoom(current, zoom))
                         }
@@ -667,6 +823,7 @@ private fun StakeoutMapPreview(
 
 @Composable
 private fun StakeoutGuidancePanel(
+    project: TopoProject?,
     target: SurveyPoint?,
     gnss: GnssStatus
 ) {
@@ -692,8 +849,26 @@ private fun StakeoutGuidancePanel(
     val eastM = (target.longitude - lon) * metersPerDegLon
     val distanceM = hypot(northM, eastM)
 
-    val targetElevation = target.ellipsoidalHeightM
-    val currentElevation = gnss.ellipsoidalHeightM
+    val context = LocalContext.current
+    val useGeoid = !project?.geoidFileUri.isNullOrBlank()
+    val targetElevation = if (useGeoid) {
+        target.orthometricHeightM ?: target.ellipsoidalHeightM?.let { h ->
+            GeoidGridService.undulation(
+                context, project?.geoidFileUri, project?.geoidFileName,
+                target.latitude, target.longitude
+            ).getOrNull()?.let { h - it.undulationM }
+        }
+    } else target.ellipsoidalHeightM
+
+    val currentElevation = if (useGeoid) {
+        gnss.ellipsoidalHeightM?.let { h ->
+            GeoidGridService.undulation(
+                context, project?.geoidFileUri, project?.geoidFileName,
+                lat, lon
+            ).getOrNull()?.let { h - it.undulationM }
+        }
+    } else gnss.ellipsoidalHeightM
+
     val verticalDelta = if (targetElevation != null && currentElevation != null) {
         targetElevation - currentElevation
     } else null
@@ -720,6 +895,10 @@ private fun StakeoutGuidancePanel(
                 Text("Diferencia vertical: %.3f m".format(verticalDelta))
                 Text("Cota objetivo: %.3f m".format(targetElevation))
                 Text("Cota actual: %.3f m".format(currentElevation))
+                Text(
+                    if (useGeoid) "Vertical: EGM2008 / geoide del proyecto" else "Vertical: elipsoidal",
+                    style = MaterialTheme.typography.bodySmall
+                )
             } else {
                 Text("Sin comparación vertical: falta cota objetivo o cota GNSS.")
             }
