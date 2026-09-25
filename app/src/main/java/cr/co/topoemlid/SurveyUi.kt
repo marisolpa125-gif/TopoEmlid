@@ -4007,7 +4007,7 @@ private fun sanitizeWmsBaseUrl(raw: String): String {
 }
 
 
-private data class CommittedGeometry(
+data class CommittedGeometry(
     val id: String = UUID.randomUUID().toString(),
     val tool: MapFieldTool,
     val points: List<LatLng>,
@@ -4443,7 +4443,7 @@ private fun distanceToPathMeters(point: LatLng, path: List<LatLng>): Double {
     return best
 }
 
-private fun loadCommittedGeometries(context: android.content.Context, projectId: String): List<CommittedGeometry> {
+fun loadCommittedGeometries(context: android.content.Context, projectId: String): List<CommittedGeometry> {
     val raw = context.getSharedPreferences("survey_geometries", android.content.Context.MODE_PRIVATE)
         .getString("geometries_$projectId", null) ?: return emptyList()
     return runCatching {
@@ -4802,7 +4802,7 @@ private fun divisionSummary(title: String, pieces: List<List<LatLng>>): String {
     }.joinToString(" • ")
 }
 
-private enum class MapFieldTool(
+enum class MapFieldTool(
     val label: String,
     val instructions: String,
     val symbol: String
