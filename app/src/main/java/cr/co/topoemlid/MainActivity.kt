@@ -625,28 +625,71 @@ private fun AppSettingsScreen(
         tabletReachWifiShowPasswordDialog = false
         returnReachHotspotActive = false
         tabletReachWifiMessage = "Conectando el Reach a ${target.ssid}…"
+
         settingsScope.launch {
             try {
-                runCatching {
-                    val client = startBleWifiSession("conectar el Reach a ${target.ssid}")
-                    client.connectWifiNetwork(
-                        ssid = target.ssid,
-                        password = if (looksOpen) "" else tabletReachWifiPassword,
-                        security = target.security
-                    ).getOrThrow()
-                }.onSuccess {
+                // Igual que en el escaneo: preferir API local si el Reach está
+                // accesible por IP. Esto NO pausa Bluetooth/NMEA.
+                val localHost = runCatching {
+                    val fixed = ReachLocalApiClient("192.168.42.1")
+                    fixed.wifiStatus()
+                    "192.168.42.1"
+                }.getOrNull() ?: runCatching {
+                    ReachLocalApiClient.discoverReachOnLocalNetwork()
+                }.getOrNull()
+
+                val localResult = localHost?.let { host ->
+                    runCatching {
+                        tabletReachWifiMessage =
+                            "Enviando conexión Wi‑Fi al Reach por API local…"
+                        ReachLocalApiClient(host).connectWifiNetwork(
+                            ssid = target.ssid,
+                            password = if (looksOpen) "" else tabletReachWifiPassword,
+                            security = target.security
+                        ).getOrThrow()
+                    }
+                }
+
+                if (localResult != null && localResult.isSuccess) {
                     tabletReachWifiConnectedSsid = target.ssid
                     tabletReachWifiConnectedSignal = target.signal
                     tabletReachWifiConnectedSecurity = target.security
                     tabletReachWifiMessage =
-                        "Orden enviada por BLE. El Reach está cambiando a ${target.ssid}."
+                        "Orden enviada por API local. El Reach está cambiando a ${target.ssid}; Bluetooth/NMEA se mantiene activo."
+                    reachBleAdminMessage =
+                        "No fue necesario usar BLE para conectar el Wi‑Fi."
+                    // El Reach puede cambiar de IP al abandonar su hotspot.
+                    // No intentamos reconectar GNSS porque NMEA nunca se pausó.
+                    kotlinx.coroutines.delay(1_200L)
                     refreshTabletInternetStatus()
-                }.onFailure {
-                    tabletReachWifiMessage = it.message
-                        ?: "No se pudo conectar el Reach a ${target.ssid} por BLE."
+                    return@launch
                 }
+
+                // Solo usar BLE si no fue posible administrar el Reach por IP.
+                tabletReachWifiMessage =
+                    "Sin acceso IP al Reach. Conectando la red por BLE…"
+                val client = startBleWifiSession("conectar el Reach a ${target.ssid}")
+                client.connectWifiNetwork(
+                    ssid = target.ssid,
+                    password = if (looksOpen) "" else tabletReachWifiPassword,
+                    security = target.security
+                ).getOrThrow()
+
+                tabletReachWifiConnectedSsid = target.ssid
+                tabletReachWifiConnectedSignal = target.signal
+                tabletReachWifiConnectedSecurity = target.security
+                tabletReachWifiMessage =
+                    "Orden enviada por BLE. El Reach está cambiando a ${target.ssid}."
+                refreshTabletInternetStatus()
+            } catch (t: Throwable) {
+                tabletReachWifiMessage =
+                    t.message ?: "No se pudo conectar el Reach a ${target.ssid}."
             } finally {
-                finishBleWifiSession("conectar el Reach a ${target.ssid}")
+                // Si hubo sesión BLE, cerrarla y restaurar NMEA. Si se usó API local,
+                // bleWifiSessionReceiver es null y esto no toca el receptor.
+                if (bleWifiSessionReceiver != null) {
+                    runCatching { finishBleWifiSession("conectar el Reach a ${target.ssid}") }
+                }
                 tabletReachWifiPassword = ""
                 tabletReachWifiBusy = false
             }
