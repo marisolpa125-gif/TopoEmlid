@@ -3,6 +3,7 @@ package cr.co.topoemlid
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.BroadcastReceiver
 import android.content.Intent
@@ -230,6 +231,9 @@ private fun ReceiversScreen(
     val pairedGnss = allPaired.filter { isLikelyGnssReceiver(it.name) }
     val pairedOther = allPaired.filterNot { isLikelyGnssReceiver(it.name) }
 
+    fun pairedNameFor(address: String): String? =
+        allPaired.firstOrNull { it.address.equals(address, ignoreCase = true) }?.name
+
     val callback = remember {
         object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -238,6 +242,7 @@ private fun ReceiversScreen(
                 val name = runCatching { device.name }.getOrNull()
                     ?: result.scanRecord?.deviceName
                     ?: known?.name
+                    ?: pairedNameFor(device.address)
                     ?: return
                 if (!isLikelyGnssReceiver(name) && known == null) return
                 val candidate = NearbyReceiver(name, device.address, result.rssi)
@@ -253,6 +258,13 @@ private fun ReceiversScreen(
     val classicReceiver = remember(profiles) {
         object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action == BluetoothAdapter.ACTION_DISCOVERY_FINISHED) {
+                    if (scanning) {
+                        runCatching { scanner?.stopScan(callback) }
+                        scanning = false
+                    }
+                    return
+                }
                 if (intent?.action != BluetoothDevice.ACTION_FOUND) return
 
                 val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -266,6 +278,7 @@ private fun ReceiversScreen(
                 val name = runCatching { device.name }.getOrNull()
                     ?: intent.getStringExtra(BluetoothDevice.EXTRA_NAME)
                     ?: known?.name
+                    ?: pairedNameFor(device.address)
                     ?: return
 
                 if (!isLikelyGnssReceiver(name) && known == null) return
@@ -305,7 +318,10 @@ private fun ReceiversScreen(
             adapter.startDiscovery()
         }
 
-        handler.postDelayed({ stopScan() }, 9000)
+        // No reducir este tiempo: Bluetooth Classic suele necesitar ~12 s para
+        // completar una búsqueda. A 9 s el Reach RS2+ podía quedar fuera y la
+        // pantalla informaba falsamente que no había receptores cercanos.
+        handler.postDelayed({ stopScan() }, 15000)
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -314,7 +330,9 @@ private fun ReceiversScreen(
     }
 
     DisposableEffect(classicReceiver) {
-        val filter = IntentFilter(BluetoothDevice.ACTION_FOUND)
+        val filter = IntentFilter(BluetoothDevice.ACTION_FOUND).apply {
+            addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(classicReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
