@@ -212,14 +212,19 @@ class ReceiverConnectionManager(context: Context) {
             var ownedSocket: BluetoothSocket? = null
             var openedSuccessfully = false
             try {
-                // Give Android's Bluetooth stack a short moment to release any
-                // previous RFCOMM session before opening a new one.
-                Thread.sleep(450)
+                // RFCOMM puede fallar si Android todavía está en discovery o si
+                // conserva una lista SDP vieja. Primero cancelar discovery,
+                // esperar a que el adaptador quede libre y refrescar los UUID
+                // anunciados por el receptor antes de abrir el puerto serie.
+                adapter?.cancelDiscovery()
+                Thread.sleep(900L)
+
+                runCatching { device.fetchUuidsWithSdp() }
+                Thread.sleep(1800L)
 
                 val spp = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
                 val advertised = device.uuids?.map { it.uuid }.orEmpty()
                 val candidates = (listOf(spp) + advertised).distinct()
-                adapter?.cancelDiscovery()
 
                 var connectedSocket: BluetoothSocket? = null
                 var lastConnectError: Throwable? = null
@@ -285,9 +290,16 @@ class ReceiverConnectionManager(context: Context) {
 
                 val s = connectedSocket
                     ?: throw IllegalStateException(
-                        "No se pudo abrir el canal Bluetooth/NMEA con ${profile.name}. " +
-                            "Se intentó SPP seguro, SPP inseguro y RFCOMM directo. " +
-                            "Compruebe que NMEA por Bluetooth esté activo en el Reach y que otra aplicación no esté usando el puerto serie.",
+                        buildString {
+                            append("No se pudo abrir el canal Bluetooth/NMEA con ${profile.name}. ")
+                            append("Se intentó SDP actualizado, SPP seguro, SPP inseguro y RFCOMM directo. ")
+                            append("UUID anunciados: ")
+                            append(if (advertised.isEmpty()) "ninguno" else advertised.joinToString())
+                            append(". Error Android: ")
+                            append(lastConnectError?.javaClass?.simpleName ?: "desconocido")
+                            append(": ")
+                            append(lastConnectError?.message ?: "sin detalle")
+                        },
                         lastConnectError
                     )
                 ownedSocket = s
