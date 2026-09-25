@@ -532,27 +532,63 @@ private fun AppSettingsScreen(
     fun scanWifiForReachFromTabletSection() {
         if (preferredInternetSource != "TABLET" || tabletReachWifiBusy) return
         tabletReachWifiBusy = true
-        tabletReachWifiMessage = "Buscando redes Wi‑Fi por BLE…"
+        tabletReachWifiMessage = "Buscando redes Wi‑Fi disponibles para el Reach…"
+
         settingsScope.launch {
-            runCatching {
+            try {
+                // Preferir la API local cuando la tablet puede llegar al Reach.
+                // Es la misma ruta lógica de Reach Panel: wifi_scan + /wifi/networks.
+                val localHost = runCatching {
+                    val fixed = ReachLocalApiClient("192.168.42.1")
+                    fixed.wifiStatus()
+                    "192.168.42.1"
+                }.getOrNull() ?: runCatching {
+                    ReachLocalApiClient.discoverReachOnLocalNetwork()
+                }.getOrNull()
+
+                val localNetworks = localHost?.let { host ->
+                    runCatching {
+                        tabletReachWifiMessage =
+                            "Reach accesible por IP $host. Escaneando redes por API local…"
+                        ReachLocalApiClient(host).wifiNetworks()
+                    }.getOrNull()
+                }
+
+                if (localNetworks != null) {
+                    tabletReachWifiNetworks = localNetworks
+                    tabletReachWifiMessage =
+                        if (localNetworks.isEmpty()) {
+                            "El Reach respondió por API local, pero no reportó redes Wi‑Fi cercanas."
+                        } else {
+                            "Redes detectadas por el Reach: ${localNetworks.size} • API local."
+                        }
+                    reachBleAdminMessage =
+                        "No fue necesario usar BLE; el Reach respondió por su API local."
+                    return@launch
+                }
+
+                // Respaldo cuando no hay acceso IP al Reach.
+                tabletReachWifiMessage =
+                    "Sin acceso IP al Reach. Probando escaneo por BLE…"
                 val client = startBleWifiSession("buscar redes Wi‑Fi")
-                client.scanWifiNetworks().getOrThrow()
-            }.onSuccess { networks ->
+                val networks = client.scanWifiNetworks().getOrThrow()
+
                 tabletReachWifiNetworks = networks
                 tabletReachWifiMessage =
                     if (networks.isEmpty()) {
                         "El Reach no reportó redes Wi‑Fi cercanas por BLE."
                     } else {
-                        "Redes detectadas por el Reach vía BLE: ${networks.size}. Seleccione una red; BLE permanecerá abierto hasta terminar la conexión."
+                        "Redes detectadas por el Reach vía BLE: ${networks.size}."
                     }
                 reachBleAdminMessage =
                     "BLE listo para seleccionar la red. Bluetooth/NMEA se restaurará al terminar."
-            }.onFailure {
-                tabletReachWifiMessage = it.message
-                    ?: "No se pudieron consultar las redes Wi‑Fi del Reach por BLE."
+            } catch (t: Throwable) {
+                tabletReachWifiMessage =
+                    t.message ?: "No se pudieron consultar las redes Wi‑Fi del Reach."
                 runCatching { finishBleWifiSession("buscar redes Wi‑Fi") }
+            } finally {
+                tabletReachWifiBusy = false
             }
-            tabletReachWifiBusy = false
         }
     }
 
