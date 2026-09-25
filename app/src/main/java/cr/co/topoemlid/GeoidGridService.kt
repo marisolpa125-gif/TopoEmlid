@@ -15,6 +15,21 @@ data class GeoidSample(
 object GeoidGridService {
     private data class Node(val lat: Double, val lon: Double, val n: Double)
 
+    @Volatile private var cachedUriText: String? = null
+    @Volatile private var cachedBytes: ByteArray? = null
+
+    @Synchronized
+    private fun loadBytes(context: Context, uriText: String): ByteArray {
+        if (cachedUriText == uriText) {
+            cachedBytes?.let { return it }
+        }
+        val loaded = context.contentResolver.openInputStream(Uri.parse(uriText))?.use { it.readBytes() }
+            ?: error("No se pudo abrir el archivo geoidal.")
+        cachedUriText = uriText
+        cachedBytes = loaded
+        return loaded
+    }
+
     fun undulation(
         context: Context,
         uriText: String?,
@@ -23,9 +38,7 @@ object GeoidGridService {
         longitude: Double
     ): Result<GeoidSample> = runCatching {
         require(!uriText.isNullOrBlank()) { "El proyecto no tiene archivo geoidal." }
-        val uri = Uri.parse(uriText)
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: error("No se pudo abrir el archivo geoidal.")
+        val bytes = loadBytes(context, uriText)
 
         require(bytes.isNotEmpty()) { "El archivo geoidal está vacío." }
 
