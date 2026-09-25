@@ -46,7 +46,8 @@ enum class StakeoutMode(val label: String, val description: String) {
 @Composable
 fun StakeoutScreen(
     project: TopoProject?,
-    gnss: GnssStatus
+    gnss: GnssStatus,
+    ntrip: NtripLiveStatus
 ) {
     val context = LocalContext.current
     val pointStore = remember(project?.id) { SurveyPointStore(context) }
@@ -155,6 +156,7 @@ fun StakeoutScreen(
             target = selectedTarget,
             gnss = gnss,
             pointDisplaySettings = pointDisplaySettings,
+            ntrip = ntrip,
             onStop = {
                 showGuidance = false
                 toneGenerator.stopTone()
@@ -344,6 +346,7 @@ private fun StakeoutActiveView(
     target: SurveyPoint,
     gnss: GnssStatus,
     pointDisplaySettings: PointDisplaySettings,
+    ntrip: NtripLiveStatus,
     onStop: () -> Unit
 ) {
     val currentDistanceM = run {
@@ -394,7 +397,7 @@ private fun StakeoutActiveView(
                 Column(
                     Modifier
                         .fillMaxSize()
-                        .padding(top = 76.dp, start = 12.dp, end = 12.dp, bottom = 12.dp)
+                        .padding(top = 168.dp, start = 12.dp, end = 12.dp, bottom = 12.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
                     StakeoutGuidancePanel(project = project, target = target, gnss = gnss)
@@ -402,23 +405,35 @@ private fun StakeoutActiveView(
             }
         }
 
-        Surface(
+        Column(
             modifier = Modifier
                 .align(androidx.compose.ui.Alignment.TopCenter)
-                .padding(10.dp),
-            tonalElevation = 8.dp,
-            shadowElevation = 8.dp
+                .fillMaxWidth()
+                .padding(8.dp)
         ) {
-            Row(
-                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            StakeoutStatusHeader(
+                project = project,
+                gnss = gnss,
+                ntrip = ntrip
+            )
+            Spacer(Modifier.height(6.dp))
+            Surface(
+                tonalElevation = 8.dp,
+                shadowElevation = 8.dp
             ) {
-                Text(
-                    viewMode.label + (currentDistanceM?.let { " • " + "%.2f m".format(it) } ?: ""),
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.width(10.dp))
-                Button(onClick = onStop) { Text("Salir") }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    Text(
+                        viewMode.label + (currentDistanceM?.let { " • " + "%.2f m".format(it) } ?: ""),
+                        fontWeight = FontWeight.Bold
+                    )
+                    Button(onClick = onStop) { Text("Salir") }
+                }
             }
         }
 
@@ -431,6 +446,127 @@ private fun StakeoutActiveView(
                     .align(androidx.compose.ui.Alignment.BottomCenter)
                     .padding(10.dp)
             )
+        }
+    }
+}
+
+@Composable
+private fun StakeoutStatusHeader(
+    project: TopoProject?,
+    gnss: GnssStatus,
+    ntrip: NtripLiveStatus
+) {
+    val context = LocalContext.current
+
+    val coordinate = remember(project?.id, project?.crsName, gnss.latitude, gnss.longitude) {
+        val lat = gnss.latitude
+        val lon = gnss.longitude
+        if (project != null && lat != null && lon != null) {
+            runCatching { ProjectCoordinateEngine.fromWgs84(lat, lon, project.crsName) }.getOrNull()
+        } else null
+    }
+
+    val geoidSample = remember(
+        project?.id,
+        project?.geoidFileUri,
+        gnss.latitude,
+        gnss.longitude,
+        gnss.ellipsoidalHeightM
+    ) {
+        val lat = gnss.latitude
+        val lon = gnss.longitude
+        val h = gnss.ellipsoidalHeightM
+        if (project != null && !project.geoidFileUri.isNullOrBlank() && lat != null && lon != null && h != null) {
+            GeoidGridService.undulation(
+                context = context,
+                uriText = project.geoidFileUri,
+                fileName = project.geoidFileName,
+                latitude = lat,
+                longitude = lon
+            )
+        } else null
+    }
+
+    val orthometricHeight = if (geoidSample?.isSuccess == true) {
+        val h = gnss.ellipsoidalHeightM
+        val n = geoidSample.getOrNull()?.undulationM
+        if (h != null && n != null) h - n else null
+    } else null
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        tonalElevation = 6.dp,
+        shadowElevation = 6.dp
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Text(project?.name ?: "Sin proyecto activo", style = MaterialTheme.typography.titleMedium)
+
+            Text(
+                if (gnss.connected) {
+                    "GNSS: CONECTADO • " + gnss.solution +
+                        " • Sat: " + (gnss.satellites?.toString() ?: "—") +
+                        " • H: " + (gnss.horizontalAccuracyM?.let { "%.3f m".format(it) } ?: "—") +
+                        " • V: " + (gnss.verticalAccuracyM?.let { "%.3f m".format(it) } ?: "—")
+                } else {
+                    "GNSS: DESCONECTADO"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                if (ntrip.connected) {
+                    "NTRIP: CONECTADO" +
+                        (ntrip.profileName?.let { " • $it" } ?: "") +
+                        (ntrip.mountPoint?.let { " • $it" } ?: "")
+                } else if (ntrip.connecting) {
+                    "NTRIP: CONECTANDO"
+                } else {
+                    "NTRIP: DESCONECTADO"
+                },
+                style = MaterialTheme.typography.labelSmall
+            )
+
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+
+            val p = project
+            if (p != null) {
+                if (p.crsName == "WGS 84 geográficas") {
+                    Text(
+                        "CRS: WGS 84 geográficas • Lat: " +
+                            (gnss.latitude?.let { "%.8f".format(it) } ?: "—") +
+                            " • Lon: " +
+                            (gnss.longitude?.let { "%.8f".format(it) } ?: "—"),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                } else {
+                    Text(
+                        "CRS: " + p.crsName +
+                            " • N: " + (coordinate?.northingM?.let { "%.3f".format(it) } ?: "—") +
+                            " • E: " + (coordinate?.eastingM?.let { "%.3f".format(it) } ?: "—"),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                val verticalText = when {
+                    p.geoidFileUri.isNullOrBlank() ->
+                        "Altura: " + (gnss.ellipsoidalHeightM?.let { "%.3f m".format(it) } ?: "—") +
+                            " • Vertical: Elipsoidal"
+                    geoidSample?.isFailure == true ->
+                        "Geoide no aplicado • " + (p.geoidFileName ?: "archivo geoidal")
+                    else ->
+                        "Elevación: " + (orthometricHeight?.let { "%.3f m".format(it) } ?: "—") +
+                            " • Vertical: Geoide · " + (p.geoidFileName ?: "local")
+                }
+
+                Text(
+                    verticalText,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
