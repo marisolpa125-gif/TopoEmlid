@@ -437,6 +437,287 @@ fun StakeoutScreen(
 }
 
 @Composable
+private fun StakeoutMapPicker(
+    project: TopoProject?,
+    points: List<SurveyPoint>,
+    geometries: List<CommittedGeometry>,
+    gnss: GnssStatus,
+    pointDisplaySettings: PointDisplaySettings,
+    selectedPointId: String?,
+    selectedGeometryId: String?,
+    onPointSelected: (String) -> Unit,
+    onGeometrySelected: (String, MapFieldTool) -> Unit,
+    onUseSelection: () -> Unit,
+    onCancel: () -> Unit
+) {
+    val context = LocalContext.current
+    val layerStore = remember(project?.id) { LayerStore(context) }
+    val basemapStore = remember(project?.id) { BasemapStore(context) }
+
+    fun loadEffectiveLayers(): List<LayerItem> {
+        val saved = project?.let { layerStore.load(it.id) }.orEmpty()
+        val global = layerStore.loadLibrary()
+        if (project == null) return global
+        val fromLibrary = global.map { lib ->
+            saved.firstOrNull { it.id == lib.id } ?: lib.copy(visible = false)
+        }
+        val projectOnly = saved.filter { s -> global.none { it.id == s.id } }
+        return (fromLibrary + projectOnly).mapIndexed { index, item -> item.copy(order = index) }
+    }
+
+    val layers = remember(project?.id) { loadEffectiveLayers() }
+    val basemap = remember(project?.id) { basemapStore.selected(project?.id) }
+    var localSelectedPointId by remember(selectedPointId) { mutableStateOf(selectedPointId) }
+    var localSelectedGeometryId by remember(selectedGeometryId) { mutableStateOf(selectedGeometryId) }
+    var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
+
+    fun redraw(map: MapLibreMap) {
+        map.clear()
+
+        val iconFactory = IconFactory.getInstance(context)
+        val normalPointIcon = iconFactory.fromBitmap(
+            makeTopoPointBitmap(android.graphics.Color.rgb(211, 47, 47))
+        )
+        val selectedPointIcon = iconFactory.fromBitmap(makeStakeoutTargetBitmap())
+        val receiverColor = when {
+            gnss.solution.contains("FIX", ignoreCase = true) ->
+                android.graphics.Color.rgb(46, 125, 50)
+            gnss.solution.contains("FLOAT", ignoreCase = true) ->
+                android.graphics.Color.rgb(251, 192, 45)
+            else ->
+                android.graphics.Color.rgb(211, 47, 47)
+        }
+        val receiverIcon = iconFactory.fromBitmap(makeTopoPointBitmap(receiverColor))
+
+        geometries.forEach { geometry ->
+            val path = geometryPath(geometry)
+            if (path.isEmpty()) return@forEach
+            val selected = geometry.id == localSelectedGeometryId
+            val color = if (selected) {
+                android.graphics.Color.rgb(255, 193, 7)
+            } else {
+                android.graphics.Color.rgb(103, 58, 183)
+            }
+            val drawPath = if (geometrySupportsArea(geometry) && path.size >= 3) {
+                path + path.first()
+            } else {
+                path
+            }
+            if (drawPath.size >= 2) {
+                map.addPolyline(
+                    PolylineOptions()
+                        .addAll(drawPath)
+                        .width(if (selected) 10f else 6f)
+                        .color(color)
+                )
+            } else {
+                map.addMarker(
+                    MarkerOptions()
+                        .position(drawPath.first())
+                        .icon(if (selected) selectedPointIcon else normalPointIcon)
+                )
+            }
+        }
+
+        points.forEach { surveyPoint ->
+            val lat = surveyPoint.latitude ?: return@forEach
+            val lon = surveyPoint.longitude ?: return@forEach
+            map.addMarker(
+                MarkerOptions()
+                    .position(LatLng(lat, lon))
+                    .icon(if (surveyPoint.id == localSelectedPointId) selectedPointIcon else normalPointIcon)
+                    .title("Punto " + surveyPoint.pointNumber)
+            )
+        }
+
+        if (gnss.connected && gnss.latitude != null && gnss.longitude != null) {
+            map.addMarker(
+                MarkerOptions()
+                    .position(LatLng(gnss.latitude!!, gnss.longitude!!))
+                    .icon(receiverIcon)
+                    .title("RTK • posición actual")
+            )
+        }
+
+        map.style?.let { style ->
+            ensureTopoSurveyPointLayers(
+                style = style,
+                prefix = "stakeout-picker-points",
+                points = points,
+                settings = pointDisplaySettings,
+                selectedPointId = localSelectedPointId
+            )
+        }
+    }
+
+    fun findPointAtScreen(map: MapLibreMap, tapped: LatLng, tolerancePx: Double = 42.0): SurveyPoint? {
+        val tap = map.projection.toScreenLocation(tapped)
+        return points.mapNotNull { surveyPoint ->
+            val lat = surveyPoint.latitude ?: return@mapNotNull null
+            val lon = surveyPoint.longitude ?: return@mapNotNull null
+            val screen = map.projection.toScreenLocation(LatLng(lat, lon))
+            val d = hypot(
+                (tap.x - screen.x).toDouble(),
+                (tap.y - screen.y).toDouble()
+            )
+            surveyPoint to d
+        }.filter { it.second <= tolerancePx }
+            .minByOrNull { it.second }
+            ?.first
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { mapContext ->
+                MapView(mapContext).apply {
+                    onCreate(null)
+                    onStart()
+                    onResume()
+                    getMapAsync { map ->
+                        mapRef = map
+
+                        val center = when {
+                            gnss.latitude != null && gnss.longitude != null ->
+                                LatLng(gnss.latitude!!, gnss.longitude!!)
+                            points.firstOrNull { it.latitude != null && it.longitude != null } != null -> {
+                                val p = points.first { it.latitude != null && it.longitude != null }
+                                LatLng(p.latitude!!, p.longitude!!)
+                            }
+                            geometries.firstOrNull()?.let { geometryPath(it).firstOrNull() } != null ->
+                                geometryPath(geometries.first()).first()
+                            else -> LatLng(9.93, -84.08)
+                        }
+
+                        map.moveCamera(CameraUpdateFactory.newLatLngZoom(center, 18.0))
+
+                        val baseStyle = Style.Builder().fromJson(
+                            """
+                            {
+                              "version": 8,
+                              "sources": {},
+                              "layers": [
+                                {
+                                  "id": "background",
+                                  "type": "background",
+                                  "paint": {"background-color": "#d9dde1"}
+                                }
+                              ]
+                            }
+                            """.trimIndent()
+                        )
+
+                        map.setStyle(baseStyle) { style ->
+                            addSelectedBasemap(style, basemap)
+                            addProjectRasterLayers(style, layers)
+                            refreshViewportWmsLayers(map, layers) { redraw(map) }
+                            redraw(map)
+                        }
+
+                        map.addOnCameraIdleListener {
+                            refreshViewportWmsLayers(map, layers) { redraw(map) }
+                        }
+
+                        map.addOnMapClickListener { tapped ->
+                            val foundPoint = findPointAtScreen(map, tapped)
+                            if (foundPoint != null) {
+                                localSelectedPointId = foundPoint.id
+                                localSelectedGeometryId = null
+                                onPointSelected(foundPoint.id)
+                                redraw(map)
+                                true
+                            } else {
+                                val geometryIndex = findGeometryAtScreen(
+                                    map = map,
+                                    point = tapped,
+                                    geometries = geometries,
+                                    tolerancePx = 44.0
+                                )
+                                val geometry = geometryIndex?.let { geometries.getOrNull(it) }
+                                if (geometry != null) {
+                                    localSelectedPointId = null
+                                    localSelectedGeometryId = geometry.id
+                                    onGeometrySelected(geometry.id, geometry.tool)
+                                    redraw(map)
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            update = {
+                mapRef?.let { redraw(it) }
+            }
+        )
+
+        Surface(
+            modifier = Modifier
+                .align(androidx.compose.ui.Alignment.TopCenter)
+                .fillMaxWidth()
+                .padding(10.dp),
+            tonalElevation = 8.dp,
+            shadowElevation = 8.dp
+        ) {
+            Column(Modifier.padding(12.dp)) {
+                Text("Escoger del mapa", fontWeight = FontWeight.Bold)
+                Text(
+                    "Toque un punto, línea o figura. El elemento seleccionado se resalta en amarillo.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+
+        Surface(
+            modifier = Modifier
+                .align(androidx.compose.ui.Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(10.dp),
+            tonalElevation = 8.dp,
+            shadowElevation = 8.dp
+        ) {
+            Column(Modifier.padding(12.dp)) {
+                val selectedText = when {
+                    localSelectedPointId != null -> {
+                        val p = points.firstOrNull { it.id == localSelectedPointId }
+                        "Seleccionado: Punto " + (p?.pointNumber ?: "")
+                    }
+                    localSelectedGeometryId != null -> {
+                        val g = geometries.firstOrNull { it.id == localSelectedGeometryId }
+                        "Seleccionado: " + when {
+                            g == null -> "Geometría"
+                            geometrySupportsArea(g) -> "Polígono / figura cerrada"
+                            g.tool == MapFieldTool.LINE || g.tool == MapFieldTool.DISTANCE -> "Línea"
+                            g.tool == MapFieldTool.PARALLEL -> "Línea paralela"
+                            else -> "Geometría"
+                        }
+                    }
+                    else -> "Toque un elemento para seleccionarlo"
+                }
+                Text(selectedText, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onCancel,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Cancelar") }
+                    Button(
+                        onClick = onUseSelection,
+                        enabled = localSelectedPointId != null || localSelectedGeometryId != null,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Usar este elemento") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun StakeoutActiveView(
     project: TopoProject?,
     points: List<SurveyPoint>,
