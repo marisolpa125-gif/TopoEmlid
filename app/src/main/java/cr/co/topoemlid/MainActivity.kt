@@ -271,7 +271,7 @@ fun TopoEmlidApp() {
                     onConnect = { receiver -> receiverConnection.connect(receiver) },
                     onDisconnect = { receiverConnection.disconnect() }
                 )
-                "Replanteo" -> StakeoutScreen(activeProject, gnss)
+                "Replanteo" -> StakeoutScreen(activeProject, gnss, ntripStatus)
                 "Configuración" -> AppSettingsScreen(
                     activeReceiverProfile = receiverProfiles.firstOrNull { it.id == activeReceiverId },
                     onPauseReceiverForBle = {
