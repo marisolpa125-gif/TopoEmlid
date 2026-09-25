@@ -258,10 +258,36 @@ class ReceiverConnectionManager(context: Context) {
                     }
                 }
 
+                // Último respaldo para receptores GNSS Classic/SPP:
+                // algunos Android fallan la negociación SDP por UUID aunque el
+                // dispositivo esté emparejado. Intentar directamente RFCOMM canal 1,
+                // que es el canal serie usado por muchos receptores NMEA.
+                if (connectedSocket == null && !Thread.currentThread().isInterrupted) {
+                    try {
+                        adapter?.cancelDiscovery()
+                        Thread.sleep(900L)
+                        val method = device.javaClass.getMethod(
+                            "createRfcommSocket",
+                            Int::class.javaPrimitiveType
+                        )
+                        val direct = method.invoke(device, 1) as BluetoothSocket
+                        try {
+                            direct.connect()
+                            connectedSocket = direct
+                        } catch (t: Throwable) {
+                            lastConnectError = t
+                            runCatching { direct.close() }
+                        }
+                    } catch (t: Throwable) {
+                        lastConnectError = t
+                    }
+                }
+
                 val s = connectedSocket
                     ?: throw IllegalStateException(
-                        "No se pudo abrir el canal Bluetooth/NMEA con ${profile.name} después de varios intentos. " +
-                            "Compruebe que el receptor siga emparejado, que ninguna otra app esté usando su Bluetooth y que NMEA por Bluetooth esté activo.",
+                        "No se pudo abrir el canal Bluetooth/NMEA con ${profile.name}. " +
+                            "Se intentó SPP seguro, SPP inseguro y RFCOMM directo. " +
+                            "Compruebe que NMEA por Bluetooth esté activo en el Reach y que otra aplicación no esté usando el puerto serie.",
                         lastConnectError
                     )
                 ownedSocket = s
