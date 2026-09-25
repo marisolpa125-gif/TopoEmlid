@@ -32,8 +32,10 @@ import org.maplibre.android.maps.Style
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
+import org.maplibre.geojson.LineString
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.layers.PropertyFactory
 import kotlin.math.*
@@ -436,6 +438,121 @@ fun StakeoutScreen(
     }
 }
 
+
+private fun ensureStakeoutPickerOverlayOnTop(
+    map: MapLibreMap,
+    points: List<SurveyPoint>,
+    geometries: List<CommittedGeometry>,
+    selectedPointId: String?,
+    selectedGeometryId: String?
+) {
+    val style = map.style ?: return
+
+    fun upsertSource(id: String, features: List<Feature>) {
+        val existing = style.getSourceAs<GeoJsonSource>(id)
+        if (existing == null) {
+            style.addSource(GeoJsonSource(id, FeatureCollection.fromFeatures(features)))
+        } else {
+            existing.setGeoJson(FeatureCollection.fromFeatures(features))
+        }
+    }
+
+    // Geometrías normales y seleccionada, siempre arriba de WMS/XYZ.
+    val normalGeometryFeatures = mutableListOf<Feature>()
+    val selectedGeometryFeatures = mutableListOf<Feature>()
+
+    geometries.forEach { geometry ->
+        val path = geometryPath(geometry)
+        if (path.isEmpty()) return@forEach
+        val drawPath = if (geometrySupportsArea(geometry) && path.size >= 3) {
+            path + path.first()
+        } else {
+            path
+        }
+        if (drawPath.size >= 2) {
+            val feature = Feature.fromGeometry(
+                LineString.fromLngLats(
+                    drawPath.map { Point.fromLngLat(it.longitude, it.latitude) }
+                )
+            )
+            if (geometry.id == selectedGeometryId) {
+                selectedGeometryFeatures += feature
+            } else {
+                normalGeometryFeatures += feature
+            }
+        }
+    }
+
+    val normalGeometrySource = "stakeout-picker-geometry-source"
+    val normalGeometryLayer = "stakeout-picker-geometry-layer"
+    val selectedGeometrySource = "stakeout-picker-selected-geometry-source"
+    val selectedGeometryLayer = "stakeout-picker-selected-geometry-layer"
+
+    upsertSource(normalGeometrySource, normalGeometryFeatures)
+    upsertSource(selectedGeometrySource, selectedGeometryFeatures)
+
+    runCatching { style.removeLayer(normalGeometryLayer) }
+    style.addLayer(
+        LineLayer(normalGeometryLayer, normalGeometrySource).withProperties(
+            PropertyFactory.lineColor(android.graphics.Color.rgb(103, 58, 183)),
+            PropertyFactory.lineWidth(6f),
+            PropertyFactory.lineOpacity(1f)
+        )
+    )
+
+    runCatching { style.removeLayer(selectedGeometryLayer) }
+    style.addLayer(
+        LineLayer(selectedGeometryLayer, selectedGeometrySource).withProperties(
+            PropertyFactory.lineColor(android.graphics.Color.rgb(255, 193, 7)),
+            PropertyFactory.lineWidth(10f),
+            PropertyFactory.lineOpacity(1f)
+        )
+    )
+
+    // Puntos normales y punto seleccionado.
+    val normalPointFeatures = mutableListOf<Feature>()
+    val selectedPointFeatures = mutableListOf<Feature>()
+
+    points.forEach { surveyPoint ->
+        val lat = surveyPoint.latitude ?: return@forEach
+        val lon = surveyPoint.longitude ?: return@forEach
+        val feature = Feature.fromGeometry(Point.fromLngLat(lon, lat))
+        if (surveyPoint.id == selectedPointId) {
+            selectedPointFeatures += feature
+        } else {
+            normalPointFeatures += feature
+        }
+    }
+
+    val normalPointSource = "stakeout-picker-point-source"
+    val normalPointLayer = "stakeout-picker-point-layer"
+    val selectedPointSource = "stakeout-picker-selected-point-source"
+    val selectedPointLayer = "stakeout-picker-selected-point-layer"
+
+    upsertSource(normalPointSource, normalPointFeatures)
+    upsertSource(selectedPointSource, selectedPointFeatures)
+
+    runCatching { style.removeLayer(normalPointLayer) }
+    style.addLayer(
+        CircleLayer(normalPointLayer, normalPointSource).withProperties(
+            PropertyFactory.circleColor(android.graphics.Color.rgb(211, 47, 47)),
+            PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
+            PropertyFactory.circleStrokeWidth(3f),
+            PropertyFactory.circleRadius(9f)
+        )
+    )
+
+    runCatching { style.removeLayer(selectedPointLayer) }
+    style.addLayer(
+        CircleLayer(selectedPointLayer, selectedPointSource).withProperties(
+            PropertyFactory.circleColor(android.graphics.Color.rgb(255, 193, 7)),
+            PropertyFactory.circleStrokeColor(android.graphics.Color.BLACK),
+            PropertyFactory.circleStrokeWidth(3f),
+            PropertyFactory.circleRadius(13f)
+        )
+    )
+}
+
 @Composable
 private fun StakeoutMapPicker(
     project: TopoProject?,
@@ -542,12 +659,20 @@ private fun StakeoutMapPicker(
         map.style?.let { style ->
             ensureTopoSurveyPointLayers(
                 style = style,
-                prefix = "stakeout-picker-points",
+                prefix = "stakeout-points-picker",
                 points = points,
                 settings = pointDisplaySettings,
                 selectedPointId = localSelectedPointId
             )
         }
+
+        ensureStakeoutPickerOverlayOnTop(
+            map = map,
+            points = points,
+            geometries = geometries,
+            selectedPointId = localSelectedPointId,
+            selectedGeometryId = localSelectedGeometryId
+        )
     }
 
     fun findPointAtScreen(map: MapLibreMap, tapped: LatLng, tolerancePx: Double = 42.0): SurveyPoint? {
