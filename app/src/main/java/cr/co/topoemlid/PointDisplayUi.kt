@@ -201,7 +201,9 @@ private fun ensurePointGroup(
         Triple("mid", 14.5f, 17.5f),
         Triple("near", 17.5f, 24f)
     )
-    val sizes = mapOf("far" to 1.0f, "mid" to 0.84f, "near" to 0.70f)
+    // Mantener los puntos muy visibles en todo nivel de zoom.
+    // Al acercarse crecen ligeramente en pantalla en vez de reducirse.
+    val sizes = mapOf("far" to 0.82f, "mid" to 0.96f, "near" to 1.10f)
 
     bands.forEach { (name, minZoom, maxZoom) ->
         val layerId = "$id-icon-$name"
