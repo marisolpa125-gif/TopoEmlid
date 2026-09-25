@@ -248,15 +248,38 @@ class ReachBleAdminClient(
         suspend fun scanWifiNetworks(): Result<List<ReachWifiNetwork>> = withContext(Dispatchers.IO) {
         runCatching {
             ensureConnected().getOrThrow()
+
+            // Dar un pequeño margen a las notificaciones GATT después de conectar.
+            delay(350L)
             sendAction("wifi_scan").getOrThrow()
-            delay(1_400L)
+            delay(1_800L)
 
             var last: List<ReachWifiNetwork> = emptyList()
+            var lastError: Throwable? = null
+
             repeat(4) { attempt ->
-                val response = apiRequest("GET", "/wifi/networks", null)
-                last = parseNetworks(response)
-                if (last.isNotEmpty()) return@runCatching last
-                if (attempt < 3) delay(700L)
+                val response = runCatching {
+                    apiRequest("GET", "/wifi/networks", null)
+                }.onFailure {
+                    lastError = it
+                }.getOrNull()
+
+                if (response != null) {
+                    last = parseNetworks(response)
+                    if (last.isNotEmpty()) return@runCatching last
+                }
+
+                // Si una respuesta BLE se perdió, mantener la misma sesión GATT
+                // y consultar de nuevo en lugar de cerrar todo inmediatamente.
+                if (attempt < 3) delay(900L)
+            }
+
+            if (last.isEmpty() && lastError != null) {
+                throw IllegalStateException(
+                    "El Reach abrió BLE pero no respondió la lista Wi‑Fi después de varios intentos: " +
+                        (lastError?.message ?: "sin detalle"),
+                    lastError
+                )
             }
             last
         }
