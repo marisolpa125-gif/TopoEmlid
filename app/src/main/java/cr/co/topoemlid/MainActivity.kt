@@ -124,6 +124,39 @@ fun TopoEmlidApp() {
     var selectedTool by remember { mutableStateOf(DrawTool.POINT) }
     var showNewProject by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<TopoProject?>(null) }
+    var showDeleteWorkPicker by remember { mutableStateOf(false) }
+    var showOpenWorkConfirm by remember { mutableStateOf(false) }
+    var workHubMessage by remember { mutableStateOf<String?>(null) }
+
+    val openWorkPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            WorkBackupManager.restore(context, uri)
+                .onSuccess { restored ->
+                    val updated = projects + restored.project
+                    projects = updated
+                    store.saveProjects(updated)
+                    activeProjectId = restored.project.id
+                    store.setActiveProject(restored.project.id)
+                    selectedProjectId = null
+                    workHubMessage =
+                        "Trabajo “${restored.project.name}” abierto • " +
+                            "${restored.pointsRestored} puntos • " +
+                            "${restored.geometriesRestored} figuras."
+                }
+                .onFailure {
+                    workHubMessage = it.message ?: "No se pudo abrir el trabajo."
+                }
+        }
+    }
+
     val gnss = receiverConnection.status
     val ntripStatus = ntripConnection.status
     val fieldSounds = remember { FieldSoundManager(context) }
@@ -194,14 +227,85 @@ fun TopoEmlidApp() {
         )
     }
 
+    if (showOpenWorkConfirm) {
+        AlertDialog(
+            onDismissRequest = { showOpenWorkConfirm = false },
+            title = { Text("Abrir trabajo") },
+            text = {
+                Text(
+                    "Se abrirá la memoria de la tablet para seleccionar un respaldo completo de TOPO EMLID (.json)."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showOpenWorkConfirm = false
+                        openWorkPicker.launch(arrayOf("application/json", "text/json", "*/*"))
+                    }
+                ) { Text("Abrir memoria") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showOpenWorkConfirm = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
+    if (showDeleteWorkPicker) {
+        AlertDialog(
+            onDismissRequest = { showDeleteWorkPicker = false },
+            title = { Text("Borrar trabajo") },
+            text = {
+                if (projects.isEmpty()) {
+                    Text("No hay trabajos guardados.")
+                } else {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text("Seleccione el trabajo que desea borrar.")
+                        Spacer(Modifier.height(8.dp))
+                        projects.forEach { p ->
+                            OutlinedButton(
+                                onClick = {
+                                    showDeleteWorkPicker = false
+                                    deleteCandidate = p
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 3.dp)
+                            ) {
+                                Text(p.name)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                OutlinedButton(onClick = { showDeleteWorkPicker = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
     deleteCandidate?.let { project ->
         AlertDialog(
             onDismissRequest = { deleteCandidate = null },
-            title = { Text("Eliminar proyecto") },
+            title = { Text("Borrar trabajo") },
             text = { Text("¿Desea eliminar “${project.name}”? Esta acción no se puede deshacer.") },
             confirmButton = {
                 Button(onClick = {
                     val updated = projects.filterNot { it.id == project.id }
+                    SurveyPointStore(context).save(project.id, emptyList())
+                    context.getSharedPreferences(
+                        "survey_geometries",
+                        android.content.Context.MODE_PRIVATE
+                    ).edit().remove("geometries_${project.id}").apply()
                     persist(updated)
                     if (activeProjectId == project.id) {
                         activeProjectId = null
@@ -238,7 +342,7 @@ fun TopoEmlidApp() {
                                 }
                             )
                         },
-                        label = { Text(if (item == "Proyecto") "Proyectos" else item) }
+                        label = { Text(if (item == "Proyecto") "Trabajos" else item) }
                     )
                 }
             }
@@ -298,6 +402,9 @@ fun TopoEmlidApp() {
                             projects = projects,
                             activeProjectId = activeProjectId,
                             onCreate = { showNewProject = true },
+                            onDeleteWork = { showDeleteWorkPicker = true },
+                            onOpenFromMemory = { showOpenWorkConfirm = true },
+                            message = workHubMessage,
                             onOpen = { p ->
                                 activeProjectId = p.id
                                 store.setActiveProject(p.id)
@@ -1791,6 +1898,9 @@ private fun ProjectHub(
     projects: List<TopoProject>,
     activeProjectId: String?,
     onCreate: () -> Unit,
+    onDeleteWork: () -> Unit,
+    onOpenFromMemory: () -> Unit,
+    message: String?,
     onOpen: (TopoProject) -> Unit,
     onEdit: (TopoProject) -> Unit,
     onView: (TopoProject) -> Unit,
@@ -1815,13 +1925,36 @@ private fun ProjectHub(
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Proyectos", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Button(onClick = onCreate) { Text("+ Nuevo") }
+        Text("Trabajos", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Button(
+                onClick = onCreate,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+            ) { Text("+ Nuevo") }
+            OutlinedButton(
+                onClick = onDeleteWork,
+                enabled = projects.isNotEmpty(),
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+            ) { Text("Borrar") }
+            OutlinedButton(
+                onClick = onOpenFromMemory,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+            ) { Text("Abrir") }
+        }
+        message?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, style = MaterialTheme.typography.bodySmall)
         }
         Spacer(Modifier.height(10.dp))
         if (projects.isEmpty()) {
-            Text("Aún no hay proyectos. Cree uno para definir su CRS, geoide y demás parámetros.")
+            Text("Aún no hay trabajos. Cree uno nuevo o abra un respaldo desde la memoria de la tablet.")
         }
         projects.forEach { p ->
             Card(
@@ -1864,10 +1997,10 @@ private fun NewProjectDialog(onDismiss: () -> Unit, onCreate: (String, String) -
     var location by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Nuevo proyecto") },
+        title = { Text("Nuevo trabajo") },
         text = {
             Column {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Nombre del proyecto") }, singleLine = true)
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Nombre del trabajo") }, singleLine = true)
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(value = location, onValueChange = { location = it }, label = { Text("Lugar / referencia") }, singleLine = true)
             }
@@ -2139,9 +2272,9 @@ private fun ProjectDetails(
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
-        TextButton(onClick = onBack) { Text("← Proyectos") }
-        Text("Datos del proyecto", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        if (isActive) Text("Proyecto activo", fontWeight = FontWeight.Bold)
+        TextButton(onClick = onBack) { Text("← Trabajos") }
+        Text("Datos del trabajo", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        if (isActive) Text("Trabajo activo", fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
 
         OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Nombre") }, modifier = Modifier.fillMaxWidth())
@@ -2216,7 +2349,7 @@ private fun ProjectDetails(
                     geoidFileName = geoidFileName,
                     antennaHeightM = antennaText.toDoubleOrNull() ?: project.antennaHeightM
                 ))
-            }) { Text("Guardar proyecto") }
+            }) { Text("Guardar trabajo") }
 
             OutlinedButton(onClick = onBack) { Text("Cancelar") }
         }
