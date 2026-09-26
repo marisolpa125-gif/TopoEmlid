@@ -203,6 +203,58 @@ fun TopoEmlidApp() {
 
     val activeProject = projects.firstOrNull { it.id == activeProjectId }
 
+    LaunchedEffect(
+        activeProject?.id,
+        activeProject?.geoidFileUri,
+        activeProject?.geoidFileName
+    ) {
+        val p = activeProject ?: return@LaunchedEffect
+        val fileName = p.geoidFileName ?: return@LaunchedEffect
+        val currentUri = p.geoidFileUri
+
+        val currentReadable = currentUri?.let { raw ->
+            runCatching {
+                val uri = Uri.parse(raw)
+                if (uri.scheme.equals("file", ignoreCase = true)) {
+                    java.io.File(uri.path ?: "").let { it.exists() && it.length() > 0L }
+                } else {
+                    context.contentResolver.openInputStream(uri)?.use { it.read() }
+                    true
+                }
+            }.getOrDefault(false)
+        } == true
+
+        if (currentReadable && currentUri?.startsWith("file:") == true) {
+            return@LaunchedEffect
+        }
+
+        val repairedUri = runCatching {
+            if (currentReadable && currentUri != null) {
+                GeoidGridService.makePrivateCopy(
+                    context = context,
+                    sourceUri = Uri.parse(currentUri),
+                    fileName = fileName
+                ).getOrThrow()
+            } else {
+                GeoidGridService.recoverPrivateCopy(
+                    context = context,
+                    currentUriText = currentUri,
+                    fileName = fileName
+                ).getOrThrow()
+            }
+        }.getOrNull()
+
+        if (!repairedUri.isNullOrBlank() && repairedUri != currentUri) {
+            val repaired = p.copy(
+                geoidModel = GeoidModel.LOCAL_FILE,
+                geoidFileUri = repairedUri
+            )
+            val updated = projects.map { if (it.id == p.id) repaired else it }
+            projects = updated
+            store.saveProjects(updated)
+        }
+    }
+
     LaunchedEffect(activeProjectId, projects.size) {
         if (activeProjectId != null) {
             store.setActiveProject(activeProjectId)
@@ -2135,8 +2187,14 @@ private fun ProjectDetails(
                 val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                 if (cursor.moveToFirst() && idx >= 0) displayName = cursor.getString(idx) ?: displayName
             }
-            geoidFileUri = uri.toString()
             geoidFileName = displayName
+            geoidFileUri = GeoidGridService.makePrivateCopy(
+                context = context,
+                sourceUri = uri,
+                fileName = displayName
+            ).getOrElse {
+                uri.toString()
+            }
         }
     }
 
