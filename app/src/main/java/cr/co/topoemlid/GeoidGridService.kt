@@ -2,6 +2,8 @@ package cr.co.topoemlid
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
@@ -23,11 +25,83 @@ object GeoidGridService {
         if (cachedUriText == uriText) {
             cachedBytes?.let { return it }
         }
-        val loaded = context.contentResolver.openInputStream(Uri.parse(uriText))?.use { it.readBytes() }
-            ?: error("No se pudo abrir el archivo geoidal.")
+
+        val uri = Uri.parse(uriText)
+        val loaded = if (uri.scheme.equals("file", ignoreCase = true)) {
+            val path = uri.path ?: error("Ruta interna del geoide inválida.")
+            File(path).readBytes()
+        } else {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: error("No se pudo abrir el archivo geoidal.")
+        }
+
         cachedUriText = uriText
         cachedBytes = loaded
         return loaded
+    }
+
+    fun makePrivateCopy(
+        context: Context,
+        sourceUri: Uri,
+        fileName: String?
+    ): Result<String> = runCatching {
+        val safeName = (fileName ?: "geoide.dat")
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .take(120)
+            .ifBlank { "geoide.dat" }
+
+        val dir = File(context.filesDir, "geoids").apply { mkdirs() }
+        val destination = File(dir, safeName)
+        context.contentResolver.openInputStream(sourceUri)?.use { input ->
+            destination.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        } ?: error("No se pudo leer el archivo geoidal seleccionado.")
+
+        require(destination.length() > 0L) { "La copia interna del geoide quedó vacía." }
+        Uri.fromFile(destination).toString()
+    }
+
+    fun recoverPrivateCopy(
+        context: Context,
+        currentUriText: String?,
+        fileName: String?
+    ): Result<String> = runCatching {
+        val wanted = fileName?.takeIf { it.isNotBlank() }
+            ?: error("El proyecto no tiene nombre de archivo geoidal.")
+
+        fun displayName(uri: Uri): String? {
+            return runCatching {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (cursor.moveToFirst() && idx >= 0) cursor.getString(idx) else null
+                }
+            }.getOrNull()
+        }
+
+        val candidates = buildList {
+            currentUriText?.takeIf { it.isNotBlank() }?.let { raw ->
+                val uri = Uri.parse(raw)
+                if (!uri.scheme.equals("file", ignoreCase = true)) add(uri)
+            }
+            context.contentResolver.persistedUriPermissions
+                .filter { it.isReadPermission }
+                .map { it.uri }
+                .forEach { uri ->
+                    if (none { it == uri }) add(uri)
+                }
+        }
+
+        val matched = candidates.firstOrNull { uri ->
+            val name = displayName(uri)
+            name.equals(wanted, ignoreCase = true) &&
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { it.read() }
+                    true
+                }.getOrDefault(false)
+        } ?: error("No se encontró un permiso válido de Android para $wanted.")
+
+        makePrivateCopy(context, matched, wanted).getOrThrow()
     }
 
     fun undulation(
