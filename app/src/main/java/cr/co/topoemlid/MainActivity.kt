@@ -125,6 +125,7 @@ fun TopoEmlidApp() {
     var showNewProject by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<TopoProject?>(null) }
     var stakeoutActive by remember { mutableStateOf(false) }
+    var stakeoutSelectedPointId by rememberSaveable { mutableStateOf<String?>(null) }
     var navigationWarning by remember { mutableStateOf<String?>(null) }
     var showDeleteWorkPicker by remember { mutableStateOf(false) }
     var showOpenWorkConfirm by remember { mutableStateOf(false) }
@@ -367,7 +368,14 @@ fun TopoEmlidApp() {
                                 stakeoutActive &&
                                 item != "Replanteo"
                             ) {
-                                warnInvalidNavigation()
+                                if (item == "Levantamiento") {
+                                    // Cambiar a Levantamiento pausa el replanteo, pero
+                                    // conserva el objetivo seleccionado para retomarlo.
+                                    stakeoutActive = false
+                                    page = item
+                                } else {
+                                    warnInvalidNavigation()
+                                }
                             } else {
                                 page = item
                             }
@@ -435,9 +443,11 @@ fun TopoEmlidApp() {
                     onDisconnect = { receiverConnection.disconnect() }
                 )
                 "Replanteo" -> StakeoutScreen(
-                    activeProject,
-                    gnss,
-                    ntripStatus,
+                    project = activeProject,
+                    gnss = gnss,
+                    ntrip = ntripStatus,
+                    selectedPointId = stakeoutSelectedPointId,
+                    onSelectedPointIdChanged = { stakeoutSelectedPointId = it },
                     onActiveChanged = { stakeoutActive = it }
                 )
                 "Configuración" -> AppSettingsScreen(
