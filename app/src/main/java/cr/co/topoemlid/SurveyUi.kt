@@ -2750,6 +2750,7 @@ internal fun ensureSurveyPointOverlayOnTop(
             PropertyFactory.circleRadius(10f)
         )
     )
+    promoteFieldOverlayLayers(style)
 }
 
 private fun drawSavedSurveyPointSymbols(
@@ -3004,25 +3005,61 @@ fun addSelectedBasemap(
     }
 }
 
+private const val FIELD_OVERLAY_ANCHOR_SOURCE = "field-overlay-anchor-source"
+private const val FIELD_OVERLAY_ANCHOR_LAYER = "field-overlay-anchor-layer"
+
+private fun isFieldOverlayLayerId(id: String): Boolean =
+    id == "survey-geometries-top-layer" ||
+        id.startsWith("survey-points-top-") ||
+        id.startsWith("stakeout-points-") ||
+        id == "gnss-live-top-layer" ||
+        id.startsWith("stakeout-critical-") ||
+        id == "stakeout-guidance-line-layer"
+
+private fun ensureFieldOverlayAnchor(style: Style): String {
+    if (style.getSource(FIELD_OVERLAY_ANCHOR_SOURCE) == null) {
+        style.addSource(
+            GeoJsonSource(
+                FIELD_OVERLAY_ANCHOR_SOURCE,
+                FeatureCollection.fromFeatures(emptyList())
+            )
+        )
+    }
+
+    if (style.getLayer(FIELD_OVERLAY_ANCHOR_LAYER) == null) {
+        style.addLayer(
+            LineLayer(
+                FIELD_OVERLAY_ANCHOR_LAYER,
+                FIELD_OVERLAY_ANCHOR_SOURCE
+            ).withProperties(
+                PropertyFactory.lineOpacity(0f),
+                PropertyFactory.lineWidth(0f)
+            )
+        )
+    }
+    return FIELD_OVERLAY_ANCHOR_LAYER
+}
+
+private fun promoteFieldOverlayLayers(style: Style) {
+    val ids = style.layers
+        .map { it.id }
+        .filter { isFieldOverlayLayerId(it) }
+
+    ids.forEach { id ->
+        val layer = runCatching { style.removeLayer(id) }.getOrNull()
+        if (layer != null) {
+            runCatching { style.addLayer(layer) }
+        }
+    }
+}
+
 private fun addRasterBelowFieldOverlays(
     style: Style,
     layer: RasterLayer
 ) {
-    // Cualquier capa cartográfica debe quedar SIEMPRE debajo de los elementos
-    // de trabajo de campo. Elegimos la primera capa de puntos conocida como ancla.
-    val anchor = style.layers.firstOrNull { existing ->
-        val id = existing.id
-        id.startsWith("survey-points-top-") ||
-            id.startsWith("stakeout-points-") ||
-            id == "gnss-live-top-layer" ||
-            id.startsWith("stakeout-critical-")
-    }?.id
-
-    if (anchor != null) {
-        style.addLayerBelow(layer, anchor)
-    } else {
-        style.addLayer(layer)
-    }
+    val anchor = ensureFieldOverlayAnchor(style)
+    style.addLayerBelow(layer, anchor)
+    promoteFieldOverlayLayers(style)
 }
 
 fun addProjectRasterLayers(
@@ -3193,6 +3230,7 @@ fun refreshViewportWmsLayers(
                         }
 
                     // Let the map render immediately; the probe below is diagnostic only.
+                    promoteFieldOverlayLayers(style)
                     onLayerUpdated?.invoke()
 
                     Thread {
@@ -3296,6 +3334,7 @@ fun refreshViewportWmsLayers(
                                 currentStyle.getLayerAs<RasterLayer>(layerId)?.setProperties(
                                     PropertyFactory.rasterOpacity(layer.opacity)
                                 )
+                                promoteFieldOverlayLayers(currentStyle)
                                 wmsLastSuccessfulUrl[layer.id] = result.requestUrl
                                 onLayerUpdated?.invoke()
                             }
