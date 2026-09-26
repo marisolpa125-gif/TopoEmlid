@@ -599,8 +599,6 @@ private fun StakeoutMapPicker(
 
     val layers = remember(project?.id) { loadEffectiveLayers() }
     val basemap = remember(project?.id) { basemapStore.selected(project?.id) }
-    var topOverlayMap by remember { mutableStateOf<MapLibreMap?>(null) }
-    var topOverlayCameraVersion by remember { mutableIntStateOf(0) }
     var localSelectedPointId by remember(selectedPointId) { mutableStateOf(selectedPointId) }
     var localSelectedGeometryId by remember(selectedGeometryId) { mutableStateOf(selectedGeometryId) }
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
@@ -1289,6 +1287,8 @@ private fun StakeoutMapPreview(
 
     val layers = remember(project?.id) { loadEffectiveLayers() }
     val basemap = remember(project?.id) { basemapStore.selected(project?.id) }
+    var topOverlayMap by remember { mutableStateOf<MapLibreMap?>(null) }
+    var topOverlayCameraVersion by remember { mutableIntStateOf(0) }
 
     fun redrawGuidance(map: MapLibreMap) {
         map.clear()
