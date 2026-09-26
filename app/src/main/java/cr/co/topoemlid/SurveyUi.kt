@@ -291,8 +291,15 @@ fun SurveyScreen(
     }
 
     LaunchedEffect(gnss.latitude, gnss.longitude, gnss.solution, gnss.connected) {
-        if (mapRef != null) {
-            redrawActiveAndCommitted()
+        // Actualización GNSS rápida: no limpiar ni reconstruir todo el mapa.
+        // Solo mover/refrescar la capa dinámica de posición.
+        mapRef?.let { map ->
+            ensureSurveyPointOverlayOnTop(
+                map,
+                savedPoints,
+                gnss,
+                pointDisplaySettings
+            )
         }
     }
 
@@ -308,7 +315,7 @@ fun SurveyScreen(
             val lat = gnss.latitude
             val lon = gnss.longitude
             if (lat != null && lon != null) {
-                mapRef?.animateCamera(
+                mapRef?.moveCamera(
                     CameraUpdateFactory.newLatLngZoom(LatLng(lat, lon), 18.0)
                 )
             }
