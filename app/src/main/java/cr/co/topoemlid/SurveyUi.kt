@@ -3003,10 +3003,9 @@ private fun promoteFieldOverlayLayers(style: Style) {
         .filter { isFieldOverlayLayerId(it) }
 
     ids.forEach { id ->
-        val layer = runCatching { style.removeLayer(id) }.getOrNull()
-        if (layer != null) {
-            runCatching { style.addLayer(layer) }
-        }
+        val layer = style.getLayer(id) ?: return@forEach
+        runCatching { style.removeLayer(id) }
+        runCatching { style.addLayer(layer) }
     }
 }
 
