@@ -29,6 +29,7 @@ import java.util.zip.Inflater
 data class ReachLoraConfig(
     val airRateKbps: Double,
     val frequencyHz: Int,
+    val outputPowerDbm: Int? = null,
     val inputIsLora: Boolean,
     val output1IsLora: Boolean,
     val output2IsLora: Boolean,
@@ -396,9 +397,18 @@ class ReachBleAdminClient(
                 findConnected(it)
             }
 
+            val outputPower = when {
+                lora.has("output_power") && !lora.isNull("output_power") ->
+                    runCatching { lora.getInt("output_power") }.getOrNull()
+                lora.has("outputPower") && !lora.isNull("outputPower") ->
+                    runCatching { lora.getInt("outputPower") }.getOrNull()
+                else -> null
+            }
+
             ReachLoraConfig(
                 airRateKbps = air,
                 frequencyHz = freq,
+                outputPowerDbm = outputPower,
                 inputIsLora = isLora(input),
                 output1IsLora = isLora(out1),
                 output2IsLora = isLora(out2),
@@ -410,7 +420,8 @@ class ReachBleAdminClient(
     suspend fun setLoraCorrectionChannel(
         channel: String,
         airRateKbps: Double,
-        frequencyHz: Int
+        frequencyHz: Int,
+        outputPowerDbm: Int? = null
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             ensureConnected().getOrThrow()
@@ -419,7 +430,9 @@ class ReachBleAdminClient(
             val lora = JSONObject()
                 .put("air_rate", airRateKbps)
                 .put("frequency", frequencyHz)
-                .put("output_power", JSONObject.NULL)
+                .apply {
+                    if (outputPowerDbm != null) put("output_power", outputPowerDbm)
+                }
 
             val settings = JSONObject().put("lora", lora)
             val payload = JSONObject()
