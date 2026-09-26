@@ -38,16 +38,39 @@ object WorkBackupManager {
             )
         }.getOrDefault(GeoidModel.LOCAL_FILE)
 
+        val geoidFileName =
+            sourceProject.optString("geoidFileName", "").ifBlank { null }
+
+        fun readableUri(raw: String?): String? {
+            val value = raw?.takeIf { it.isNotBlank() } ?: return null
+            return runCatching {
+                context.contentResolver.openInputStream(Uri.parse(value))?.use { }
+                value
+            }.getOrNull()
+        }
+
+        val restoredGeoidUri =
+            readableUri(sourceProject.optString("geoidFileUri", "").ifBlank { null })
+                ?: geoidFileName?.let { wanted ->
+                    ProjectStore(context).loadProjects()
+                        .firstNotNullOfOrNull { existing ->
+                            if (existing.geoidFileName.equals(wanted, ignoreCase = true)) {
+                                readableUri(existing.geoidFileUri)
+                            } else null
+                        }
+                }
+
         val project = TopoProject(
             id = newProjectId,
             name = sourceProject.optString("name", "Trabajo restaurado").ifBlank { "Trabajo restaurado" },
             location = sourceProject.optString("location", ""),
             crsName = sourceProject.optString("crsName", "CRTM05"),
             geoidModel = geoidModel,
-            // URI de Android no es portable entre tablets. Se conserva el nombre para
-            // informar qué geoide usaba, pero el archivo debe volver a seleccionarse.
-            geoidFileUri = null,
-            geoidFileName = sourceProject.optString("geoidFileName", "").ifBlank { null },
+            // En la misma tablet se intenta recuperar automáticamente el archivo
+            // geoidal. En otro dispositivo puede no existir y quedará pendiente
+            // de volver a enlazarse, sin cambiar el trabajo a elipsoidal.
+            geoidFileUri = restoredGeoidUri,
+            geoidFileName = geoidFileName,
             antennaHeightM = sourceProject.optDouble("antennaHeightM", 2.0),
             ntripProfileName = sourceProject.optString("ntripProfileName", "").ifBlank { null },
             ntripProfileId = null,
