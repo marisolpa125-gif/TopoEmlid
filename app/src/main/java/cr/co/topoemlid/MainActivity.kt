@@ -442,6 +442,7 @@ fun TopoEmlidApp() {
                 )
                 "Configuración" -> AppSettingsScreen(
                     activeReceiverProfile = receiverProfiles.firstOrNull { it.id == activeReceiverId },
+                    receiverNmeaConnected = gnss.connected && gnss.nmeaReceiving,
                     onPauseReceiverForBle = {
                         receiverConnection.disconnect()
                     },
@@ -512,6 +513,7 @@ fun TopoEmlidApp() {
 @Composable
 private fun AppSettingsScreen(
     activeReceiverProfile: ReceiverProfile?,
+    receiverNmeaConnected: Boolean,
     onPauseReceiverForBle: () -> Unit,
     onResumeReceiverAfterBle: (ReceiverProfile) -> Unit,
     onExitApp: () -> Unit
@@ -671,13 +673,19 @@ private fun AppSettingsScreen(
         val client = reachBleAdmin
             ?: throw IllegalStateException("No se pudo preparar el canal BLE del Reach.")
 
-        reachBleAdminMessage =
-            "Cambiando temporalmente de Bluetooth/NMEA a BLE para $operationLabel…"
-
-        // Flujo estable probado: una sola operación BLE por sesión.
-        // El Reach RS2+ admite una conexión Bluetooth activa a la vez.
-        onPauseReceiverForBle()
-        kotlinx.coroutines.delay(1_400L)
+        // Flujo estable: una sola operación BLE por sesión.
+        // Si NMEA ya está desconectado, no hay nada que pausar: continuar directo a BLE.
+        if (receiverNmeaConnected) {
+            reachBleAdminMessage =
+                "Pausando temporalmente Bluetooth/NMEA para $operationLabel…"
+            onPauseReceiverForBle()
+            kotlinx.coroutines.delay(1_400L)
+        } else {
+            reachBleAdminMessage =
+                "Bluetooth/NMEA ya está desconectado; continuando directamente por BLE para $operationLabel…"
+            // Solo un pequeño margen para que Android libere cualquier GATT/socket residual.
+            kotlinx.coroutines.delay(350L)
+        }
 
         return try {
             client.ensureConnected().getOrThrow()
@@ -1556,7 +1564,7 @@ private fun AppSettingsScreen(
                     )
                 }
                 Text(
-                    "La app pausa Bluetooth/NMEA unos segundos, envía esta orden por BLE y luego vuelve a conectar Bluetooth/NMEA automáticamente.",
+                    "Si Bluetooth/NMEA está conectado, la app lo pausa unos segundos. Si ya está desconectado, continúa directamente por BLE. Al terminar intenta reconectar Bluetooth/NMEA automáticamente.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 returnReachHotspotMessage?.let {
