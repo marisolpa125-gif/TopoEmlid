@@ -15,6 +15,7 @@ data class GeoidSample(
 )
 
 object GeoidGridService {
+    private const val BUILTIN_EGM2008_CR = "EGM2008_CostaRica_2p5min_TOPOEMLID.tif"
     private data class Node(val lat: Double, val lon: Double, val n: Double)
 
     @Volatile private var cachedUriText: String? = null
@@ -27,17 +28,52 @@ object GeoidGridService {
         }
 
         val uri = Uri.parse(uriText)
-        val loaded = if (uri.scheme.equals("file", ignoreCase = true)) {
-            val path = uri.path ?: error("Ruta interna del geoide inválida.")
-            File(path).readBytes()
-        } else {
-            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: error("No se pudo abrir el archivo geoidal.")
+        val loaded = when {
+            uri.scheme.equals("file", ignoreCase = true) -> {
+                val path = uri.path ?: error("Ruta interna del geoide inválida.")
+                File(path).readBytes()
+            }
+            uri.scheme.equals("asset", ignoreCase = true) -> {
+                val assetName = uri.path?.trimStart('/')
+                    ?: error("Ruta del geoide interno inválida.")
+                context.assets.open(assetName).use { it.readBytes() }
+            }
+            else -> {
+                context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: error("No se pudo abrir el archivo geoidal.")
+            }
         }
 
         cachedUriText = uriText
         cachedBytes = loaded
         return loaded
+    }
+
+    private fun makePrivateCopyFromAsset(
+        context: Context,
+        assetName: String,
+        fileName: String
+    ): String {
+        val safeName = fileName
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .take(120)
+            .ifBlank { "geoide.dat" }
+
+        val dir = File(context.filesDir, "geoids").apply { mkdirs() }
+        val destination = File(dir, safeName)
+        context.assets.open(assetName).use { input ->
+            destination.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+        require(destination.length() > 0L) { "La copia interna del geoide quedó vacía." }
+        return Uri.fromFile(destination).toString()
+    }
+
+    fun builtinGeoidUri(fileName: String?): String? {
+        return if (fileName.equals(BUILTIN_EGM2008_CR, ignoreCase = true)) {
+            "asset:///$BUILTIN_EGM2008_CR"
+        } else null
     }
 
     fun makePrivateCopy(
@@ -99,9 +135,21 @@ object GeoidGridService {
                     context.contentResolver.openInputStream(uri)?.use { it.read() }
                     true
                 }.getOrDefault(false)
-        } ?: error("No se encontró un permiso válido de Android para $wanted.")
+        }
 
-        makePrivateCopy(context, matched, wanted).getOrThrow()
+        if (matched != null) {
+            return@runCatching makePrivateCopy(context, matched, wanted).getOrThrow()
+        }
+
+        if (wanted.equals(BUILTIN_EGM2008_CR, ignoreCase = true)) {
+            return@runCatching makePrivateCopyFromAsset(
+                context = context,
+                assetName = BUILTIN_EGM2008_CR,
+                fileName = wanted
+            )
+        }
+
+        error("No se encontró un permiso válido de Android para $wanted.")
     }
 
     fun undulation(
