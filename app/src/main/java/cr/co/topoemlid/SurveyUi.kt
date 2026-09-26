@@ -163,6 +163,7 @@ fun SurveyScreen(
     var parallelOffsetText by remember { mutableStateOf("1.00") }
     var parallelLeft by remember { mutableStateOf(true) }
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
+    var topOverlayCameraVersion by remember { mutableIntStateOf(0) }
     var pointPhoto by remember { mutableStateOf<Uri?>(null) }
     var followReceiver by remember { mutableStateOf(false) }
     var initialAutoZoomDone by remember(project?.id) { mutableStateOf(false) }
@@ -535,6 +536,9 @@ fun SurveyScreen(
                         onResume()
                         getMapAsync { map ->
                             mapRef = map
+                            map.addOnCameraMoveListener {
+                                topOverlayCameraVersion += 1
+                            }
 
                             // Conserve exactamente la cámara que el usuario dejó (centro,
                             // zoom, inclinación y orientación) cuando el mapa se recrea por
@@ -809,6 +813,15 @@ fun SurveyScreen(
                 }
             }
         }
+
+        AlwaysVisiblePointOverlay(
+            map = mapRef,
+            cameraVersion = topOverlayCameraVersion,
+            points = savedPoints,
+            gnss = gnss,
+            settings = pointDisplaySettings,
+            modifier = Modifier.fillMaxSize()
+        )
 
         Column(
             modifier = Modifier
