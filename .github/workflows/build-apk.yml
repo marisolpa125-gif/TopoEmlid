@@ -241,6 +241,23 @@ jobs:
               print("AVISO: no se pudo obtener la corredera real; se conserva fallback:", e)
           PY
 
+      - name: Incluir EGM2008 Costa Rica dentro del APK
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets
+          GEOID="app/src/main/assets/EGM2008_CostaRica_2p5min_TOPOEMLID.tif"
+          curl -fL --retry 4 --retry-delay 2 \
+            "https://github.com/marisolpa125-gif/TopoEmlid/releases/download/egm2008-costa-rica-2p5min/EGM2008_CostaRica_2p5min_TOPOEMLID.tif" \
+            -o "$GEOID"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("app/src/main/assets/EGM2008_CostaRica_2p5min_TOPOEMLID.tif")
+          b = p.read_bytes()
+          assert len(b) > 90000, f"Geoide incompleto: {len(b)} bytes"
+          assert b[:4] in (b"II*\x00", b"MM\x00*"), "El recurso EGM2008 no es un TIFF clásico válido"
+          print(f"OK geoide interno: {p.name} ({len(b)} bytes)")
+          PY
+
       - name: Preparar firma debug estable
         run: |
           mkdir -p .ci
