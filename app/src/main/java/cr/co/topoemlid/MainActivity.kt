@@ -124,6 +124,8 @@ fun TopoEmlidApp() {
     var selectedTool by remember { mutableStateOf(DrawTool.POINT) }
     var showNewProject by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<TopoProject?>(null) }
+    var stakeoutActive by remember { mutableStateOf(false) }
+    var navigationWarning by remember { mutableStateOf<String?>(null) }
     var showDeleteWorkPicker by remember { mutableStateOf(false) }
     var showOpenWorkConfirm by remember { mutableStateOf(false) }
     var workHubMessage by remember { mutableStateOf<String?>(null) }
@@ -321,6 +323,37 @@ fun TopoEmlidApp() {
         )
     }
 
+    fun warnInvalidNavigation() {
+        val vibrator = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val manager = context.getSystemService(android.os.VibratorManager::class.java)
+            manager?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            vibrator?.vibrate(
+                android.os.VibrationEffect.createOneShot(
+                    180L,
+                    android.os.VibrationEffect.DEFAULT_AMPLITUDE
+                )
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator?.vibrate(180L)
+        }
+
+        navigationWarning = "Finalice o salga del replanteo antes de cambiar de sección."
+    }
+
+    LaunchedEffect(navigationWarning) {
+        if (navigationWarning != null) {
+            kotlinx.coroutines.delay(2200L)
+            navigationWarning = null
+        }
+    }
+
     Scaffold(
         topBar = { GnssBar(gnss, ntripStatus, activeProject?.name) },
         bottomBar = {
@@ -328,7 +361,17 @@ fun TopoEmlidApp() {
                 listOf("Receptores", "Proyecto", "Importar/Exportar", "Capas", "Levantamiento", "Replanteo", "Configuración").forEach { item ->
                     NavigationBarItem(
                         selected = page == item,
-                        onClick = { page = item },
+                        onClick = {
+                            if (
+                                page == "Replanteo" &&
+                                stakeoutActive &&
+                                item != "Replanteo"
+                            ) {
+                                warnInvalidNavigation()
+                            } else {
+                                page = item
+                            }
+                        },
                         icon = {
                             Text(
                                 when (item) {
@@ -349,6 +392,22 @@ fun TopoEmlidApp() {
         }
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
+            navigationWarning?.let { warning ->
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(12.dp),
+                    tonalElevation = 8.dp,
+                    shadowElevation = 8.dp,
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text(
+                        warning,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
             when (page) {
                 "Receptores" -> ReceiverSection(
                     profiles = receiverProfiles,
@@ -375,7 +434,12 @@ fun TopoEmlidApp() {
                     onConnect = { receiver -> receiverConnection.connect(receiver) },
                     onDisconnect = { receiverConnection.disconnect() }
                 )
-                "Replanteo" -> StakeoutScreen(activeProject, gnss, ntripStatus)
+                "Replanteo" -> StakeoutScreen(
+                    activeProject,
+                    gnss,
+                    ntripStatus,
+                    onActiveChanged = { stakeoutActive = it }
+                )
                 "Configuración" -> AppSettingsScreen(
                     activeReceiverProfile = receiverProfiles.firstOrNull { it.id == activeReceiverId },
                     onPauseReceiverForBle = {
