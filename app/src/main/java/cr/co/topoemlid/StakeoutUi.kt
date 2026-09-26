@@ -1379,12 +1379,11 @@ private fun StakeoutMapPreview(
     val basemap = remember(project?.id) { basemapStore.selected(project?.id) }
     var topOverlayMap by remember { mutableStateOf<MapLibreMap?>(null) }
     var topOverlayCameraVersion by remember { mutableIntStateOf(0) }
+    var lastAutoFitTargetId by remember { mutableStateOf<String?>(null) }
 
     fun redrawGuidance(map: MapLibreMap) {
-        map.clear()
-
-        // Regla fija: todos los objetos de trabajo se vuelven a promover
-        // después de cualquier recarga de mapa/WMS/satélite.
+        // No limpiar el mapa aquí. El WMS y el GNSS se actualizan de forma
+        // independiente para evitar el parpadeo/brinco visual durante replanteo.
         ensureSurveyGeometryOverlayOnTop(map, geometries)
         ensureSurveyPointOverlayOnTop(map, points, gnss, pointDisplaySettings)
 
@@ -1398,100 +1397,8 @@ private fun StakeoutMapPreview(
             )
         }
 
-        // Línea guía como capa de estilo superior; no puede quedar debajo
-        // del mapa base, satélite o WMS al refrescarse.
         ensureStakeoutGuidanceLineOnTop(map, gnss, target)
-
-        // Receptor y objetivo encima de la línea y de todas las capas cartográficas.
         ensureStakeoutCriticalOverlayOnTop(map, target, gnss)
-
-        val lat = gnss.latitude
-        val lon = gnss.longitude
-        val tLat = target?.latitude
-        val tLon = target?.longitude
-
-        val current = if (lat != null && lon != null) LatLng(lat, lon) else null
-        val objective = if (tLat != null && tLon != null) LatLng(tLat, tLon) else null
-
-        // Annotation markers are deliberately used in addition to the adaptive
-        // SymbolLayer labels. MapLibre annotations remain visually above raster
-        // basemaps/WMS, so neither the target nor the RTK can be hidden by a layer.
-        val iconFactory = IconFactory.getInstance(context)
-        val normalIcon = iconFactory.fromBitmap(
-            makeTopoPointBitmap(android.graphics.Color.rgb(255, 45, 45))
-        )
-        val targetIcon = iconFactory.fromBitmap(
-            makeStakeoutTargetBitmap()
-        )
-        val rtkColor = when {
-            gnss.solution.contains("FIX", ignoreCase = true) ->
-                android.graphics.Color.rgb(46, 125, 50)
-            gnss.solution.contains("FLOAT", ignoreCase = true) ->
-                android.graphics.Color.rgb(251, 192, 45)
-            else ->
-                android.graphics.Color.rgb(211, 47, 47)
-        }
-        val rtkIcon = iconFactory.fromBitmap(
-            makeTopoPointBitmap(rtkColor)
-        )
-
-        points.forEach { point ->
-            val pLat = point.latitude ?: return@forEach
-            val pLon = point.longitude ?: return@forEach
-            map.addMarker(
-                MarkerOptions()
-                    .position(LatLng(pLat, pLon))
-                    .icon(if (point.id == target?.id) targetIcon else normalIcon)
-                    .title(
-                        if (point.id == target?.id)
-                            "OBJETIVO • Punto ${point.pointNumber}"
-                        else
-                            "Punto ${point.pointNumber}"
-                    )
-            )
-        }
-
-        current?.let {
-            map.addMarker(
-                MarkerOptions()
-                    .position(it)
-                    .icon(rtkIcon)
-                    .title("RTK • posición actual")
-            )
-        }
-
-        if (current != null && objective != null) {
-            val north = (objective.latitude - current.latitude) * 111132.0
-            val east = (objective.longitude - current.longitude) *
-                (111320.0 * cos(Math.toRadians(objective.latitude)))
-            val totalM = hypot(north, east)
-            val dashM = when {
-                totalM > 1000.0 -> 40.0
-                totalM > 250.0 -> 20.0
-                totalM > 50.0 -> 8.0
-                else -> 2.0
-            }
-            val pieces = max(1, ceil(totalM / dashM).toInt())
-            for (i in 0 until pieces step 2) {
-                val t0 = i.toDouble() / pieces.toDouble()
-                val t1 = min(1.0, (i + 1).toDouble() / pieces.toDouble())
-                val a = LatLng(
-                    current.latitude + (objective.latitude - current.latitude) * t0,
-                    current.longitude + (objective.longitude - current.longitude) * t0
-                )
-                val b = LatLng(
-                    current.latitude + (objective.latitude - current.latitude) * t1,
-                    current.longitude + (objective.longitude - current.longitude) * t1
-                )
-                map.addPolyline(
-                    PolylineOptions()
-                        .add(a)
-                        .add(b)
-                        .width(7f)
-                        .color(android.graphics.Color.rgb(103, 58, 183))
-                )
-            }
-        }
     }
 
 
@@ -1604,21 +1511,21 @@ private fun StakeoutMapPreview(
                             (targetLon - currentLon) * (111320.0 * cos(Math.toRadians(targetLat)))
                         )
 
-                        if (!closeView) {
-                            // En vista de mapa, mantener SIEMPRE antena y objetivo visibles.
-                            val bounds = LatLngBounds.Builder()
-                                .include(current)
-                                .include(objective)
-                                .build()
-                            map.moveCamera(
-                                CameraUpdateFactory.newLatLngBounds(
-                                    bounds,
-                                    210
-                                )
-                            )
-                        } else {
-                            // Vista cercana: aún deben verse ambos, pero con menos margen.
-                            if (distance > 1.0) {
+                        val visibleBounds = runCatching {
+                            map.projection.visibleRegion.latLngBounds
+                        }.getOrNull()
+                        val targetChanged = lastAutoFitTargetId != target?.id
+                        val receiverOutside =
+                            visibleBounds?.contains(current) == false
+                        val objectiveOutside =
+                            visibleBounds?.contains(objective) == false
+                        val shouldRefit =
+                            targetChanged || receiverOutside || objectiveOutside
+
+                        if (shouldRefit) {
+                            if (!closeView) {
+                                // Solo reajustar cuando haga falta. Así una solución GNSS
+                                // nueva no dispara un nuevo BBOX WMS en cada segundo.
                                 val bounds = LatLngBounds.Builder()
                                     .include(current)
                                     .include(objective)
@@ -1626,14 +1533,28 @@ private fun StakeoutMapPreview(
                                 map.moveCamera(
                                     CameraUpdateFactory.newLatLngBounds(
                                         bounds,
-                                        160
+                                        210
                                     )
                                 )
                             } else {
-                                map.moveCamera(
-                                    CameraUpdateFactory.newLatLngZoom(current, 21.5)
-                                )
+                                if (distance > 1.0) {
+                                    val bounds = LatLngBounds.Builder()
+                                        .include(current)
+                                        .include(objective)
+                                        .build()
+                                    map.moveCamera(
+                                        CameraUpdateFactory.newLatLngBounds(
+                                            bounds,
+                                            160
+                                        )
+                                    )
+                                } else {
+                                    map.moveCamera(
+                                        CameraUpdateFactory.newLatLngZoom(current, 21.5)
+                                    )
+                                }
                             }
+                            lastAutoFitTargetId = target?.id
                         }
                     }
                 }
@@ -1733,14 +1654,15 @@ private fun ensureStakeoutGuidanceLineOnTop(
         source.setGeoJson(FeatureCollection.fromFeatures(features))
     }
 
-    runCatching { style.removeLayer(layerId) }
-    style.addLayer(
-        LineLayer(layerId, sourceId).withProperties(
-            PropertyFactory.lineColor(android.graphics.Color.rgb(103, 58, 183)),
-            PropertyFactory.lineWidth(7f),
-            PropertyFactory.lineOpacity(1f)
+    if (style.getLayer(layerId) == null) {
+        style.addLayer(
+            LineLayer(layerId, sourceId).withProperties(
+                PropertyFactory.lineColor(android.graphics.Color.rgb(103, 58, 183)),
+                PropertyFactory.lineWidth(7f),
+                PropertyFactory.lineOpacity(1f)
+            )
         )
-    )
+    }
 }
 
 private fun ensureStakeoutCriticalOverlayOnTop(
@@ -1771,15 +1693,16 @@ private fun ensureStakeoutCriticalOverlayOnTop(
     if (style.getImage("stakeout-critical-target-image") == null) {
         style.addImage("stakeout-critical-target-image", makeStakeoutTargetBitmap())
     }
-    runCatching { style.removeLayer(targetLayerId) }
-    style.addLayer(
-        SymbolLayer(targetLayerId, targetSourceId).withProperties(
-            PropertyFactory.iconImage("stakeout-critical-target-image"),
-            PropertyFactory.iconSize(1.05f),
-            PropertyFactory.iconAllowOverlap(true),
-            PropertyFactory.iconIgnorePlacement(true)
+    if (style.getLayer(targetLayerId) == null) {
+        style.addLayer(
+            SymbolLayer(targetLayerId, targetSourceId).withProperties(
+                PropertyFactory.iconImage("stakeout-critical-target-image"),
+                PropertyFactory.iconSize(1.05f),
+                PropertyFactory.iconAllowOverlap(true),
+                PropertyFactory.iconIgnorePlacement(true)
+            )
         )
-    )
+    }
 
     // Posición actual: color por solución GNSS, siempre por encima del mapa/WMS.
     val gnssSourceId = "stakeout-critical-gnss-source"
@@ -1808,15 +1731,24 @@ private fun ensureStakeoutCriticalOverlayOnTop(
             android.graphics.Color.rgb(211, 47, 47)
     }
 
-    runCatching { style.removeLayer(gnssLayerId) }
-    style.addLayer(
-        CircleLayer(gnssLayerId, gnssSourceId).withProperties(
+    val gnssLayer = style.getLayerAs<CircleLayer>(gnssLayerId)
+    if (gnssLayer == null) {
+        style.addLayer(
+            CircleLayer(gnssLayerId, gnssSourceId).withProperties(
+                PropertyFactory.circleColor(color),
+                PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
+                PropertyFactory.circleStrokeWidth(4f),
+                PropertyFactory.circleRadius(11f)
+            )
+        )
+    } else {
+        gnssLayer.setProperties(
             PropertyFactory.circleColor(color),
             PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
             PropertyFactory.circleStrokeWidth(4f),
             PropertyFactory.circleRadius(11f)
         )
-    )
+    }
 }
 
 @Composable
