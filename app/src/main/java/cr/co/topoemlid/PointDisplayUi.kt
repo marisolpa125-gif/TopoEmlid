@@ -197,39 +197,60 @@ private fun ensurePointGroup(
 
     val iconName = if (selected) "topo-point-yellow" else "topo-point-red"
 
-    val iconLayerId = "$id-icon"
-    runCatching { style.removeLayer(iconLayerId) }
-    style.addLayer(
-        SymbolLayer(iconLayerId, sourceId).withProperties(
+    val iconBands = listOf(
+        Triple("far", 0f, 15f),
+        Triple("mid", 15f, 18f),
+        Triple("near", 18f, 25f)
+    )
+    val iconSizes = mapOf("far" to 0.68f, "mid" to 0.84f, "near" to 1.02f)
+
+    iconBands.forEach { (name, minZoom, maxZoom) ->
+        val layerId = "$id-icon-$name"
+        runCatching { style.removeLayer(layerId) }
+        val layer = SymbolLayer(layerId, sourceId).withProperties(
             PropertyFactory.iconImage(iconName),
-            PropertyFactory.iconSize(0.96f),
+            PropertyFactory.iconSize(iconSizes[name] ?: 0.8f),
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconIgnorePlacement(true)
         )
-    )
-
-    // La visualización de puntos debe obedecer directamente los interruptores.
-    // No ocultamos el texto por nivel de zoom ni por colisiones con otras etiquetas.
-    val textLayerId = "$id-text"
-    runCatching { style.removeLayer(textLayerId) }
+        layer.setMinZoom(minZoom)
+        layer.setMaxZoom(maxZoom)
+        style.addLayer(layer)
+    }
 
     val anyTextEnabled =
         settings.showNumber || settings.showDescription || settings.showElevation
 
+    listOf("far","mid","near").forEach { name ->
+        runCatching { style.removeLayer("$id-text-$name") }
+    }
+
     if (anyTextEnabled) {
-        style.addLayer(
-            SymbolLayer(textLayerId, sourceId).withProperties(
+        val textBands = listOf(
+            Triple("far", 0f, 15f),
+            Triple("mid", 15f, 18f),
+            Triple("near", 18f, 25f)
+        )
+        val textSizes = mapOf("far" to 8.5f, "mid" to 10.5f, "near" to 13f)
+        val offsets = mapOf("far" to 1.20f, "mid" to 1.35f, "near" to 1.55f)
+
+        textBands.forEach { (name, minZoom, maxZoom) ->
+            val layerId = "$id-text-$name"
+            val layer = SymbolLayer(layerId, sourceId).withProperties(
                 PropertyFactory.textField(Expression.get("detail")),
                 PropertyFactory.textColor(android.graphics.Color.rgb(25, 25, 25)),
                 PropertyFactory.textHaloColor(android.graphics.Color.WHITE),
-                PropertyFactory.textHaloWidth(2.5f),
-                PropertyFactory.textSize(13f),
-                PropertyFactory.textOffset(arrayOf(1.55f, 0f)),
+                PropertyFactory.textHaloWidth(if (name == "far") 1.5f else 2.5f),
+                PropertyFactory.textSize(textSizes[name] ?: 11f),
+                PropertyFactory.textOffset(arrayOf(offsets[name] ?: 1.4f, 0f)),
                 PropertyFactory.textAnchor(Property.TEXT_ANCHOR_LEFT),
                 PropertyFactory.textAllowOverlap(true),
                 PropertyFactory.textIgnorePlacement(true)
             )
-        )
+            layer.setMinZoom(minZoom)
+            layer.setMaxZoom(maxZoom)
+            style.addLayer(layer)
+        }
     }
 }
 
