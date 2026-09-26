@@ -220,6 +220,7 @@ fun StakeoutScreen(
         StakeoutActiveView(
             project = project,
             points = points,
+            geometries = geometries,
             target = selectedTarget,
             gnss = gnss,
             pointDisplaySettings = pointDisplaySettings,
@@ -846,6 +847,7 @@ private fun StakeoutMapPicker(
 private fun StakeoutActiveView(
     project: TopoProject?,
     points: List<SurveyPoint>,
+    geometries: List<CommittedGeometry>,
     target: SurveyPoint,
     gnss: GnssStatus,
     pointDisplaySettings: PointDisplaySettings,
@@ -889,11 +891,11 @@ private fun StakeoutActiveView(
     Box(Modifier.fillMaxSize()) {
         when (viewMode) {
             StakeoutViewMode.MAP -> StakeoutMapPreview(
-                project, points, target, gnss, pointDisplaySettings,
+                project, points, geometries, target, gnss, pointDisplaySettings,
                 modifier = Modifier.fillMaxSize(), closeView = false
             )
             StakeoutViewMode.CLOSE -> StakeoutMapPreview(
-                project, points, target, gnss, pointDisplaySettings,
+                project, points, geometries, target, gnss, pointDisplaySettings,
                 modifier = Modifier.fillMaxSize(), closeView = true
             )
             StakeoutViewMode.PRECISION -> Surface(Modifier.fillMaxSize()) {
@@ -1241,6 +1243,7 @@ private fun PointPairSelector(
 private fun StakeoutMapPreview(
     project: TopoProject?,
     points: List<SurveyPoint>,
+    geometries: List<CommittedGeometry>,
     target: SurveyPoint?,
     gnss: GnssStatus,
     pointDisplaySettings: PointDisplaySettings,
@@ -1267,6 +1270,11 @@ private fun StakeoutMapPreview(
 
     fun redrawGuidance(map: MapLibreMap) {
         map.clear()
+
+        // Regla fija: todos los objetos de trabajo se vuelven a promover
+        // después de cualquier recarga de mapa/WMS/satélite.
+        ensureSurveyGeometryOverlayOnTop(map, geometries)
+        ensureSurveyPointOverlayOnTop(map, points, gnss, pointDisplaySettings)
 
         map.style?.let { style ->
             ensureTopoSurveyPointLayers(
@@ -1729,14 +1737,16 @@ private fun StakeoutGuidancePanel(
         targetElevation - currentElevation
     } else null
 
+    // La mira muestra el error; las tarjetas muestran la corrección necesaria
+    // para llevar ese error de vuelta al centro.
     val nsLabel = when {
-        northM > 0.0005 -> "AL NORTE"
-        northM < -0.0005 -> "AL SUR"
+        northM > 0.0005 -> "AL SUR"
+        northM < -0.0005 -> "AL NORTE"
         else -> "N/S OK"
     }
     val ewLabel = when {
-        eastM > 0.0005 -> "AL ESTE"
-        eastM < -0.0005 -> "AL OESTE"
+        eastM > 0.0005 -> "AL OESTE"
+        eastM < -0.0005 -> "AL ESTE"
         else -> "E/O OK"
     }
     val verticalLabel = when {
@@ -1780,8 +1790,8 @@ private fun StakeoutGuidancePanel(
                     ) {
                         Text(
                             when {
-                                northM > 0.0005 -> "↑"
-                                northM < -0.0005 -> "↓"
+                                northM > 0.0005 -> "↓"
+                                northM < -0.0005 -> "↑"
                                 else -> "✓"
                             },
                             style = MaterialTheme.typography.headlineSmall,
@@ -1803,8 +1813,8 @@ private fun StakeoutGuidancePanel(
                     ) {
                         Text(
                             when {
-                                eastM > 0.0005 -> "→"
-                                eastM < -0.0005 -> "←"
+                                eastM > 0.0005 -> "←"
+                                eastM < -0.0005 -> "→"
                                 else -> "✓"
                             },
                             style = MaterialTheme.typography.headlineSmall,
@@ -1945,22 +1955,25 @@ private fun StakeoutGuidancePanel(
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleLarge
                     )
-                    Text(
-                        "O",
+                    Row(
                         modifier = Modifier
-                            .align(androidx.compose.ui.Alignment.CenterStart)
-                            .padding(start = 14.dp),
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                    Text(
-                        "E",
-                        modifier = Modifier
-                            .align(androidx.compose.ui.Alignment.CenterEnd)
-                            .padding(end = 14.dp),
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleLarge
-                    )
+                            .align(androidx.compose.ui.Alignment.Center)
+                            .width(270.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "O",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                        Spacer(Modifier.width(1.dp))
+                        Text(
+                            "E",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    }
                 }
             }
 
