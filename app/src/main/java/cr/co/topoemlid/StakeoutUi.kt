@@ -59,7 +59,8 @@ enum class StakeoutMode(val label: String, val description: String) {
 fun StakeoutScreen(
     project: TopoProject?,
     gnss: GnssStatus,
-    ntrip: NtripLiveStatus
+    ntrip: NtripLiveStatus,
+    onActiveChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val pointStore = remember(project?.id) { SurveyPointStore(context) }
@@ -80,6 +81,15 @@ fun StakeoutScreen(
     var bearingText by remember { mutableStateOf("") }
     var distanceText by remember { mutableStateOf("") }
     var showGuidance by remember { mutableStateOf(false) }
+
+    LaunchedEffect(showGuidance) {
+        onActiveChanged(showGuidance)
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { onActiveChanged(false) }
+    }
+
     val pointDisplayStore = remember { PointDisplaySettingsStore(context) }
     var pointDisplaySettings by remember { mutableStateOf(pointDisplayStore.load()) }
     var showPointDisplayPanel by remember { mutableStateOf(false) }
