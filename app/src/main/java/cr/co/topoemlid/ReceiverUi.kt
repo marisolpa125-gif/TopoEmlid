@@ -397,7 +397,7 @@ private fun ReceiversScreen(
 
         Text("Receptores detectados cerca", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
         Text(
-            "Aquí solo aparecen receptores detectados durante la búsqueda actual. Topo Emlid busca tanto por BLE como por Bluetooth Classic/NMEA para no perder el Reach.",
+            "Aquí aparecen los receptores detectados durante la búsqueda actual. Si el Reach ya estaba emparejado pero no vuelve a anunciarse, TOPO EMLID permite reconectarlo directamente por Bluetooth/NMEA.",
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -408,6 +408,59 @@ private fun ReceiversScreen(
         }
 
         if (scanning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 10.dp))
+
+        val activeKnownReceiver = profiles.firstOrNull { it.id == activeReceiverId }
+        val activeKnownIsBonded = activeKnownReceiver?.let { profile ->
+            allPaired.any { it.address.equals(profile.address, ignoreCase = true) }
+        } == true
+        val activeKnownDetected = activeKnownReceiver?.let { profile ->
+            nearby.any { it.address.equals(profile.address, ignoreCase = true) }
+        } == true
+
+        if (
+            !gnss.connected &&
+            activeKnownReceiver != null &&
+            activeKnownIsBonded &&
+            !activeKnownDetected
+        ) {
+            Card(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp)
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Text(
+                        activeKnownReceiver.name,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "Receptor ya emparejado con esta tablet. Si no aparece en el escaneo, puede intentar reconectar Bluetooth/NMEA directamente.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            stopScan()
+                            onSelectReceiver(activeKnownReceiver)
+                            onConnect(
+                                activeKnownReceiver.copy(
+                                    preferredMode = ReceiverConnectionMode.BLUETOOTH_NMEA
+                                )
+                            )
+                        },
+                        enabled = !connecting,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (connecting)
+                                "Reconectando…"
+                            else
+                                "Reconectar Bluetooth/NMEA"
+                        )
+                    }
+                }
+            }
+        }
 
         if (gnss.connected) {
             val connectedProfile =
