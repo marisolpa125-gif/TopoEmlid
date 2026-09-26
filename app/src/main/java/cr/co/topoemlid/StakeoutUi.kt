@@ -60,6 +60,8 @@ fun StakeoutScreen(
     project: TopoProject?,
     gnss: GnssStatus,
     ntrip: NtripLiveStatus,
+    selectedPointId: String? = null,
+    onSelectedPointIdChanged: (String?) -> Unit = {},
     onActiveChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -72,7 +74,6 @@ fun StakeoutScreen(
     }
 
     var mode by remember { mutableStateOf(StakeoutMode.POINT) }
-    var selectedPointId by remember { mutableStateOf<String?>(null) }
     var selectedGeometryId by remember { mutableStateOf<String?>(null) }
     var showMapPicker by remember { mutableStateOf(false) }
     var startPointId by remember { mutableStateOf<String?>(null) }
@@ -196,13 +197,13 @@ fun StakeoutScreen(
             selectedPointId = selectedPointId,
             selectedGeometryId = selectedGeometryId,
             onPointSelected = { id ->
-                selectedPointId = id
+                onSelectedPointIdChanged(id)
                 selectedGeometryId = null
                 mode = StakeoutMode.POINT
             },
             onGeometrySelected = { id, tool ->
                 selectedGeometryId = id
-                selectedPointId = null
+                onSelectedPointIdChanged(null)
                 mode = when (tool) {
                     MapFieldTool.LINE, MapFieldTool.DISTANCE -> StakeoutMode.LINE
                     MapFieldTool.PARALLEL -> StakeoutMode.PARALLEL
@@ -235,6 +236,7 @@ fun StakeoutScreen(
             gnss = gnss,
             pointDisplaySettings = pointDisplaySettings,
             ntrip = ntrip,
+            onTargetSelected = { id -> onSelectedPointIdChanged(id) },
             onStop = {
                 onActiveChanged(false)
                 showGuidance = false
@@ -323,12 +325,12 @@ fun StakeoutScreen(
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .clickable { selectedPointId = p.id }
+                                .clickable { onSelectedPointIdChanged(p.id) }
                                 .padding(vertical = 6.dp)
                         ) {
                             RadioButton(
                                 selected = selectedPointId == p.id,
-                                onClick = { selectedPointId = p.id }
+                                onClick = { onSelectedPointIdChanged(p.id) }
                             )
                             Column {
                                 Text("Punto ${p.pointNumber}")
@@ -370,7 +372,7 @@ fun StakeoutScreen(
 
             StakeoutMode.BEARING_DISTANCE -> {
                 Text("Rumbo y distancia", fontWeight = FontWeight.Bold)
-                PointSingleSelector(points, selectedPointId) { selectedPointId = it }
+                PointSingleSelector(points, selectedPointId) { onSelectedPointIdChanged(it) }
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = bearingText,
@@ -866,6 +868,7 @@ private fun StakeoutActiveView(
     gnss: GnssStatus,
     pointDisplaySettings: PointDisplaySettings,
     ntrip: NtripLiveStatus,
+    onTargetSelected: (String) -> Unit,
     onStop: () -> Unit
 ) {
     val currentDistanceM = run {
@@ -881,6 +884,64 @@ private fun StakeoutActiveView(
     }
 
     var viewMode by remember(target.id) { mutableStateOf(StakeoutViewMode.MAP) }
+    var showTargetList by remember { mutableStateOf(false) }
+
+    val orderedPoints = remember(points) {
+        points.sortedWith(
+            compareBy<SurveyPoint> { it.pointNumber.toLongOrNull() ?: Long.MAX_VALUE }
+                .thenBy { it.pointNumber.lowercase() }
+        )
+    }
+    val currentPointIndex = orderedPoints.indexOfFirst { it.id == target.id }
+    val previousPoint = if (currentPointIndex > 0) orderedPoints[currentPointIndex - 1] else null
+    val nextPoint =
+        if (currentPointIndex >= 0 && currentPointIndex < orderedPoints.lastIndex) {
+            orderedPoints[currentPointIndex + 1]
+        } else null
+
+    if (showTargetList) {
+        AlertDialog(
+            onDismissRequest = { showTargetList = false },
+            title = { Text("Lista de puntos") },
+            text = {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 460.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    orderedPoints.forEach { point ->
+                        OutlinedButton(
+                            onClick = {
+                                onTargetSelected(point.id)
+                                showTargetList = false
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp)
+                        ) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(
+                                    "Punto ${point.pointNumber}",
+                                    fontWeight = if (point.id == target.id) FontWeight.Bold else FontWeight.Normal
+                                )
+                                Text(
+                                    point.description.ifBlank { point.code.ifBlank { "Sin descripción" } },
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                OutlinedButton(onClick = { showTargetList = false }) {
+                    Text("Cerrar")
+                }
+            }
+        )
+    }
 
     LaunchedEffect(currentDistanceM, target.id) {
         val d = currentDistanceM ?: return@LaunchedEffect
@@ -951,11 +1012,40 @@ private fun StakeoutActiveView(
                     modifier = Modifier
                         .padding(horizontal = 4.dp, vertical = 2.dp)
                 )
-                FilledTonalButton(
-                    onClick = onStop,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                Column(
+                    modifier = Modifier.width(112.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text("Salir", style = MaterialTheme.typography.labelMedium)
+                    FilledTonalButton(
+                        onClick = onStop,
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text("Salir", style = MaterialTheme.typography.labelMedium)
+                    }
+                    FilledTonalButton(
+                        onClick = { nextPoint?.let { onTargetSelected(it.id) } },
+                        enabled = nextPoint != null,
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text("Siguiente", style = MaterialTheme.typography.labelMedium)
+                    }
+                    FilledTonalButton(
+                        onClick = { previousPoint?.let { onTargetSelected(it.id) } },
+                        enabled = previousPoint != null,
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text("Anterior", style = MaterialTheme.typography.labelMedium)
+                    }
+                    FilledTonalButton(
+                        onClick = { showTargetList = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text("Lista", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
         }
