@@ -455,7 +455,14 @@ fun SurveyScreen(
                 }
             } else {
                 liveOrthometricHeight = null
-                liveGeoidError = null
+                liveGeoidError =
+                    if (
+                        p.geoidModel == GeoidModel.LOCAL_FILE &&
+                        !p.geoidFileName.isNullOrBlank() &&
+                        p.geoidFileUri.isNullOrBlank()
+                    ) {
+                        "Archivo geoidal no enlazado"
+                    } else null
             }
         }
     }
@@ -772,19 +779,26 @@ fun SurveyScreen(
                         )
                     }
 
+                    val geoidExpected =
+                        p.geoidModel == GeoidModel.LOCAL_FILE &&
+                            !p.geoidFileName.isNullOrBlank()
+
                     val verticalColor = when {
-                        p.geoidFileUri == null -> Color(0xFF546E7A)
                         liveGeoidError != null -> MaterialTheme.colorScheme.error
                         liveOrthometricHeight != null -> Color(0xFF2E7D32)
+                        geoidExpected && p.geoidFileUri.isNullOrBlank() ->
+                            MaterialTheme.colorScheme.error
                         else -> Color(0xFF546E7A)
                     }
                     val verticalText = when {
-                        p.geoidFileUri == null ->
-                            "Altura: ${gnss.ellipsoidalHeightM?.let { "%.3f m".format(it) } ?: "—"} • Vertical: Elipsoidal"
                         liveGeoidError != null ->
                             "Geoide no aplicado • ${p.geoidFileName ?: "archivo geoidal"}"
-                        else ->
+                        geoidExpected && p.geoidFileUri.isNullOrBlank() ->
+                            "Geoide no aplicado • ${p.geoidFileName}"
+                        p.geoidFileUri != null ->
                             "Elevación: ${liveOrthometricHeight?.let { "%.3f m".format(it) } ?: "—"} • Vertical: Geoide · ${p.geoidFileName ?: "local"}"
+                        else ->
+                            "Altura: ${gnss.ellipsoidalHeightM?.let { "%.3f m".format(it) } ?: "—"} • Vertical: Elipsoidal"
                     }
                     Text(
                         verticalText,
