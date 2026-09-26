@@ -1393,6 +1393,14 @@ private fun StakeoutMapPreview(
         }
     }
 
+
+    fun redrawDynamicGuidance(map: MapLibreMap) {
+        // Ruta rápida para cada nueva solución GNSS:
+        // no borrar anotaciones ni reconstruir puntos/figuras estáticos.
+        ensureSurveyPointOverlayOnTop(map, points, gnss, pointDisplaySettings)
+        ensureStakeoutGuidanceLineOnTop(map, gnss, target)
+        ensureStakeoutCriticalOverlayOnTop(map, target, gnss)
+    }
     val lat = gnss.latitude
     val lon = gnss.longitude
     val tLat = target?.latitude
@@ -1477,7 +1485,7 @@ private fun StakeoutMapPreview(
             },
             update = { mapView ->
                 mapView.getMapAsync { map ->
-                    redrawGuidance(map)
+                    redrawDynamicGuidance(map)
 
                     val currentLat = gnss.latitude
                     val currentLon = gnss.longitude
@@ -1497,7 +1505,7 @@ private fun StakeoutMapPreview(
                                 .include(current)
                                 .include(objective)
                                 .build()
-                            map.animateCamera(
+                            map.moveCamera(
                                 CameraUpdateFactory.newLatLngBounds(
                                     bounds,
                                     110
@@ -1510,14 +1518,14 @@ private fun StakeoutMapPreview(
                                     .include(current)
                                     .include(objective)
                                     .build()
-                                map.animateCamera(
+                                map.moveCamera(
                                     CameraUpdateFactory.newLatLngBounds(
                                         bounds,
                                         70
                                     )
                                 )
                             } else {
-                                map.animateCamera(
+                                map.moveCamera(
                                     CameraUpdateFactory.newLatLngZoom(current, 21.5)
                                 )
                             }
