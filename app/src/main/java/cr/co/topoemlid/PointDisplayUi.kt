@@ -9,8 +9,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.unit.dp
 import org.maplibre.android.maps.Style
+import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
@@ -41,6 +44,157 @@ class PointDisplaySettingsStore(context: Context) {
             .putBoolean("show_description", value.showDescription)
             .putBoolean("show_elevation", value.showElevation)
             .apply()
+    }
+}
+
+
+@Composable
+fun AlwaysVisiblePointOverlay(
+    map: MapLibreMap?,
+    cameraVersion: Int,
+    points: List<SurveyPoint>,
+    gnss: GnssStatus,
+    settings: PointDisplaySettings,
+    modifier: Modifier = Modifier,
+    selectedPointId: String? = null
+) {
+    val refreshToken = cameraVersion
+
+    androidx.compose.foundation.Canvas(modifier = modifier) {
+        refreshToken.hashCode()
+        val currentMap = map ?: return@Canvas
+        val native = drawContext.canvas.nativeCanvas
+        val zoom = currentMap.cameraPosition.zoom
+
+        val scale = when {
+            zoom < 13.0 -> 0.58f
+            zoom < 15.0 -> 0.68f
+            zoom < 17.0 -> 0.82f
+            zoom < 19.0 -> 0.96f
+            else -> 1.10f
+        }
+
+        val pointRadius = 11f * scale
+        val crossHalf = 20f * scale
+        val stroke = 3.2f * scale
+        val haloStroke = 6.0f * scale
+
+        val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = haloStroke
+            color = android.graphics.Color.WHITE
+        }
+        val pointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = stroke
+            strokeCap = Paint.Cap.ROUND
+        }
+
+        val textSizePx = when {
+            zoom < 13.0 -> 8.5f
+            zoom < 15.0 -> 9.5f
+            zoom < 17.0 -> 11.0f
+            zoom < 19.0 -> 12.5f
+            else -> 14.0f
+        } * density
+
+        val textFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = android.graphics.Color.rgb(25, 25, 25)
+            textSize = textSizePx
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        val textHalo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 3.5f * density
+            color = android.graphics.Color.WHITE
+            textSize = textSizePx
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+
+        points.forEach { p ->
+            val lat = p.latitude ?: return@forEach
+            val lon = p.longitude ?: return@forEach
+            val screen = currentMap.projection.toScreenLocation(LatLng(lat, lon))
+            val x = screen.x
+            val y = screen.y
+            if (x < -120f || y < -120f || x > size.width + 120f || y > size.height + 120f) {
+                return@forEach
+            }
+
+            pointPaint.color = if (p.id == selectedPointId) {
+                android.graphics.Color.rgb(255, 193, 7)
+            } else {
+                android.graphics.Color.rgb(230, 45, 45)
+            }
+
+            native.drawCircle(x, y, pointRadius, haloPaint)
+            native.drawLine(x - crossHalf, y, x + crossHalf, y, haloPaint)
+            native.drawLine(x, y - crossHalf, x, y + crossHalf, haloPaint)
+            native.drawCircle(x, y, pointRadius, pointPaint)
+            native.drawLine(x - crossHalf, y, x + crossHalf, y, pointPaint)
+            native.drawLine(x, y - crossHalf, x, y + crossHalf, pointPaint)
+
+            val labelParts = mutableListOf<String>()
+            if (settings.showNumber && p.pointNumber.isNotBlank()) {
+                labelParts += "P" + p.pointNumber
+            }
+            if (settings.showDescription) {
+                val desc = p.description.ifBlank { p.code }
+                if (desc.isNotBlank()) labelParts += desc
+            }
+            if (settings.showElevation) {
+                val elevation = p.orthometricHeightM ?: p.ellipsoidalHeightM
+                if (elevation != null) labelParts += "%.3f m".format(elevation)
+            }
+
+            if (labelParts.isNotEmpty()) {
+                val label = labelParts.joinToString(" • ")
+                val tx = x + crossHalf + 5f * density
+                val ty = y + textSizePx * 0.35f
+                native.drawText(label, tx, ty, textHalo)
+                native.drawText(label, tx, ty, textFill)
+            }
+        }
+
+        if (gnss.connected && gnss.latitude != null && gnss.longitude != null) {
+            val screen = currentMap.projection.toScreenLocation(
+                LatLng(gnss.latitude!!, gnss.longitude!!)
+            )
+            val x = screen.x
+            val y = screen.y
+            val color = when {
+                gnss.solution.contains("FIX", ignoreCase = true) ->
+                    android.graphics.Color.rgb(46, 125, 50)
+                gnss.solution.contains("FLOAT", ignoreCase = true) ->
+                    android.graphics.Color.rgb(249, 168, 37)
+                else ->
+                    android.graphics.Color.rgb(198, 40, 40)
+            }
+
+            val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                this.color = color
+            }
+            val receiverHalo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                this.color = android.graphics.Color.argb(
+                    82,
+                    android.graphics.Color.red(color),
+                    android.graphics.Color.green(color),
+                    android.graphics.Color.blue(color)
+                )
+            }
+            val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 4f * scale
+                this.color = android.graphics.Color.WHITE
+            }
+
+            native.drawCircle(x, y, 24f * scale, receiverHalo)
+            native.drawCircle(x, y, 11f * scale, fill)
+            native.drawCircle(x, y, 12f * scale, outline)
+        }
     }
 }
 
