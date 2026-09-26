@@ -2609,7 +2609,7 @@ private fun saveQuickCodes(context: Context, projectId: String?, codes: List<Str
         .apply()
 }
 
-private fun ensureSurveyGeometryOverlayOnTop(
+internal fun ensureSurveyGeometryOverlayOnTop(
     map: MapLibreMap,
     geometries: List<CommittedGeometry>
 ) {
@@ -2684,7 +2684,7 @@ private fun pinBasemapBelowFieldOverlays(style: Style) {
     }
 }
 
-private fun ensureSurveyPointOverlayOnTop(
+internal fun ensureSurveyPointOverlayOnTop(
     map: MapLibreMap,
     points: List<SurveyPoint>,
     gnss: GnssStatus,
