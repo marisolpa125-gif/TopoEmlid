@@ -224,7 +224,6 @@ fun SurveyScreen(
             drawCommittedGeometry(m, g)
         }
         drawSavedSurveyPointSymbols(m, savedPoints, context)
-        drawLiveReceiverPosition(m, gnss, context)
         ensureSurveyGeometryOverlayOnTop(m, committedGeometries)
         ensureSurveyPointOverlayOnTop(m, savedPoints, gnss, pointDisplaySettings)
         m.style?.let { pinBasemapBelowFieldOverlays(it) }
@@ -1128,7 +1127,6 @@ fun SurveyScreen(
                                                         drawCommittedGeometry(map, geometry)
                                                     }
                                                     drawSavedSurveyPoints(map, savedPoints, context)
-                                                    drawLiveReceiverPosition(map, gnss, context)
                                                     ensureSurveyGeometryOverlayOnTop(map, updatedGeometries)
                                                     ensureSurveyPointOverlayOnTop(map, savedPoints, gnss, pointDisplaySettings)
                                                 }
@@ -2789,49 +2787,8 @@ private fun drawLiveReceiverPosition(
     gnss: GnssStatus,
     context: Context
 ) {
-    val lat = gnss.latitude ?: return
-    val lon = gnss.longitude ?: return
-    if (!gnss.connected) return
-
-    val fillColor = when {
-        gnss.solution.equals("FIX", true) -> android.graphics.Color.rgb(46, 125, 50)
-        gnss.solution.equals("FLOAT", true) -> android.graphics.Color.rgb(249, 168, 37)
-        else -> android.graphics.Color.rgb(198, 40, 40)
-    }
-
-    val size = 68
-    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-
-    val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = android.graphics.Color.argb(
-            72,
-            android.graphics.Color.red(fillColor),
-            android.graphics.Color.green(fillColor),
-            android.graphics.Color.blue(fillColor)
-        )
-    }
-    canvas.drawCircle(size / 2f, size / 2f, 27f, haloPaint)
-
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = fillColor
-    }
-    canvas.drawCircle(size / 2f, size / 2f, 13f, paint)
-
-    paint.style = Paint.Style.STROKE
-    paint.strokeWidth = 4f
-    paint.color = android.graphics.Color.WHITE
-    canvas.drawCircle(size / 2f, size / 2f, 14f, paint)
-
-    val icon = IconFactory.getInstance(context).fromBitmap(bitmap)
-    map.addMarker(
-        MarkerOptions()
-            .position(LatLng(lat, lon))
-            .icon(icon)
-            .title("Posición GNSS • ${gnss.solution}")
-    )
+    // La posición viva se dibuja exclusivamente mediante gnss-live-top-layer.
+    // No agregar una segunda annotation: producía dos símbolos para una sola antena.
 }
 
 private fun drawSavedSurveyPoints(
