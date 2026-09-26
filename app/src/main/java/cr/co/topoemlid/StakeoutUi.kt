@@ -1723,6 +1723,7 @@ private fun StakeoutGuidancePanel(
     val northM = (target.latitude - lat) * metersPerDegLat
     val eastM = (target.longitude - lon) * metersPerDegLon
     val distanceM = hypot(northM, eastM)
+    val targetReached = distanceM <= 0.005
 
     val context = LocalContext.current
     val useGeoid = !project?.geoidFileUri.isNullOrBlank()
