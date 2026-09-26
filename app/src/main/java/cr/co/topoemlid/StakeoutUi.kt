@@ -599,6 +599,8 @@ private fun StakeoutMapPicker(
 
     val layers = remember(project?.id) { loadEffectiveLayers() }
     val basemap = remember(project?.id) { basemapStore.selected(project?.id) }
+    var topOverlayMap by remember { mutableStateOf<MapLibreMap?>(null) }
+    var topOverlayCameraVersion by remember { mutableIntStateOf(0) }
     var localSelectedPointId by remember(selectedPointId) { mutableStateOf(selectedPointId) }
     var localSelectedGeometryId by remember(selectedGeometryId) { mutableStateOf(selectedGeometryId) }
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
@@ -1430,6 +1432,10 @@ private fun StakeoutMapPreview(
                     onStart()
                     onResume()
                     getMapAsync { map ->
+                        topOverlayMap = map
+                        map.addOnCameraMoveListener {
+                            topOverlayCameraVersion += 1
+                        }
                         val center = when {
                             lat != null && lon != null -> LatLng(lat, lon)
                             tLat != null && tLon != null -> LatLng(tLat, tLon)
@@ -1542,6 +1548,16 @@ private fun StakeoutMapPreview(
                     }
                 }
             }
+        )
+
+        AlwaysVisiblePointOverlay(
+            map = topOverlayMap,
+            cameraVersion = topOverlayCameraVersion,
+            points = points,
+            gnss = gnss,
+            settings = pointDisplaySettings,
+            selectedPointId = target?.id,
+            modifier = Modifier.fillMaxSize()
         )
 
         if (lat != null && lon != null && tLat != null && tLon != null) {
