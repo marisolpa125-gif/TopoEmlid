@@ -196,59 +196,42 @@ private fun ensurePointGroup(
     }
 
     val iconName = if (selected) "topo-point-yellow" else "topo-point-red"
-    val bands = listOf(
-        Triple("far", 0f, 14.5f),
-        Triple("mid", 14.5f, 17.5f),
-        Triple("near", 17.5f, 24f)
-    )
-    // Mantener los puntos muy visibles en todo nivel de zoom.
-    // Al acercarse crecen ligeramente en pantalla en vez de reducirse.
-    val sizes = mapOf("far" to 0.82f, "mid" to 0.96f, "near" to 1.10f)
 
-    bands.forEach { (name, minZoom, maxZoom) ->
-        val layerId = "$id-icon-$name"
-        runCatching { style.removeLayer(layerId) }
-        val layer = SymbolLayer(layerId, sourceId).withProperties(
+    val iconLayerId = "$id-icon"
+    runCatching { style.removeLayer(iconLayerId) }
+    style.addLayer(
+        SymbolLayer(iconLayerId, sourceId).withProperties(
             PropertyFactory.iconImage(iconName),
-            PropertyFactory.iconSize(sizes[name] ?: 0.8f),
+            PropertyFactory.iconSize(0.96f),
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconIgnorePlacement(true)
         )
-        layer.setMinZoom(minZoom)
-        layer.setMaxZoom(maxZoom)
-        style.addLayer(layer)
+    )
+
+    // La visualización de puntos debe obedecer directamente los interruptores.
+    // No ocultamos el texto por nivel de zoom ni por colisiones con otras etiquetas.
+    val textLayerId = "$id-text"
+    runCatching { style.removeLayer(textLayerId) }
+
+    val anyTextEnabled =
+        settings.showNumber || settings.showDescription || settings.showElevation
+
+    if (anyTextEnabled) {
+        style.addLayer(
+            SymbolLayer(textLayerId, sourceId).withProperties(
+                PropertyFactory.textField(Expression.get("detail")),
+                PropertyFactory.textColor(android.graphics.Color.rgb(25, 25, 25)),
+                PropertyFactory.textHaloColor(android.graphics.Color.WHITE),
+                PropertyFactory.textHaloWidth(2.5f),
+                PropertyFactory.textSize(13f),
+                PropertyFactory.textOffset(arrayOf(1.55f, 0f)),
+                PropertyFactory.textAnchor(Property.TEXT_ANCHOR_LEFT),
+                PropertyFactory.textAllowOverlap(true),
+                PropertyFactory.textIgnorePlacement(true)
+            )
+        )
     }
-
-    val midTextId = "$id-text-mid"
-    runCatching { style.removeLayer(midTextId) }
-    val midText = SymbolLayer(midTextId, sourceId).withProperties(
-        PropertyFactory.textField(Expression.get("number")),
-        PropertyFactory.textColor(android.graphics.Color.rgb(35, 35, 35)),
-        PropertyFactory.textSize(13f),
-        PropertyFactory.textOffset(arrayOf(1.55f, 0f)),
-        PropertyFactory.textAnchor(Property.TEXT_ANCHOR_LEFT),
-        PropertyFactory.textAllowOverlap(false),
-        PropertyFactory.textIgnorePlacement(false)
-    )
-    midText.setMinZoom(14.5f)
-    midText.setMaxZoom(17.5f)
-    style.addLayer(midText)
-
-    val nearTextId = "$id-text-near"
-    runCatching { style.removeLayer(nearTextId) }
-    val nearText = SymbolLayer(nearTextId, sourceId).withProperties(
-        PropertyFactory.textField(Expression.get("detail")),
-        PropertyFactory.textColor(android.graphics.Color.rgb(35, 35, 35)),
-        PropertyFactory.textSize(12.5f),
-        PropertyFactory.textOffset(arrayOf(1.45f, 0f)),
-        PropertyFactory.textAnchor(Property.TEXT_ANCHOR_LEFT),
-        PropertyFactory.textAllowOverlap(false),
-        PropertyFactory.textIgnorePlacement(false)
-    )
-    nearText.setMinZoom(17.5f)
-    style.addLayer(nearText)
 }
-
 
 fun ensureTopoRtkLayer(
     style: Style,
