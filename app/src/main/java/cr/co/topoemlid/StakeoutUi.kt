@@ -114,13 +114,13 @@ fun StakeoutScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            toneGenerator.stopTone()
-            toneGenerator.release()
+            runCatching { toneGenerator.stopTone() }
+            runCatching { toneGenerator.release() }
         }
     }
 
     LaunchedEffect(showGuidance, mode, selectedPointId) {
-        toneGenerator.stopTone()
+        runCatching { toneGenerator.stopTone() }
         if (!showGuidance || mode != StakeoutMode.POINT || selectedPointId == null) return@LaunchedEffect
 
         var continuousCenterTone = false
@@ -129,7 +129,7 @@ fun StakeoutScreen(
                 val distance = latestStakeoutDistance
                 if (distance == null || !gnss.connected) {
                     if (continuousCenterTone) {
-                        toneGenerator.stopTone()
+                        runCatching { toneGenerator.stopTone() }
                         continuousCenterTone = false
                     }
                     delay(250)
@@ -148,7 +148,7 @@ fun StakeoutScreen(
                 }
 
                 if (continuousCenterTone) {
-                    toneGenerator.stopTone()
+                    runCatching { toneGenerator.stopTone() }
                     continuousCenterTone = false
                     delay(40)
                 }
@@ -182,7 +182,7 @@ fun StakeoutScreen(
                 }
             }
         } finally {
-            toneGenerator.stopTone()
+            runCatching { toneGenerator.stopTone() }
         }
     }
 
@@ -236,8 +236,9 @@ fun StakeoutScreen(
             pointDisplaySettings = pointDisplaySettings,
             ntrip = ntrip,
             onStop = {
+                onActiveChanged(false)
                 showGuidance = false
-                toneGenerator.stopTone()
+                runCatching { toneGenerator.stopTone() }
             }
         )
         return
@@ -284,8 +285,9 @@ fun StakeoutScreen(
                     .padding(vertical = 4.dp)
                     .clickable {
                         if (mode != item) {
+                            onActiveChanged(false)
                             showGuidance = false
-                            toneGenerator.stopTone()
+                            runCatching { toneGenerator.stopTone() }
                         }
                         mode = item
                     }
@@ -296,7 +298,7 @@ fun StakeoutScreen(
                         onClick = {
                             if (mode != item) {
                                 showGuidance = false
-                                toneGenerator.stopTone()
+                                runCatching { toneGenerator.stopTone() }
                             }
                             mode = item
                         }
@@ -423,9 +425,11 @@ fun StakeoutScreen(
         Button(
             onClick = {
                 if (showGuidance) {
+                    onActiveChanged(false)
                     showGuidance = false
-                    toneGenerator.stopTone()
+                    runCatching { toneGenerator.stopTone() }
                 } else {
+                    onActiveChanged(true)
                     showGuidance = true
                 }
             },
@@ -1128,7 +1132,12 @@ private fun StakeoutCompactOverlay(
 
     val dz = if (targetElevation != null && currentElevation != null) targetElevation - currentElevation else null
 
-    Card(modifier) {
+    Card(
+        modifier = modifier,
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f)
+        )
+    ) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
             Text("Punto " + target.pointNumber + " • " + "%.3f m".format(distanceM), fontWeight = FontWeight.Bold)
             Text("E/O " + "%.3f".format(eastM) + " m • N/S " + "%.3f".format(northM) + " m")
@@ -1508,7 +1517,7 @@ private fun StakeoutMapPreview(
                             map.moveCamera(
                                 CameraUpdateFactory.newLatLngBounds(
                                     bounds,
-                                    110
+                                    210
                                 )
                             )
                         } else {
@@ -1521,7 +1530,7 @@ private fun StakeoutMapPreview(
                                 map.moveCamera(
                                     CameraUpdateFactory.newLatLngBounds(
                                         bounds,
-                                        70
+                                        160
                                     )
                                 )
                             } else {
