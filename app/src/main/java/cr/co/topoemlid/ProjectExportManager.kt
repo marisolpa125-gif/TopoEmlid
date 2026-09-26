@@ -322,6 +322,7 @@ object ProjectExportManager {
                 put("location", project.location)
                 put("crsName", project.crsName)
                 put("geoidModel", project.geoidModel.name)
+                put("geoidFileUri", project.geoidFileUri)
                 put("geoidFileName", project.geoidFileName)
                 put("antennaHeightM", project.antennaHeightM)
                 put("ntripProfileName", project.ntripProfileName)
