@@ -137,13 +137,13 @@ fun StakeoutScreen(
                 }
 
                 if (distance <= 0.005) {
-                    // Dentro de 5 mm en planta: tono continuo "piiiii".
-                    // La elevación NO interviene en este criterio.
+                    // Dentro de 5 mm en planta: tono realmente continuo.
+                    // DTMF se mantiene activo hasta stopTone(); la elevación no interviene.
                     if (!continuousCenterTone) {
-                        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP2)
+                        toneGenerator.startTone(ToneGenerator.TONE_DTMF_0)
                         continuousCenterTone = true
                     }
-                    delay(100)
+                    delay(80)
                     continue
                 }
 
@@ -1106,6 +1106,7 @@ private fun StakeoutCompactOverlay(
     val northM = (tLat - lat) * 111132.0
     val eastM = (tLon - lon) * (111320.0 * cos(Math.toRadians(tLat)))
     val distanceM = hypot(northM, eastM)
+    val targetReached = distanceM <= 0.005
 
     val context = LocalContext.current
     val useGeoid = !project?.geoidFileUri.isNullOrBlank()
@@ -1946,6 +1947,21 @@ private fun StakeoutGuidancePanel(
                             start = Offset(center.x, center.y - 11f),
                             end = Offset(center.x, center.y + 11f),
                             strokeWidth = 3f
+                        )
+                    }
+
+                    if (targetReached) {
+                        Canvas(Modifier.matchParentSize()) {
+                            drawRect(Color(0x5534A853))
+                        }
+                        Text(
+                            "PUNTO ALCANZADO",
+                            modifier = Modifier
+                                .align(androidx.compose.ui.Alignment.TopCenter)
+                                .padding(top = 42.dp),
+                            color = Color(0xFF1B5E20),
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium
                         )
                     }
 
