@@ -597,6 +597,14 @@ private fun AppSettingsScreen(
     var reachBleAdminMessage by remember { mutableStateOf<String?>(null) }
     var reachBleAdminBusy by remember { mutableStateOf(false) }
 
+    var loraConfig by remember { mutableStateOf<ReachLoraConfig?>(null) }
+    var loraBusy by remember { mutableStateOf(false) }
+    var loraMessage by remember { mutableStateOf<String?>(null) }
+    var loraRole by remember { mutableStateOf("ROVER") }
+    var loraFrequencyMhz by remember { mutableStateOf("") }
+    var loraAirRate by remember { mutableStateOf("9.11") }
+    var loraPowerDbm by remember { mutableStateOf("20") }
+
     DisposableEffect(reachBleAdmin) {
         onDispose { reachBleAdmin?.close() }
     }
@@ -761,6 +769,88 @@ private fun AppSettingsScreen(
             kotlinx.coroutines.delay(900L)
             reachBleAdminMessage =
                 "Bluetooth/NMEA restaurado después de $operationLabel."
+        }
+    }
+
+    fun readLoraFromReach() {
+        if (loraBusy) return
+        loraBusy = true
+        loraMessage = "Leyendo configuración LoRa del Reach…"
+        settingsScope.launch {
+            runCatching {
+                withReachBleManagement("leer configuración LoRa") { client ->
+                    client.readLoraConfiguration().getOrThrow()
+                }
+            }.onSuccess { cfg ->
+                loraConfig = cfg
+                loraFrequencyMhz = "%.3f".format(cfg.frequencyHz / 1_000_000.0)
+                loraAirRate = cfg.airRateKbps.toString()
+                cfg.outputPowerDbm?.let { loraPowerDbm = it.toString() }
+                loraRole = when {
+                    cfg.inputIsLora -> "ROVER"
+                    cfg.output1IsLora || cfg.output2IsLora -> "BASE"
+                    else -> loraRole
+                }
+                loraMessage =
+                    "LoRa leído: %.3f MHz • %.2f kb/s".format(
+                        cfg.frequencyHz / 1_000_000.0,
+                        cfg.airRateKbps
+                    )
+            }.onFailure {
+                loraMessage = it.message ?: "No se pudo leer la configuración LoRa."
+            }
+            loraBusy = false
+        }
+    }
+
+    fun applyLoraToReach() {
+        if (loraBusy) return
+        val frequencyMhz = loraFrequencyMhz.replace(',', '.').toDoubleOrNull()
+        val airRate = loraAirRate.replace(',', '.').toDoubleOrNull()
+        val power = loraPowerDbm.toIntOrNull()
+
+        if (frequencyMhz == null || frequencyMhz <= 0.0) {
+            loraMessage = "Ingrese una frecuencia LoRa válida en MHz."
+            return
+        }
+        if (airRate == null || airRate <= 0.0) {
+            loraMessage = "Ingrese una velocidad de aire válida."
+            return
+        }
+
+        val frequencyHz = (frequencyMhz * 1_000_000.0).toInt()
+        val channel = if (loraRole == "ROVER") "input" else "output1"
+
+        loraBusy = true
+        loraMessage =
+            if (loraRole == "ROVER")
+                "Configurando LoRa como entrada de correcciones (rover)…"
+            else
+                "Configurando LoRa como salida de correcciones (base)…"
+
+        settingsScope.launch {
+            runCatching {
+                withReachBleManagement("configurar LoRa") { client ->
+                    client.setLoraCorrectionChannel(
+                        channel = channel,
+                        airRateKbps = airRate,
+                        frequencyHz = frequencyHz,
+                        outputPowerDbm = if (loraRole == "BASE") power else null
+                    ).getOrThrow()
+                    client.readLoraConfiguration().getOrThrow()
+                }
+            }.onSuccess { cfg ->
+                loraConfig = cfg
+                loraMessage =
+                    "LoRa aplicado y verificado: %.3f MHz • %.2f kb/s • %s".format(
+                        cfg.frequencyHz / 1_000_000.0,
+                        cfg.airRateKbps,
+                        if (loraRole == "BASE") "BASE" else "ROVER"
+                    )
+            }.onFailure {
+                loraMessage = it.message ?: "No se pudo aplicar la configuración LoRa."
+            }
+            loraBusy = false
         }
     }
 
@@ -1964,6 +2054,132 @@ private fun AppSettingsScreen(
                     "Saldo monetario queda pendiente: el Reach Panel no expone por ahora un endpoint de SMS/USSD. El consumo de datos sí se lee directamente del módem.",
                     style = MaterialTheme.typography.bodySmall
                 )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Radio LoRa", fontWeight = FontWeight.Bold)
+                Text(
+                    "Configura el enlace directo de correcciones RTK entre receptores Reach. " +
+                        "La base transmite y el rover recibe. Ambos deben usar la misma frecuencia y velocidad.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = loraRole == "ROVER",
+                        onClick = { loraRole = "ROVER" },
+                        label = { Text("Rover · entrada") },
+                        enabled = !loraBusy
+                    )
+                    FilterChip(
+                        selected = loraRole == "BASE",
+                        onClick = { loraRole = "BASE" },
+                        label = { Text("Base · salida") },
+                        enabled = !loraBusy
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = loraFrequencyMhz,
+                    onValueChange = { loraFrequencyMhz = it },
+                    label = { Text("Frecuencia (MHz)") },
+                    supportingText = {
+                        Text("Use la frecuencia permitida por el propio Reach para su región.")
+                    },
+                    singleLine = true,
+                    enabled = !loraBusy,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(6.dp))
+
+                OutlinedTextField(
+                    value = loraAirRate,
+                    onValueChange = { loraAirRate = it },
+                    label = { Text("Velocidad de aire (kb/s)") },
+                    supportingText = { Text("Emlid recomienda 9.11 kb/s para RTK LoRa.") },
+                    singleLine = true,
+                    enabled = !loraBusy,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (loraRole == "BASE") {
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = loraPowerDbm,
+                        onValueChange = { loraPowerDbm = it },
+                        label = { Text("Potencia de salida (dBm)") },
+                        supportingText = {
+                            Text("20 dBm es la referencia de Emlid; respete los límites que aplique el receptor.")
+                        },
+                        singleLine = true,
+                        enabled = !loraBusy,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { readLoraFromReach() },
+                        enabled = !loraBusy && activeReceiverProfile != null,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(if (loraBusy) "Procesando…" else "Leer del Reach")
+                    }
+                    Button(
+                        onClick = { applyLoraToReach() },
+                        enabled = !loraBusy &&
+                            activeReceiverProfile != null &&
+                            loraFrequencyMhz.isNotBlank(),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Aplicar LoRa")
+                    }
+                }
+
+                loraConfig?.let { cfg ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Estado actual: " +
+                            when {
+                                cfg.inputIsLora -> "Rover / entrada LoRa"
+                                cfg.output1IsLora || cfg.output2IsLora -> "Base / salida LoRa"
+                                else -> "LoRa sin asignar a correcciones"
+                            } +
+                            " • %.3f MHz".format(cfg.frequencyHz / 1_000_000.0) +
+                            " • %.2f kb/s".format(cfg.airRateKbps) +
+                            (cfg.outputPowerDbm?.let { " • $it dBm" } ?: ""),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    cfg.connected?.let {
+                        Text(
+                            "Enlace LoRa: " + if (it) "activo" else "sin enlace confirmado",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+
+                loraMessage?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
 
