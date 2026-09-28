@@ -2966,6 +2966,37 @@ private fun ActiveProjectTransferScreen(project: TopoProject?) {
                                 Text(option.label, style = MaterialTheme.typography.bodySmall)
                             }
                         }
+                        if (textLayout == TextPointLayout.CUSTOM) {
+                            Spacer(Modifier.height(8.dp))
+                            Text("Campos personalizados", fontWeight = FontWeight.Bold)
+                            Text(
+                                "Marque los campos que quiere exportar. Orden: P, N, E, Z, D, Lat, Lon.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            PointExportField.entries.forEach { field ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            customPointFields =
+                                                if (field in customPointFields) customPointFields - field
+                                                else customPointFields + field
+                                        }
+                                        .padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = field in customPointFields,
+                                        onCheckedChange = { checked ->
+                                            customPointFields =
+                                                if (checked) (customPointFields + field).distinct()
+                                                else customPointFields - field
+                                        }
+                                    )
+                                    Text(field.shortLabel + " · " + field.label, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
                         Spacer(Modifier.height(8.dp))
                         Text("Separador", fontWeight = FontWeight.Bold)
                         TextSeparator.entries.forEach { option ->
