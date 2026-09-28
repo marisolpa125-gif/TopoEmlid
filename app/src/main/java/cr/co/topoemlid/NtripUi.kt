@@ -18,6 +18,7 @@ fun NtripProfilesScreen(
     profiles: List<NtripProfile>,
     onProfilesChanged: (List<NtripProfile>) -> Unit,
     liveStatus: NtripLiveStatus,
+    gnss: GnssStatus,
     onConnect: (NtripProfile) -> Unit,
     onDisconnect: () -> Unit
 ) {
@@ -28,6 +29,7 @@ fun NtripProfilesScreen(
     if (creating || editing != null) {
         NtripProfileDialog(
             profile = editing,
+            gnss = gnss,
             onDismiss = {
                 creating = false
                 editing = null
@@ -154,6 +156,7 @@ fun NtripProfilesScreen(
 @Composable
 private fun NtripProfileDialog(
     profile: NtripProfile?,
+    gnss: GnssStatus,
     onDismiss: () -> Unit,
     onSave: (NtripProfile) -> Unit
 ) {
@@ -170,6 +173,31 @@ private fun NtripProfileDialog(
     var loadError by remember { mutableStateOf<String?>(null) }
     var connectionStatus by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    fun mountDistanceKm(mp: NtripMountPoint): Double? {
+        val lat1 = gnss.latitude ?: return null
+        val lon1 = gnss.longitude ?: return null
+        val lat2 = mp.latitude ?: return null
+        val lon2 = mp.longitude ?: return null
+        val r = 6371.0088
+        val p1 = Math.toRadians(lat1)
+        val p2 = Math.toRadians(lat2)
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = kotlin.math.sin(dLat / 2).let { s -> s * s } +
+            kotlin.math.cos(p1) * kotlin.math.cos(p2) *
+            kotlin.math.sin(dLon / 2).let { s -> s * s }
+        return 2.0 * r * kotlin.math.asin(kotlin.math.sqrt(a))
+    }
+
+    fun distanceText(mp: NtripMountPoint): String {
+        val km = mountDistanceKm(mp) ?: return "Distancia no disponible"
+        return when {
+            km < 1.0 -> "%.0f m".format(km * 1000.0)
+            km < 10.0 -> "%.2f km".format(km)
+            else -> "%.1f km".format(km)
+        }
+    }
 
     fun loadMountPoints() {
         val p = port.toIntOrNull() ?: return
@@ -190,7 +218,17 @@ private fun NtripProfileDialog(
             loadingMounts = false
             result.onSuccess {
                 mountPoints = it
-                connectionStatus = "Caster encontrado • ${it.size} punto(s) de montaje"
+                val withCoordinates = it.count { mp -> mp.latitude != null && mp.longitude != null }
+                connectionStatus = buildString {
+                    append("Caster encontrado • ${it.size} punto(s) de montaje")
+                    if (gnss.latitude == null || gnss.longitude == null) {
+                        append(" • conecte el receptor para calcular distancias")
+                    } else if (withCoordinates == 0) {
+                        append(" • el caster no publicó coordenadas de los mountpoints")
+                    } else {
+                        append(" • distancia disponible en $withCoordinates")
+                    }
+                }
                 mountMenuOpen = true
             }.onFailure {
                 connectionStatus = null
@@ -288,6 +326,11 @@ private fun NtripProfileDialog(
                                 text = {
                                     Column {
                                         Text(mp.name, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            "Distancia desde la antena: " + distanceText(mp),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
                                         val meta = listOf(mp.identifier, mp.format, mp.country)
                                             .filter { it.isNotBlank() }
                                             .joinToString(" • ")
