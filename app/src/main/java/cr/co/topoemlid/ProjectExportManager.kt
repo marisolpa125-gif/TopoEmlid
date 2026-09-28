@@ -26,14 +26,76 @@ enum class ProjectExportContent(val label: String) {
     ALL("Todo")
 }
 
-enum class TextPointLayout(val label: String) {
-    POINT_LAT_LON_ELEV_DESC("Punto, Latitud, Longitud, Elevación, Descripción"),
-    POINT_LON_LAT_ELEV_DESC("Punto, Longitud, Latitud, Elevación, Descripción"),
-    POINT_LAT_LON("Punto, Latitud, Longitud"),
-    POINT_LON_LAT("Punto, Longitud, Latitud"),
-    LAT_LON("Latitud, Longitud"),
-    LON_LAT("Longitud, Latitud"),
-    POINT_DESC("Punto, Descripción")
+enum class PointExportField(val label: String, val shortLabel: String) {
+    POINT("Punto", "P"),
+    NORTH("Norte", "N"),
+    EAST("Este", "E"),
+    ELEVATION("Elevación", "Z"),
+    DESCRIPTION("Descripción", "D"),
+    LATITUDE("Latitud", "Lat"),
+    LONGITUDE("Longitud", "Lon")
+}
+
+enum class TextPointLayout(
+    val label: String,
+    val fields: List<PointExportField>
+) {
+    POINT_NORTH_EAST_ELEV_DESC(
+        "Punto, Norte, Este, Elevación, Descripción",
+        listOf(PointExportField.POINT, PointExportField.NORTH, PointExportField.EAST, PointExportField.ELEVATION, PointExportField.DESCRIPTION)
+    ),
+    POINT_EAST_NORTH_ELEV_DESC(
+        "Punto, Este, Norte, Elevación, Descripción",
+        listOf(PointExportField.POINT, PointExportField.EAST, PointExportField.NORTH, PointExportField.ELEVATION, PointExportField.DESCRIPTION)
+    ),
+    NORTH_EAST(
+        "Norte, Este",
+        listOf(PointExportField.NORTH, PointExportField.EAST)
+    ),
+    EAST_NORTH(
+        "Este, Norte",
+        listOf(PointExportField.EAST, PointExportField.NORTH)
+    ),
+    NORTH_EAST_ELEV(
+        "Norte, Este, Elevación",
+        listOf(PointExportField.NORTH, PointExportField.EAST, PointExportField.ELEVATION)
+    ),
+    POINT_NORTH_EAST(
+        "Punto, Norte, Este",
+        listOf(PointExportField.POINT, PointExportField.NORTH, PointExportField.EAST)
+    ),
+    POINT_LAT_LON_ELEV_DESC(
+        "Punto, Latitud, Longitud, Elevación, Descripción",
+        listOf(PointExportField.POINT, PointExportField.LATITUDE, PointExportField.LONGITUDE, PointExportField.ELEVATION, PointExportField.DESCRIPTION)
+    ),
+    POINT_LON_LAT_ELEV_DESC(
+        "Punto, Longitud, Latitud, Elevación, Descripción",
+        listOf(PointExportField.POINT, PointExportField.LONGITUDE, PointExportField.LATITUDE, PointExportField.ELEVATION, PointExportField.DESCRIPTION)
+    ),
+    POINT_LAT_LON(
+        "Punto, Latitud, Longitud",
+        listOf(PointExportField.POINT, PointExportField.LATITUDE, PointExportField.LONGITUDE)
+    ),
+    POINT_LON_LAT(
+        "Punto, Longitud, Latitud",
+        listOf(PointExportField.POINT, PointExportField.LONGITUDE, PointExportField.LATITUDE)
+    ),
+    LAT_LON(
+        "Latitud, Longitud",
+        listOf(PointExportField.LATITUDE, PointExportField.LONGITUDE)
+    ),
+    LON_LAT(
+        "Longitud, Latitud",
+        listOf(PointExportField.LONGITUDE, PointExportField.LATITUDE)
+    ),
+    POINT_DESC(
+        "Punto, Descripción",
+        listOf(PointExportField.POINT, PointExportField.DESCRIPTION)
+    ),
+    CUSTOM(
+        "Personalizado",
+        emptyList()
+    )
 }
 
 enum class TextSeparator(val label: String, val value: String) {
@@ -46,8 +108,15 @@ enum class TextSeparator(val label: String, val value: String) {
 data class ProjectExportOptions(
     val format: ProjectExportFormat,
     val content: ProjectExportContent = ProjectExportContent.ALL,
-    val textLayout: TextPointLayout = TextPointLayout.POINT_LAT_LON_ELEV_DESC,
-    val separator: TextSeparator = TextSeparator.COMMA
+    val textLayout: TextPointLayout = TextPointLayout.POINT_NORTH_EAST_ELEV_DESC,
+    val separator: TextSeparator = TextSeparator.COMMA,
+    val customPointFields: List<PointExportField> = listOf(
+        PointExportField.POINT,
+        PointExportField.NORTH,
+        PointExportField.EAST,
+        PointExportField.ELEVATION,
+        PointExportField.DESCRIPTION
+    )
 )
 
 object ProjectExportManager {
@@ -64,7 +133,7 @@ object ProjectExportManager {
 
         val body = when (options.format) {
             ProjectExportFormat.TXT,
-            ProjectExportFormat.CSV -> buildDelimited(points, geometriesRaw, options)
+            ProjectExportFormat.CSV -> buildDelimited(project, points, geometriesRaw, options)
             ProjectExportFormat.GEOJSON -> buildGeoJson(points, geometriesRaw, options.content)
             ProjectExportFormat.KML -> buildKml(points, geometriesRaw, options.content)
             ProjectExportFormat.DXF -> buildDxf(points, geometriesRaw, options.content)
@@ -109,6 +178,7 @@ object ProjectExportManager {
     }
 
     private fun buildDelimited(
+        project: TopoProject,
         points: List<SurveyPoint>,
         geometriesRaw: String,
         options: ProjectExportOptions
@@ -123,24 +193,52 @@ object ProjectExportManager {
         fun v(d: Double?, decimals: Int): String =
             d?.let { "%.${decimals}f".format(Locale.US, it) } ?: ""
 
-        // Para "Solo puntos" se conserva exactamente el formato configurable
-        // que ya usa el usuario en campo.
-        if (options.content == ProjectExportContent.POINTS) {
-            val rows = points.map { p ->
-                when (options.textLayout) {
-                    TextPointLayout.POINT_LAT_LON_ELEV_DESC -> listOf(
-                        p.pointNumber, v(p.latitude, 8), v(p.longitude, 8), v(p.ellipsoidalHeightM, 3), p.description
-                    )
-                    TextPointLayout.POINT_LON_LAT_ELEV_DESC -> listOf(
-                        p.pointNumber, v(p.longitude, 8), v(p.latitude, 8), v(p.ellipsoidalHeightM, 3), p.description
-                    )
-                    TextPointLayout.POINT_LAT_LON -> listOf(p.pointNumber, v(p.latitude, 8), v(p.longitude, 8))
-                    TextPointLayout.POINT_LON_LAT -> listOf(p.pointNumber, v(p.longitude, 8), v(p.latitude, 8))
-                    TextPointLayout.LAT_LON -> listOf(v(p.latitude, 8), v(p.longitude, 8))
-                    TextPointLayout.LON_LAT -> listOf(v(p.longitude, 8), v(p.latitude, 8))
-                    TextPointLayout.POINT_DESC -> listOf(p.pointNumber, p.description)
-                }.joinToString(sep) { clean(it) }
+        fun projected(p: SurveyPoint): Pair<Double?, Double?> {
+            val storedE = p.eastingM
+            val storedN = p.northingM
+            if (storedE != null && storedN != null && p.projectCrsName == project.crsName) {
+                return storedE to storedN
             }
+            val lat = p.latitude
+            val lon = p.longitude
+            if (lat == null || lon == null || project.crsName == "WGS 84 geográficas") {
+                return null to null
+            }
+            val coord = ProjectCoordinateEngine.fromWgs84(lat, lon, project.crsName)
+            return coord.eastingM to coord.northingM
+        }
+
+        fun pointRow(p: SurveyPoint, fields: List<PointExportField>): String {
+            val (east, north) = projected(p)
+            val elevation = p.orthometricHeightM ?: p.ellipsoidalHeightM
+            return fields.map { field ->
+                when (field) {
+                    PointExportField.POINT -> p.pointNumber
+                    PointExportField.NORTH -> v(north, 3)
+                    PointExportField.EAST -> v(east, 3)
+                    PointExportField.ELEVATION -> v(elevation, 3)
+                    PointExportField.DESCRIPTION -> p.description.ifBlank { p.code }
+                    PointExportField.LATITUDE -> v(p.latitude, 8)
+                    PointExportField.LONGITUDE -> v(p.longitude, 8)
+                }
+            }.joinToString(sep) { clean(it) }
+        }
+
+        if (options.content == ProjectExportContent.POINTS) {
+            val fields = if (options.textLayout == TextPointLayout.CUSTOM) {
+                options.customPointFields.ifEmpty {
+                    listOf(
+                        PointExportField.POINT,
+                        PointExportField.NORTH,
+                        PointExportField.EAST,
+                        PointExportField.ELEVATION,
+                        PointExportField.DESCRIPTION
+                    )
+                }
+            } else {
+                options.textLayout.fields
+            }
+            val rows = points.map { pointRow(it, fields) }
             return rows.joinToString("\n", postfix = if (rows.isEmpty()) "" else "\n")
         }
 
@@ -190,7 +288,7 @@ object ProjectExportManager {
             }
         }
 
-        return rows.joinToString("\n", postfix = "\n")
+        return rows.joinToString("\n", postfix = if (rows.isEmpty()) "" else "\n")
     }
 
     private fun buildGeoJson(
