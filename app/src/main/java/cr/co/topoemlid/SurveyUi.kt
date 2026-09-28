@@ -89,7 +89,9 @@ fun SurveyScreen(
     gnss: GnssStatus
 ) {
     val context = LocalContext.current
-    val snapThresholdPx = with(LocalDensity.current) { 28.dp.toPx() }
+    // Tolerancia cómoda para uso táctil en campo: permite tocar el símbolo o muy
+    // cerca de la etiqueta del punto sin tener que acertar exactamente al centro.
+    val snapThresholdPx = with(LocalDensity.current) { 38.dp.toPx() }
     val fieldSounds = remember { FieldSoundManager(context) }
     DisposableEffect(Unit) {
         onDispose { fieldSounds.release() }
@@ -2573,40 +2575,56 @@ private fun findSnapTarget(
     thresholdPx: Float
 ): SnapTarget? {
     val tapScreen = map.projection.toScreenLocation(tap)
-    val candidates = mutableListOf<Pair<LatLng, String>>()
 
-    // Los puntos levantados o importados tienen prioridad semántica.
-    savedPoints.forEach { p ->
-        val lat = p.latitude
-        val lon = p.longitude
-        if (lat != null && lon != null) {
-            candidates += LatLng(lat, lon) to "punto ${p.pointNumber}"
-        }
+    fun candidate(
+        position: LatLng,
+        label: String
+    ): SnapTarget {
+        val s = map.projection.toScreenLocation(position)
+        val dx = (s.x - tapScreen.x).toDouble()
+        val dy = (s.y - tapScreen.y).toDouble()
+        return SnapTarget(position, label, hypot(dx, dy))
     }
 
-    // Todos los vértices de figuras guardadas también pueden recibir snap.
-    geometries.forEachIndexed { geometryIndex, geometry ->
-        geometryPath(geometry).forEachIndexed { vertexIndex, vertex ->
-            candidates += vertex to "vértice ${vertexIndex + 1} de ${geometry.tool.label}"
-        }
-    }
-
-    // Permite cerrar o enlazar la figura que se está dibujando con sus propios
-    // vértices anteriores, útil especialmente en líneas y polígonos.
-    currentToolPoints.forEachIndexed { index, vertex ->
-        candidates += vertex to "vértice actual ${index + 1}"
-    }
-
-    return candidates
-        .map { (position, label) ->
-            val s = map.projection.toScreenLocation(position)
-            val dx = (s.x - tapScreen.x).toDouble()
-            val dy = (s.y - tapScreen.y).toDouble()
-            SnapTarget(position, label, hypot(dx, dy))
+    // PRIORIDAD 1: puntos levantados/importados.
+    // Si el toque cae dentro de la tolerancia de uno de ellos, ese punto manda
+    // aunque exista un vértice de otra figura todavía más cerca en pantalla.
+    val savedPointSnap = savedPoints
+        .mapNotNull { p ->
+            val lat = p.latitude
+            val lon = p.longitude
+            if (lat == null || lon == null) null
+            else candidate(LatLng(lat, lon), "punto ${p.pointNumber}")
         }
         .filter { it.distancePx <= thresholdPx }
         .minByOrNull { it.distancePx }
-}
+
+    if (savedPointSnap != null) return savedPointSnap
+
+    // PRIORIDAD 2: vértices de geometrías ya guardadas.
+    val geometrySnap = geometries
+        .flatMapIndexed { geometryIndex, geometry ->
+            geometryPath(geometry).mapIndexed { vertexIndex, vertex ->
+                candidate(
+                    vertex,
+                    "vértice ${vertexIndex + 1} de ${geometry.tool.label}"
+                )
+            }
+        }
+        .filter { it.distancePx <= thresholdPx }
+        .minByOrNull { it.distancePx }
+
+    if (geometrySnap != null) return geometrySnap
+
+    // PRIORIDAD 3: vértices de la figura que se está dibujando, útil para
+    // cerrar polígonos o enlazar segmentos sin crear coordenadas duplicadas.
+    return currentToolPoints
+        .mapIndexed { index, vertex ->
+            candidate(vertex, "vértice actual ${index + 1}")
+        }
+        .filter { it.distancePx <= thresholdPx }
+        .minByOrNull { it.distancePx }
+
 
 private fun defaultSurveyQuickCodes(): List<String> = listOf(
     "CALLE", "CORDÓN", "CUNETA", "CAÑO", "ASFALTO", "LASTRE",
