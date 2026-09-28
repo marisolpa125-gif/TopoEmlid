@@ -2378,6 +2378,10 @@ private fun ProjectDetails(
     var antennaText by remember(project.id, project.antennaHeightM) { mutableStateOf(project.antennaHeightM.toString()) }
     var geoidFileName by remember(project.id, project.geoidFileName) { mutableStateOf(project.geoidFileName) }
     var geoidFileUri by remember(project.id, project.geoidFileUri) { mutableStateOf(project.geoidFileUri) }
+    var pendingGeoidUri by remember(project.id) { mutableStateOf<Uri?>(null) }
+    var pendingGeoidFileName by remember(project.id) { mutableStateOf<String?>(null) }
+    var geoidLoadMessage by remember(project.id) { mutableStateOf<String?>(null) }
+    var geoidLoadOk by remember(project.id) { mutableStateOf(project.geoidFileUri != null) }
     var crsName by remember(project.id, project.crsName) { mutableStateOf(project.crsName) }
     val context = LocalContext.current
     val hasSurveyPoints = remember(project.id) {
@@ -2408,20 +2412,28 @@ private fun ProjectDetails(
 
     val geoidPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
-            try { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+
             var displayName = uri.lastPathSegment ?: "archivo_geoide"
-            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (cursor.moveToFirst() && idx >= 0) displayName = cursor.getString(idx) ?: displayName
+            runCatching {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (cursor.moveToFirst() && idx >= 0) {
+                        displayName = cursor.getString(idx) ?: displayName
+                    }
+                }
             }
-            geoidFileName = displayName
-            geoidFileUri = GeoidGridService.makePrivateCopy(
-                context = context,
-                sourceUri = uri,
-                fileName = displayName
-            ).getOrElse {
-                uri.toString()
-            }
+
+            pendingGeoidUri = uri
+            pendingGeoidFileName = displayName
+            geoidLoadOk = false
+            geoidLoadMessage =
+                "Archivo seleccionado: $displayName. Pulse Cargar archivo para validarlo."
         }
     }
 
@@ -2716,18 +2728,87 @@ private fun ProjectDetails(
         }
 
         Text("Geoide", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
-        Text(geoidFileName ?: "Sin archivo geoidal local")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
-            Button(
+        Text(
+            pendingGeoidFileName
+                ?: geoidFileName
+                ?: "Sin archivo geoidal local"
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(top = 6.dp)
+        ) {
+            OutlinedButton(
                 onClick = { geoidPicker.launch(arrayOf("*/*")) },
                 enabled = !hasSurveyPoints
+            ) { Text("Abrir archivo") }
+
+            Button(
+                onClick = {
+                    val sourceUri = pendingGeoidUri
+                    val sourceName = pendingGeoidFileName
+                    if (sourceUri == null || sourceName.isNullOrBlank()) {
+                        geoidLoadOk = false
+                        geoidLoadMessage = "Primero pulse Abrir archivo y seleccione un geoide."
+                    } else {
+                        val loaded = GeoidGridService.makePrivateCopy(
+                            context = context,
+                            sourceUri = sourceUri,
+                            fileName = sourceName
+                        ).mapCatching { privateUri ->
+                            // Punto de prueba dentro de Costa Rica para confirmar que no solo
+                            // se copió el archivo, sino que la grilla realmente puede leerse.
+                            val sample = GeoidGridService.undulation(
+                                context = context,
+                                uriText = privateUri,
+                                fileName = sourceName,
+                                latitude = 9.93,
+                                longitude = -84.08
+                            ).getOrThrow()
+                            privateUri to sample
+                        }
+
+                        loaded.onSuccess { (privateUri, sample) ->
+                            geoidFileUri = privateUri
+                            geoidFileName = sourceName
+                            pendingGeoidUri = null
+                            pendingGeoidFileName = null
+                            geoidLoadOk = true
+                            geoidLoadMessage =
+                                "Geoide cargado correctamente • prueba N = %.3f m".format(sample.undulationM)
+                        }.onFailure { error ->
+                            geoidLoadOk = false
+                            geoidLoadMessage =
+                                "No se pudo cargar el geoide: " +
+                                    (error.message ?: "formato no reconocido o archivo no legible")
+                        }
+                    }
+                },
+                enabled = !hasSurveyPoints && pendingGeoidUri != null
             ) { Text("Cargar archivo") }
-            if (geoidFileUri != null) {
+
+            if (geoidFileUri != null || pendingGeoidUri != null) {
                 OutlinedButton(
-                    onClick = { geoidFileUri = null; geoidFileName = null },
+                    onClick = {
+                        geoidFileUri = null
+                        geoidFileName = null
+                        pendingGeoidUri = null
+                        pendingGeoidFileName = null
+                        geoidLoadOk = false
+                        geoidLoadMessage = "Geoide quitado del trabajo."
+                    },
                     enabled = !hasSurveyPoints
                 ) { Text("Quitar") }
             }
+        }
+
+        geoidLoadMessage?.let { message ->
+            Text(
+                message,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (geoidLoadOk) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 6.dp)
+            )
         }
         if (hasSurveyPoints) {
             Text(
@@ -2747,6 +2828,12 @@ private fun ProjectDetails(
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
+                if (pendingGeoidUri != null) {
+                    geoidLoadOk = false
+                    geoidLoadMessage =
+                        "Hay un geoide seleccionado pero todavía no cargado. Pulse Cargar archivo antes de guardar."
+                    return@Button
+                }
                 onSaveAndBack(project.copy(
                     name = name.ifBlank { project.name },
                     location = location,
