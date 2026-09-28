@@ -2460,12 +2460,12 @@ private fun ProjectDetails(
 
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Formatos preparados: TXT, CSV, GeoJSON y KML. DXF y Shapefile ZIP quedan visibles como formatos previstos, pero su lector especializado se completará aparte.",
+                        "Formatos habilitados: TXT, CSV, GeoJSON, KML, DXF y Shapefile ZIP. TOPO EMLID detecta automáticamente el formato y carga puntos, líneas y polígonos compatibles. DWG se detecta, pero requiere convertirlo a DXF para importarlo.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Si el archivo trae puntos, se agregan a este proyecto para replanteo. Si trae líneas o polígonos compatibles, también se agregan como figuras del proyecto.",
+                        "La importación es automática: si el archivo trae puntos, líneas o polígonos compatibles, TOPO EMLID los agrega al trabajo activo.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -2802,6 +2802,11 @@ private fun ActiveProjectTransferScreen(project: TopoProject?) {
                                 "application/geo+json",
                                 "application/vnd.google-earth.kml+xml",
                                 "application/dxf",
+                                "application/acad",
+                                "application/x-acad",
+                                "application/x-autocad",
+                                "application/x-dwg",
+                                "image/vnd.dwg",
                                 "application/zip",
                                 "*/*"
                             )
@@ -2834,7 +2839,7 @@ private fun ActiveProjectTransferScreen(project: TopoProject?) {
                         }
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text("TXT, CSV, GeoJSON y KML están habilitados. DXF y Shapefile ZIP siguen pendientes de su lector especializado.", style = MaterialTheme.typography.bodySmall)
+                    Text("TXT, CSV, GeoJSON, KML, DXF y Shapefile ZIP están habilitados. El contenido compatible se importa automáticamente: puntos, líneas y polígonos. DWG requiere conversión previa a DXF.", style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(6.dp))
                     Text("Los datos compatibles se agregarán únicamente a " + project.name + ".", style = MaterialTheme.typography.bodySmall)
                 }
@@ -2951,7 +2956,7 @@ private fun ActiveProjectTransferScreen(project: TopoProject?) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp)) {
                 Text("Importar", fontWeight = FontWeight.Bold)
-                Text("Agregar puntos, líneas o polígonos al proyecto activo desde un archivo externo.", style = MaterialTheme.typography.bodySmall)
+                Text("Agregar automáticamente puntos, líneas y polígonos desde TXT, CSV, DXF, GeoJSON, KML o Shapefile ZIP. DWG se detecta y solicita conversión a DXF.", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = { showImportPickerConfirm = true },
