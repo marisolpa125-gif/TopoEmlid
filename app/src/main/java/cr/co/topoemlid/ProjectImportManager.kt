@@ -274,7 +274,7 @@ object ProjectImportManager {
                 else -> ' '
             }
             val raw = if (sep == ' ') line.split(Regex("\\s+")) else line.split(sep)
-            return raw.map { it.trim().trim('"').replace("""", """) }
+            return raw.map { it.trim().trim('"').replace("\"\"", "\"") }
         }
 
         val first = split(lines.first()).map { it.uppercase() }
