@@ -12,7 +12,9 @@ data class NtripMountPoint(
     val identifier: String = "",
     val format: String = "",
     val carrier: String = "",
-    val country: String = ""
+    val country: String = "",
+    val latitude: Double? = null,
+    val longitude: Double? = null
 )
 
 data class NtripCasterCheck(
@@ -201,7 +203,11 @@ object NtripSourceTableClient {
                     identifier = f.getOrNull(2)?.trim().orEmpty(),
                     format = f.getOrNull(3)?.trim().orEmpty(),
                     carrier = f.getOrNull(5)?.trim().orEmpty(),
-                    country = f.getOrNull(8)?.trim().orEmpty()
+                    country = f.getOrNull(8)?.trim().orEmpty(),
+                    latitude = f.getOrNull(9)?.trim()?.toDoubleOrNull()
+                        ?.takeIf { it in -90.0..90.0 },
+                    longitude = f.getOrNull(10)?.trim()?.toDoubleOrNull()
+                        ?.takeIf { it in -180.0..180.0 }
                 )
             }
             .distinctBy { it.name }
