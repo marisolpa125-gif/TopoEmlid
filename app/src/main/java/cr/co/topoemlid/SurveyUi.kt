@@ -91,7 +91,7 @@ fun SurveyScreen(
     val context = LocalContext.current
     // Tolerancia cómoda para uso táctil en campo: permite tocar el símbolo o muy
     // cerca de la etiqueta del punto sin tener que acertar exactamente al centro.
-    val snapThresholdPx = with(LocalDensity.current) { 38.dp.toPx() }
+    val snapThresholdPx = with(LocalDensity.current) { 56.dp.toPx() }
     val fieldSounds = remember { FieldSoundManager(context) }
     DisposableEffect(Unit) {
         onDispose { fieldSounds.release() }
@@ -626,7 +626,13 @@ fun SurveyScreen(
                                     }
                                 } else if (activeMapTool == MapFieldTool.CIRCLE) {
                                     selectedGeometryIndex = null
-                                    val snap = findSnapTarget(
+                                    val savedPointSnap = findSavedPointSnap(
+                                        map = map,
+                                        tap = latLng,
+                                        savedPoints = savedPoints,
+                                        thresholdPx = snapThresholdPx
+                                    )
+                                    val snap = savedPointSnap ?: findSnapTarget(
                                         map = map,
                                         tap = latLng,
                                         savedPoints = savedPoints,
@@ -709,7 +715,13 @@ fun SurveyScreen(
                                     // punto levantado/importado o del vértice de una figura,
                                     // se usa exactamente esa coordenada. Un toque fuera de la
                                     // tolerancia conserva su posición libre.
-                                    val snap = findSnapTarget(
+                                    val savedPointSnap = findSavedPointSnap(
+                                        map = map,
+                                        tap = latLng,
+                                        savedPoints = savedPoints,
+                                        thresholdPx = snapThresholdPx
+                                    )
+                                    val snap = savedPointSnap ?: findSnapTarget(
                                         map = map,
                                         tap = latLng,
                                         savedPoints = savedPoints,
@@ -734,7 +746,7 @@ fun SurveyScreen(
                                         parallelOffsetText.toDoubleOrNull() ?: 1.0
                                     )
                                     toolResult = if (snap != null) {
-                                        "Ajustado a ${snap.label}. " + (baseResult ?: "")
+                                        "Vértice tomado: ${snap.label}. " + (baseResult ?: "")
                                     } else {
                                         baseResult
                                     }
@@ -2565,6 +2577,32 @@ private data class SnapTarget(
     val label: String,
     val distancePx: Double
 )
+
+private fun findSavedPointSnap(
+    map: MapLibreMap,
+    tap: LatLng,
+    savedPoints: List<SurveyPoint>,
+    thresholdPx: Float
+): SnapTarget? {
+    val tapScreen = map.projection.toScreenLocation(tap)
+    return savedPoints
+        .mapNotNull { p ->
+            val lat = p.latitude
+            val lon = p.longitude
+            if (lat == null || lon == null) return@mapNotNull null
+            val position = LatLng(lat, lon)
+            val screen = map.projection.toScreenLocation(position)
+            val dx = (screen.x - tapScreen.x).toDouble()
+            val dy = (screen.y - tapScreen.y).toDouble()
+            SnapTarget(
+                position = position,
+                label = "punto ${p.pointNumber}",
+                distancePx = hypot(dx, dy)
+            )
+        }
+        .filter { it.distancePx <= thresholdPx }
+        .minByOrNull { it.distancePx }
+}
 
 private fun findSnapTarget(
     map: MapLibreMap,
