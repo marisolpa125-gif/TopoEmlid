@@ -2862,6 +2862,10 @@ internal fun ensureSurveyGeometryOverlayOnTop(
             PropertyFactory.lineOpacity(1f)
         )
     )
+    // Cada vez que se reconstruyan las figuras, devolver todos los elementos
+    // de campo al frente. Así una capa raster agregada/refrescada después nunca
+    // puede cubrir líneas, polígonos, puntos ni la posición GNSS.
+    promoteFieldOverlayLayers(style)
 }
 private fun pinBasemapBelowFieldOverlays(style: Style) {
     val anchor = style.layers.firstOrNull { layer ->
@@ -3162,7 +3166,8 @@ private const val FIELD_OVERLAY_ANCHOR_SOURCE = "field-overlay-anchor-source"
 private const val FIELD_OVERLAY_ANCHOR_LAYER = "field-overlay-anchor-layer"
 
 private fun isFieldOverlayLayerId(id: String): Boolean =
-    id == "survey-geometries-top-layer" ||
+    id == "survey-active-geometry-layer" ||
+        id == "survey-geometries-top-layer" ||
         id.startsWith("survey-points-top-") ||
         id.startsWith("stakeout-points-") ||
         id == "gnss-live-top-layer" ||
@@ -3210,6 +3215,8 @@ private fun addRasterBelowFieldOverlays(
     layer: RasterLayer
 ) {
     val anchor = ensureFieldOverlayAnchor(style)
+    // Regla fija de TOPO EMLID: cualquier mapa base, satélite, WMS, WMTS,
+    // XYZ o nueva capa raster entra debajo del contenido levantado/dibujado.
     style.addLayerBelow(layer, anchor)
     promoteFieldOverlayLayers(style)
 }
