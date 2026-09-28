@@ -812,20 +812,17 @@ fun SurveyScreen(
 
                 Text(
                     when {
-                        correctionsReachingReach ->
-                            "Correcciones RTK al Reach: SÍ • ${gnss.solution}"
-                        ntrip.connected && ntrip.bytesReceived > 0L ->
-                            "Correcciones RTK al Reach: NO • caster sí está enviando"
-                        ntrip.connected ->
-                            "Correcciones RTK: conectado, esperando datos"
-                        else ->
-                            "Correcciones RTK: desconectadas"
+                        correctionsReachingReach -> "RTK ✓ llegando"
+                        ntrip.connected && ntrip.bytesReceived > 0L -> "RTK ✕ no llega"
+                        ntrip.connected -> "RTK esperando"
+                        else -> "RTK desconectado"
                     },
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
                     color = when {
                         correctionsReachingReach -> Color(0xFF2E7D32)
-                        ntrip.connected -> MaterialTheme.colorScheme.error
+                        ntrip.connected && ntrip.bytesReceived > 0L -> MaterialTheme.colorScheme.error
+                        ntrip.connected -> Color(0xFFF9A825)
                         else -> Color(0xFF757575)
                     }
                 )
