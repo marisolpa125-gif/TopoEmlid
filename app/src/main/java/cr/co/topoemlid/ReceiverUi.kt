@@ -111,6 +111,7 @@ fun ReceiverSection(
                 profiles = ntripProfiles,
                 onProfilesChanged = onNtripProfilesChanged,
                 liveStatus = ntripStatus,
+                gnss = gnss,
                 onConnect = onConnectNtrip,
                 onDisconnect = onDisconnectNtrip
             )
