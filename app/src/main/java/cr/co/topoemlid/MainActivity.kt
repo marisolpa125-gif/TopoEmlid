@@ -2386,8 +2386,19 @@ private fun ProjectDetails(
     var showExportDialog by remember(project.id) { mutableStateOf(false) }
     var exportFormat by remember(project.id) { mutableStateOf(ProjectExportFormat.CSV) }
     var exportContent by remember(project.id) { mutableStateOf(ProjectExportContent.ALL) }
-    var textLayout by remember(project.id) { mutableStateOf(TextPointLayout.POINT_LAT_LON_ELEV_DESC) }
+    var textLayout by remember(project.id) { mutableStateOf(TextPointLayout.POINT_NORTH_EAST_ELEV_DESC) }
     var textSeparator by remember(project.id) { mutableStateOf(TextSeparator.COMMA) }
+    var customPointFields by remember(project.id) {
+        mutableStateOf(
+            listOf(
+                PointExportField.POINT,
+                PointExportField.NORTH,
+                PointExportField.EAST,
+                PointExportField.ELEVATION,
+                PointExportField.DESCRIPTION
+            )
+        )
+    }
     var exportMessage by remember(project.id) { mutableStateOf<String?>(null) }
     var importMessage by remember(project.id) { mutableStateOf<String?>(null) }
     var importSourceCrs by remember(project.id) { mutableStateOf(ImportSourceCrs.PROJECT) }
@@ -2572,6 +2583,44 @@ private fun ProjectDetails(
                             }
                         }
 
+                        if (textLayout == TextPointLayout.CUSTOM) {
+                            Spacer(Modifier.height(8.dp))
+                            Text("Campos personalizados", fontWeight = FontWeight.Bold)
+                            Text(
+                                "Marque los campos que quiere exportar. Se escribirán en este orden: P, N, E, Z, D, Lat, Lon.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            PointExportField.entries.forEach { field ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            customPointFields =
+                                                if (field in customPointFields) {
+                                                    customPointFields - field
+                                                } else {
+                                                    customPointFields + field
+                                                }
+                                        }
+                                        .padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = field in customPointFields,
+                                        onCheckedChange = { checked ->
+                                            customPointFields =
+                                                if (checked) {
+                                                    (customPointFields + field).distinct()
+                                                } else {
+                                                    customPointFields - field
+                                                }
+                                        }
+                                    )
+                                    Text(field.shortLabel + " · " + field.label, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+
                         Spacer(Modifier.height(8.dp))
                         Text("Separador", fontWeight = FontWeight.Bold)
                         TextSeparator.entries.forEach { option ->
@@ -2594,8 +2643,8 @@ private fun ProjectDetails(
                     Spacer(Modifier.height(8.dp))
                     Text(
                         "Los archivos se guardan en Documentos/TopoEmlid/Trabajos/[proyecto]. " +
-                            "Por seguridad, Norte/Este CRTM05 no se exporta todavía hasta validar la transformación geodésica oficial; " +
-                            "TXT/CSV usan latitud/longitud WGS84.",
+                            "En TXT/CSV, Norte y Este se exportan en el CRS del trabajo cuando corresponde; " +
+                            "la elevación usa primero la altura geoidal disponible y, si no existe, la elipsoidal.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -2610,7 +2659,8 @@ private fun ProjectDetails(
                                 format = exportFormat,
                                 content = exportContent,
                                 textLayout = textLayout,
-                                separator = textSeparator
+                                separator = textSeparator,
+                                customPointFields = customPointFields
                             )
                         )
                         exportMessage = result.fold(
@@ -2764,8 +2814,19 @@ private fun ActiveProjectTransferScreen(project: TopoProject?) {
     var showExportDialog by remember(project.id) { mutableStateOf(false) }
     var exportFormat by remember(project.id) { mutableStateOf(ProjectExportFormat.CSV) }
     var exportContent by remember(project.id) { mutableStateOf(ProjectExportContent.ALL) }
-    var textLayout by remember(project.id) { mutableStateOf(TextPointLayout.POINT_LAT_LON_ELEV_DESC) }
+    var textLayout by remember(project.id) { mutableStateOf(TextPointLayout.POINT_NORTH_EAST_ELEV_DESC) }
     var textSeparator by remember(project.id) { mutableStateOf(TextSeparator.COMMA) }
+    var customPointFields by remember(project.id) {
+        mutableStateOf(
+            listOf(
+                PointExportField.POINT,
+                PointExportField.NORTH,
+                PointExportField.EAST,
+                PointExportField.ELEVATION,
+                PointExportField.DESCRIPTION
+            )
+        )
+    }
     var exportMessage by remember(project.id) { mutableStateOf<String?>(null) }
     var importMessage by remember(project.id) { mutableStateOf<String?>(null) }
     var importSourceCrs by remember(project.id) { mutableStateOf(ImportSourceCrs.PROJECT) }
@@ -2927,7 +2988,8 @@ private fun ActiveProjectTransferScreen(project: TopoProject?) {
                             format = exportFormat,
                             content = exportContent,
                             textLayout = textLayout,
-                            separator = textSeparator
+                            separator = textSeparator,
+                            customPointFields = customPointFields
                         )
                     )
                     exportMessage = result.fold(
