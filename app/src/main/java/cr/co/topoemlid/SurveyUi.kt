@@ -226,7 +226,10 @@ fun SurveyScreen(
         committedGeometries.forEach { g ->
             drawCommittedGeometry(m, g)
         }
-        drawSavedSurveyPointSymbols(m, savedPoints, context)
+        // Los puntos ya se dibujan con las capas GeoJSON/Compose superiores.
+        // No crear Marker annotations aquí: capturan el toque y abren la
+        // burbuja "Punto X" antes de que la herramienta geométrica reciba
+        // el click para usar ese punto como vértice.
         ensureSurveyGeometryOverlayOnTop(m, committedGeometries)
         ensureSurveyPointOverlayOnTop(m, savedPoints, gnss, pointDisplaySettings)
         m.style?.let { pinBasemapBelowFieldOverlays(it) }
@@ -1167,7 +1170,8 @@ fun SurveyScreen(
                                                     updatedGeometries.forEach { geometry ->
                                                         drawCommittedGeometry(map, geometry)
                                                     }
-                                                    drawSavedSurveyPoints(map, savedPoints, context)
+                                                    // Mantener los puntos como capas no interactivas:
+                                                    // así el toque llega a la herramienta de dibujo.
                                                     ensureSurveyGeometryOverlayOnTop(map, updatedGeometries)
                                                     ensureSurveyPointOverlayOnTop(map, savedPoints, gnss, pointDisplaySettings)
                                                 }
