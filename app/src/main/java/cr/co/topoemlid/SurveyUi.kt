@@ -249,7 +249,16 @@ fun SurveyScreen(
         map.clear()
         redrawCommitted(map)
         if (activeMapTool != MapFieldTool.NONE && toolPoints.isNotEmpty()) {
-            drawActiveGeometry(map, activeMapTool, toolPoints, parallelOffsetText.toDoubleOrNull() ?: 1.0)
+            val offset = parallelOffsetText.toDoubleOrNull() ?: 1.0
+            drawActiveGeometry(map, activeMapTool, toolPoints, offset)
+            ensureActiveSurveyGeometryOverlayOnTop(map, activeMapTool, toolPoints, offset)
+        } else {
+            ensureActiveSurveyGeometryOverlayOnTop(
+                map,
+                MapFieldTool.NONE,
+                emptyList(),
+                0.0
+            )
         }
     }
 
@@ -648,6 +657,12 @@ fun SurveyScreen(
                                     map.clear()
                                     redrawCommitted(map)
                                     map.addMarker(MarkerOptions().position(target))
+                                    ensureActiveSurveyGeometryOverlayOnTop(
+                                        map,
+                                        MapFieldTool.CIRCLE,
+                                        toolPoints,
+                                        0.0
+                                    )
                                     showCirclePanel = true
                                     toolResult = if (snap != null) {
                                         "Centro ajustado a ${snap.label}. Indique radio o diámetro."
@@ -742,11 +757,18 @@ fun SurveyScreen(
                                     }
 
                                     toolPoints = updated
+                                    val activeOffset = parallelOffsetText.toDoubleOrNull() ?: 1.0
                                     val baseResult = renderFieldTool(
                                         map,
                                         activeMapTool,
                                         updated,
-                                        parallelOffsetText.toDoubleOrNull() ?: 1.0
+                                        activeOffset
+                                    )
+                                    ensureActiveSurveyGeometryOverlayOnTop(
+                                        map,
+                                        activeMapTool,
+                                        updated,
+                                        activeOffset
                                     )
                                     toolResult = if (snap != null) {
                                         "Vértice tomado: ${snap.label}. " + (baseResult ?: "")
@@ -2701,6 +2723,68 @@ private fun saveQuickCodes(context: Context, projectId: String?, codes: List<Str
         .apply()
 }
 
+internal fun ensureActiveSurveyGeometryOverlayOnTop(
+    map: MapLibreMap,
+    tool: MapFieldTool,
+    points: List<LatLng>,
+    parallelOffsetM: Double
+) {
+    val style = map.style ?: return
+    val sourceId = "survey-active-geometry-source"
+    val layerId = "survey-active-geometry-layer"
+
+    fun activePath(): List<LatLng> = when (tool) {
+        MapFieldTool.RECTANGLE -> if (points.size >= 3) rectangleFromControlPoints(points) else points
+        MapFieldTool.CIRCLE -> if (points.size >= 2) {
+            circlePolygon(points[0], haversineMeters(points[0], points[1]), 64)
+        } else points
+        MapFieldTool.PARALLEL -> if (points.size >= 2) {
+            offsetPolyline(points, parallelOffsetM)
+        } else points
+        else -> points
+    }
+
+    val features = mutableListOf<Feature>()
+    val path = activePath()
+
+    if (tool == MapFieldTool.PARALLEL && points.size >= 2) {
+        val baseCoords = points.map { Point.fromLngLat(it.longitude, it.latitude) }
+        features += Feature.fromGeometry(LineString.fromLngLats(baseCoords))
+    }
+
+    if (path.size >= 2) {
+        val shouldClose = when (tool) {
+            MapFieldTool.POLYGON,
+            MapFieldTool.AREA,
+            MapFieldTool.PERIMETER,
+            MapFieldTool.DIVIDE -> path.size >= 3
+            MapFieldTool.RECTANGLE,
+            MapFieldTool.CIRCLE -> true
+            else -> false
+        }
+        val drawPath = if (shouldClose) path + path.first() else path
+        val coords = drawPath.map { Point.fromLngLat(it.longitude, it.latitude) }
+        features += Feature.fromGeometry(LineString.fromLngLats(coords))
+    }
+
+    val source = style.getSourceAs<GeoJsonSource>(sourceId)
+    if (source == null) {
+        style.addSource(GeoJsonSource(sourceId, FeatureCollection.fromFeatures(features)))
+    } else {
+        source.setGeoJson(FeatureCollection.fromFeatures(features))
+    }
+
+    runCatching { style.removeLayer(layerId) }
+    style.addLayer(
+        LineLayer(layerId, sourceId).withProperties(
+            PropertyFactory.lineColor(android.graphics.Color.rgb(255, 193, 7)),
+            PropertyFactory.lineWidth(6f),
+            PropertyFactory.lineOpacity(1f)
+        )
+    )
+    promoteFieldOverlayLayers(style)
+}
+
 internal fun ensureSurveyGeometryOverlayOnTop(
     map: MapLibreMap,
     geometries: List<CommittedGeometry>
@@ -2758,7 +2842,8 @@ internal fun ensureSurveyGeometryOverlayOnTop(
 private fun pinBasemapBelowFieldOverlays(style: Style) {
     val anchor = style.layers.firstOrNull { layer ->
         val id = layer.id
-        id == "survey-geometries-top-layer" ||
+        id == "survey-active-geometry-layer" ||
+            id == "survey-geometries-top-layer" ||
             id.startsWith("survey-points-top-") ||
             id == "gnss-live-top-layer" ||
             id.startsWith("stakeout-")
