@@ -2624,7 +2624,7 @@ private fun findSnapTarget(
         }
         .filter { it.distancePx <= thresholdPx }
         .minByOrNull { it.distancePx }
-
+}
 
 private fun defaultSurveyQuickCodes(): List<String> = listOf(
     "CALLE", "CORDÓN", "CUNETA", "CAÑO", "ASFALTO", "LASTRE",
