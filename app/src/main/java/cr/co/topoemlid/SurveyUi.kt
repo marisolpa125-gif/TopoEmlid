@@ -877,6 +877,16 @@ fun SurveyScreen(
             }
         }
 
+        AlwaysVisibleGeometryOverlay(
+            map = mapRef,
+            cameraVersion = topOverlayCameraVersion,
+            committed = committedGeometries,
+            activeTool = activeMapTool,
+            activePoints = toolPoints,
+            activeParallelOffsetM = parallelOffsetText.toDoubleOrNull() ?: 1.0,
+            modifier = Modifier.fillMaxSize()
+        )
+
         AlwaysVisiblePointOverlay(
             map = mapRef,
             cameraVersion = topOverlayCameraVersion,
@@ -5028,6 +5038,123 @@ private fun divisionSummary(title: String, pieces: List<List<LatLng>>): String {
     return title + equality + " • " + pieces.mapIndexed { index, p ->
         "Lote " + (index + 1) + ": " + "%.2f".format(polygonAreaMeters2(p)) + " m²"
     }.joinToString(" • ")
+}
+
+@Composable
+private fun AlwaysVisibleGeometryOverlay(
+    map: MapLibreMap?,
+    cameraVersion: Int,
+    committed: List<CommittedGeometry>,
+    activeTool: MapFieldTool,
+    activePoints: List<LatLng>,
+    activeParallelOffsetM: Double,
+    modifier: Modifier = Modifier
+) {
+    val refreshToken = cameraVersion
+
+    androidx.compose.foundation.Canvas(modifier = modifier) {
+        refreshToken.hashCode()
+        val currentMap = map ?: return@Canvas
+        val native = drawContext.canvas.nativeCanvas
+
+        val savedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 6f * density
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = android.graphics.Color.rgb(103, 58, 183)
+        }
+        val savedHalo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 9f * density
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = android.graphics.Color.WHITE
+        }
+        val activePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 6.5f * density
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = android.graphics.Color.rgb(255, 193, 7)
+        }
+        val activeHalo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 10f * density
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = android.graphics.Color.WHITE
+        }
+
+        fun drawPath(points: List<LatLng>, closed: Boolean, halo: Paint, paint: Paint) {
+            if (points.size < 2) return
+            val path = android.graphics.Path()
+            val first = currentMap.projection.toScreenLocation(points.first())
+            path.moveTo(first.x, first.y)
+            points.drop(1).forEach { p ->
+                val screen = currentMap.projection.toScreenLocation(p)
+                path.lineTo(screen.x, screen.y)
+            }
+            if (closed && points.size >= 3) path.close()
+            native.drawPath(path, halo)
+            native.drawPath(path, paint)
+        }
+
+        committed.forEach { geometry ->
+            when (geometry.tool) {
+                MapFieldTool.POINT, MapFieldTool.NONE, MapFieldTool.SELECT -> Unit
+                MapFieldTool.PARALLEL -> {
+                    val base = geometryPath(geometry)
+                    drawPath(base, false, savedHalo, savedPaint)
+                    if (base.size >= 2) {
+                        drawPath(
+                            offsetPolyline(base, geometry.parallelOffsetM),
+                            false,
+                            savedHalo,
+                            savedPaint
+                        )
+                    }
+                }
+                else -> {
+                    val path = geometryPath(geometry)
+                    drawPath(path, geometrySupportsArea(geometry), savedHalo, savedPaint)
+                }
+            }
+        }
+
+        if (activeTool != MapFieldTool.NONE && activePoints.isNotEmpty()) {
+            val activePath = when (activeTool) {
+                MapFieldTool.RECTANGLE ->
+                    if (activePoints.size >= 3) rectangleFromControlPoints(activePoints) else activePoints
+                MapFieldTool.CIRCLE ->
+                    if (activePoints.size >= 2) {
+                        circlePolygon(
+                            activePoints[0],
+                            haversineMeters(activePoints[0], activePoints[1]),
+                            64
+                        )
+                    } else activePoints
+                MapFieldTool.PARALLEL ->
+                    if (activePoints.size >= 2) offsetPolyline(activePoints, activeParallelOffsetM) else activePoints
+                else -> activePoints
+            }
+
+            if (activeTool == MapFieldTool.PARALLEL && activePoints.size >= 2) {
+                drawPath(activePoints, false, activeHalo, activePaint)
+            }
+
+            val closeActive = when (activeTool) {
+                MapFieldTool.POLYGON,
+                MapFieldTool.AREA,
+                MapFieldTool.PERIMETER,
+                MapFieldTool.DIVIDE -> activePath.size >= 3
+                MapFieldTool.RECTANGLE,
+                MapFieldTool.CIRCLE -> activePath.size >= 3
+                else -> false
+            }
+            drawPath(activePath, closeActive, activeHalo, activePaint)
+        }
+    }
 }
 
 enum class MapFieldTool(
