@@ -191,7 +191,13 @@ private fun NtripProfileDialog(
     }
 
     fun distanceText(mp: NtripMountPoint): String {
-        val km = mountDistanceKm(mp) ?: return "Distancia no disponible"
+        if (gnss.latitude == null || gnss.longitude == null) {
+            return "Receptor sin posición GNSS"
+        }
+        if (mp.latitude == null || mp.longitude == null) {
+            return "Caster sin coordenadas"
+        }
+        val km = mountDistanceKm(mp) ?: return "No disponible"
         return when {
             km < 1.0 -> "%.0f m".format(km * 1000.0)
             km < 10.0 -> "%.2f km".format(km)
