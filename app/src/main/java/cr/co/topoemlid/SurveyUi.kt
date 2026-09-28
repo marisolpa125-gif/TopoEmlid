@@ -86,7 +86,8 @@ import kotlin.math.*
 @Composable
 fun SurveyScreen(
     project: TopoProject?,
-    gnss: GnssStatus
+    gnss: GnssStatus,
+    ntrip: NtripLiveStatus
 ) {
     val context = LocalContext.current
     // Tolerancia cómoda para uso táctil en campo: permite tocar el símbolo o muy
@@ -801,6 +802,32 @@ fun SurveyScreen(
                         "NO HAY NINGÚN RECEPTOR CONECTADO"
                     },
                     style = MaterialTheme.typography.bodySmall
+                )
+
+                val correctionsReachingReach =
+                    ntrip.connected &&
+                        ntrip.bytesReceived > 0L &&
+                        ntrip.bytesForwarded > 0L &&
+                        ntrip.lastDataAt?.let { System.currentTimeMillis() - it < 10_000L } == true
+
+                Text(
+                    when {
+                        correctionsReachingReach ->
+                            "Correcciones RTK al Reach: SÍ • ${gnss.solution}"
+                        ntrip.connected && ntrip.bytesReceived > 0L ->
+                            "Correcciones RTK al Reach: NO • caster sí está enviando"
+                        ntrip.connected ->
+                            "Correcciones RTK: conectado, esperando datos"
+                        else ->
+                            "Correcciones RTK: desconectadas"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = when {
+                        correctionsReachingReach -> Color(0xFF2E7D32)
+                        ntrip.connected -> MaterialTheme.colorScheme.error
+                        else -> Color(0xFF757575)
+                    }
                 )
 
                 HorizontalDivider(Modifier.padding(vertical = 5.dp))
