@@ -564,7 +564,8 @@ fun TopoEmlidApp() {
                 }
                 else -> SurveyScreen(
                     project = activeProject,
-                    gnss = gnss
+                    gnss = gnss,
+                    ntrip = ntripStatus
                 )
             }
         }
