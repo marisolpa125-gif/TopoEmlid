@@ -6,6 +6,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.UUID
@@ -108,8 +109,53 @@ fun NtripProfilesScreen(
                 )
                 if (liveStatus.profileName != null) Text("Perfil: ${liveStatus.profileName}", style = MaterialTheme.typography.bodySmall)
                 if (liveStatus.mountPoint != null) Text("Mountpoint: ${liveStatus.mountPoint}", style = MaterialTheme.typography.bodySmall)
-                if (liveStatus.bytesReceived > 0L) Text("RTCM recibido: ${liveStatus.bytesReceived} bytes", style = MaterialTheme.typography.bodySmall)
-                if (liveStatus.bytesForwarded > 0L) Text("RTCM enviado al receptor: ${liveStatus.bytesForwarded} bytes", style = MaterialTheme.typography.bodySmall)
+
+                val correctionsReachingReach =
+                    liveStatus.connected &&
+                        liveStatus.bytesReceived > 0L &&
+                        liveStatus.bytesForwarded > 0L &&
+                        liveStatus.lastDataAt?.let { System.currentTimeMillis() - it < 10_000L } == true
+
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (correctionsReachingReach) {
+                        "Correcciones llegando al Reach: SÍ"
+                    } else {
+                        "Correcciones llegando al Reach: NO"
+                    },
+                    color = if (correctionsReachingReach) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Text(
+                    when {
+                        correctionsReachingReach ->
+                            "La antena está recibiendo correcciones RTK desde TOPO EMLID."
+                        liveStatus.connected && liveStatus.bytesReceived > 0L && liveStatus.bytesForwarded == 0L ->
+                            "El caster está enviando correcciones, pero TOPO EMLID no logra entregarlas a la antena."
+                        liveStatus.connected && liveStatus.bytesReceived == 0L ->
+                            "TOPO EMLID está conectado al caster, pero todavía no ha recibido correcciones RTCM."
+                        else ->
+                            "NTRIP está desconectado."
+                    },
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                if (liveStatus.bytesReceived > 0L) {
+                    Text("Recibido del caster: ${liveStatus.bytesReceived} bytes", style = MaterialTheme.typography.bodySmall)
+                }
+                if (liveStatus.bytesForwarded > 0L) {
+                    Text("Enviado al Reach: ${liveStatus.bytesForwarded} bytes", style = MaterialTheme.typography.bodySmall)
+                }
+                if (gnss.solution.isNotBlank()) {
+                    Text(
+                        "Solución GNSS: ${gnss.solution}" +
+                            (gnss.correctionAgeS?.let { " • corrección: %.1f s".format(it) } ?: ""),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
                 liveStatus.lastError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 if (liveStatus.connected || liveStatus.connecting) {
                     Spacer(Modifier.height(8.dp))
