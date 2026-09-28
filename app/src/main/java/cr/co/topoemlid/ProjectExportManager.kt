@@ -23,7 +23,7 @@ enum class ProjectExportFormat(val label: String, val extension: String, val mim
 enum class ProjectExportContent(val label: String) {
     POINTS("Solo puntos"),
     GEOMETRIES("Solo líneas / polígonos / figuras"),
-    ALL("Puntos + líneas / polígonos / figuras")
+    ALL("Todo")
 }
 
 enum class TextPointLayout(val label: String) {
@@ -64,7 +64,7 @@ object ProjectExportManager {
 
         val body = when (options.format) {
             ProjectExportFormat.TXT,
-            ProjectExportFormat.CSV -> buildDelimited(points, options)
+            ProjectExportFormat.CSV -> buildDelimited(points, geometriesRaw, options)
             ProjectExportFormat.GEOJSON -> buildGeoJson(points, geometriesRaw, options.content)
             ProjectExportFormat.KML -> buildKml(points, geometriesRaw, options.content)
             ProjectExportFormat.DXF -> buildDxf(points, geometriesRaw, options.content)
@@ -110,32 +110,87 @@ object ProjectExportManager {
 
     private fun buildDelimited(
         points: List<SurveyPoint>,
+        geometriesRaw: String,
         options: ProjectExportOptions
     ): String {
         val sep = options.separator.value
+
         fun clean(value: String): String {
-            val escaped = value.replace("\"", "\"\"")
-            return if (sep == "," || sep == ";") "\"$escaped\"" else escaped.replace("\n", " ")
+            val escaped = value.replace(""", """")
+            return if (sep == "," || sep == ";") ""$escaped"" else escaped.replace("\n", " ")
         }
+
         fun v(d: Double?, decimals: Int): String =
             d?.let { "%.${decimals}f".format(Locale.US, it) } ?: ""
 
-        val rows = points.map { p ->
-            when (options.textLayout) {
-                TextPointLayout.POINT_LAT_LON_ELEV_DESC -> listOf(
-                    p.pointNumber, v(p.latitude, 8), v(p.longitude, 8), v(p.ellipsoidalHeightM, 3), p.description
-                )
-                TextPointLayout.POINT_LON_LAT_ELEV_DESC -> listOf(
-                    p.pointNumber, v(p.longitude, 8), v(p.latitude, 8), v(p.ellipsoidalHeightM, 3), p.description
-                )
-                TextPointLayout.POINT_LAT_LON -> listOf(p.pointNumber, v(p.latitude, 8), v(p.longitude, 8))
-                TextPointLayout.POINT_LON_LAT -> listOf(p.pointNumber, v(p.longitude, 8), v(p.latitude, 8))
-                TextPointLayout.LAT_LON -> listOf(v(p.latitude, 8), v(p.longitude, 8))
-                TextPointLayout.LON_LAT -> listOf(v(p.longitude, 8), v(p.latitude, 8))
-                TextPointLayout.POINT_DESC -> listOf(p.pointNumber, p.description)
-            }.joinToString(sep) { clean(it) }
+        // Para "Solo puntos" se conserva exactamente el formato configurable
+        // que ya usa el usuario en campo.
+        if (options.content == ProjectExportContent.POINTS) {
+            val rows = points.map { p ->
+                when (options.textLayout) {
+                    TextPointLayout.POINT_LAT_LON_ELEV_DESC -> listOf(
+                        p.pointNumber, v(p.latitude, 8), v(p.longitude, 8), v(p.ellipsoidalHeightM, 3), p.description
+                    )
+                    TextPointLayout.POINT_LON_LAT_ELEV_DESC -> listOf(
+                        p.pointNumber, v(p.longitude, 8), v(p.latitude, 8), v(p.ellipsoidalHeightM, 3), p.description
+                    )
+                    TextPointLayout.POINT_LAT_LON -> listOf(p.pointNumber, v(p.latitude, 8), v(p.longitude, 8))
+                    TextPointLayout.POINT_LON_LAT -> listOf(p.pointNumber, v(p.longitude, 8), v(p.latitude, 8))
+                    TextPointLayout.LAT_LON -> listOf(v(p.latitude, 8), v(p.longitude, 8))
+                    TextPointLayout.LON_LAT -> listOf(v(p.longitude, 8), v(p.latitude, 8))
+                    TextPointLayout.POINT_DESC -> listOf(p.pointNumber, p.description)
+                }.joinToString(sep) { clean(it) }
+            }
+            return rows.joinToString("\n", postfix = if (rows.isEmpty()) "" else "\n")
         }
-        return rows.joinToString("\n", postfix = if (rows.isEmpty()) "" else "\n")
+
+        // Cuando se exportan figuras o TODO, TXT/CSV usa una estructura común
+        // para poder mezclar puntos y vértices de geometrías sin perder datos.
+        val rows = mutableListOf<String>()
+        rows += listOf(
+            "TIPO",
+            "ID",
+            "VERTICE",
+            "LATITUD",
+            "LONGITUD",
+            "ELEVACION",
+            "DESCRIPCION",
+            "HERRAMIENTA"
+        ).joinToString(sep) { clean(it) }
+
+        if (options.content == ProjectExportContent.ALL) {
+            points.forEach { p ->
+                val lat = p.latitude ?: return@forEach
+                val lon = p.longitude ?: return@forEach
+                rows += listOf(
+                    "PUNTO",
+                    p.pointNumber,
+                    "",
+                    v(lat, 8),
+                    v(lon, 8),
+                    v(p.orthometricHeightM ?: p.ellipsoidalHeightM, 3),
+                    p.description.ifBlank { p.code },
+                    ""
+                ).joinToString(sep) { clean(it) }
+            }
+        }
+
+        parseGeometryItems(geometriesRaw).forEach { g ->
+            g.points.forEachIndexed { index, (lat, lon) ->
+                rows += listOf(
+                    "FIGURA",
+                    g.id,
+                    (index + 1).toString(),
+                    v(lat, 8),
+                    v(lon, 8),
+                    "",
+                    "",
+                    g.tool
+                ).joinToString(sep) { clean(it) }
+            }
+        }
+
+        return rows.joinToString("\n", postfix = "\n")
     }
 
     private fun buildGeoJson(
