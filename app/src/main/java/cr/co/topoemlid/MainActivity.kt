@@ -35,6 +35,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC)
         MapLibre.getInstance(this)
         setContent { TopoEmlidRoot() }
     }
