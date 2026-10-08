@@ -2,6 +2,7 @@ package cr.co.topoemlid
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.ToneGenerator
 import android.net.Uri
@@ -23,7 +24,11 @@ enum class FieldSoundEvent(
 
 class FieldSoundManager(private val context: Context) {
     private var mediaPlayer: MediaPlayer? = null
-    private val fallback = ToneGenerator(AudioManager.STREAM_MUSIC, 100)\n    private val mediaAudioAttributes = AudioAttributes.Builder()\n        .setUsage(AudioAttributes.USAGE_MEDIA)\n        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)\n        .build()
+    private val fallback = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
+    private val mediaAudioAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+        .build()
     private val prefs = context.getSharedPreferences("field_sound_settings", Context.MODE_PRIVATE)
 
     fun customSoundUri(event: FieldSoundEvent): String? =
@@ -52,12 +57,7 @@ class FieldSoundManager(private val context: Context) {
             val played = runCatching {
                 stopCurrent()
                 val player = MediaPlayer().apply {
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ALARM)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                            .build()
-                    )
+                    setAudioAttributes(mediaAudioAttributes)
                     setDataSource(context, Uri.parse(custom))
                     setVolume(1.0f, 1.0f)
                     setOnCompletionListener {
@@ -83,22 +83,23 @@ class FieldSoundManager(private val context: Context) {
             fallback.startTone(event.fallbackTone, event.fallbackMs)
             return
         }
+
         runCatching {
             stopCurrent()
-            mediaPlayer = MediaPlayer.create(context, resId)?.apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
+            val player = MediaPlayer().apply {
+                setAudioAttributes(mediaAudioAttributes)
+                context.resources.openRawResourceFd(resId).use { afd ->
+                    setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                }
                 setVolume(1.0f, 1.0f)
                 setOnCompletionListener {
                     it.release()
                     if (mediaPlayer === it) mediaPlayer = null
                 }
+                prepare()
                 start()
             }
+            mediaPlayer = player
         }.onFailure {
             fallback.startTone(event.fallbackTone, event.fallbackMs)
         }
