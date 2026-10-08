@@ -23,7 +23,7 @@ enum class FieldSoundEvent(
 
 class FieldSoundManager(private val context: Context) {
     private var mediaPlayer: MediaPlayer? = null
-    private val fallback = ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+    private val fallback = ToneGenerator(AudioManager.STREAM_MUSIC, 100)\n    private val mediaAudioAttributes = AudioAttributes.Builder()\n        .setUsage(AudioAttributes.USAGE_MEDIA)\n        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)\n        .build()
     private val prefs = context.getSharedPreferences("field_sound_settings", Context.MODE_PRIVATE)
 
     fun customSoundUri(event: FieldSoundEvent): String? =
