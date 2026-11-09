@@ -203,9 +203,36 @@ fun SurveyScreen(
         editPointNumber = point?.pointNumber ?: nextPointNumber(savedPoints)
         editPointDescription = point?.description.orEmpty()
         editPointCode = point?.code.orEmpty()
-        editPointLat = point?.latitude?.let { "%.8f".format(it) }.orEmpty()
-        editPointLon = point?.longitude?.let { "%.8f".format(it) }.orEmpty()
-        editPointHeight = point?.ellipsoidalHeightM?.let { "%.3f".format(it) }.orEmpty()
+
+        val p = project
+        val projected = p != null && p.crsName != "WGS 84 geográficas"
+        if (projected) {
+            val coord = when {
+                point?.eastingM != null && point.northingM != null ->
+                    ProjectCoordinate(
+                        eastingM = point.eastingM,
+                        northingM = point.northingM,
+                        latitude = point.latitude ?: 0.0,
+                        longitude = point.longitude ?: 0.0
+                    )
+                point?.latitude != null && point.longitude != null ->
+                    runCatching {
+                        ProjectCoordinateEngine.fromWgs84(point.latitude, point.longitude, p!!.crsName)
+                    }.getOrNull()
+                else -> null
+            }
+            editPointLat = coord?.northingM?.let { "%.3f".format(it) }.orEmpty()
+            editPointLon = coord?.eastingM?.let { "%.3f".format(it) }.orEmpty()
+        } else {
+            editPointLat = point?.latitude?.let { "%.8f".format(it) }.orEmpty()
+            editPointLon = point?.longitude?.let { "%.8f".format(it) }.orEmpty()
+        }
+
+        editPointHeight = if (p?.geoidFileUri != null) {
+            point?.orthometricHeightM?.let { "%.3f".format(it) }.orEmpty()
+        } else {
+            point?.ellipsoidalHeightM?.let { "%.3f".format(it) }.orEmpty()
+        }
         showPointEditor = true
     }
 
@@ -2081,18 +2108,30 @@ fun SurveyScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(6.dp))
+                val editorProject = project
+                val editorProjected = editorProject != null && editorProject.crsName != "WGS 84 geográficas"
+                Text(
+                    if (editorProjected) {
+                        "Sistema de coordenadas: ${editorProject?.crsName}"
+                    } else {
+                        "Sistema de coordenadas: WGS 84 geográficas"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedTextField(
                         value = editPointLat,
                         onValueChange = { editPointLat = it },
-                        label = { Text("Latitud") },
+                        label = { Text(if (editorProjected) "Norte (m)" else "Latitud") },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
                     OutlinedTextField(
                         value = editPointLon,
                         onValueChange = { editPointLon = it },
-                        label = { Text("Longitud") },
+                        label = { Text(if (editorProjected) "Este (m)" else "Longitud") },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
@@ -2101,7 +2140,15 @@ fun SurveyScreen(
                 OutlinedTextField(
                     value = editPointHeight,
                     onValueChange = { editPointHeight = it },
-                    label = { Text("Altura elipsoidal (m), opcional") },
+                    label = {
+                        Text(
+                            if (editorProject?.geoidFileUri != null) {
+                                "Elevación geoidal (m), opcional"
+                            } else {
+                                "Altura elipsoidal (m), opcional"
+                            }
+                        )
+                    },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -2110,44 +2157,115 @@ fun SurveyScreen(
                 Button(
                     onClick = {
                         val p = project
-                        val lat = editPointLat.replace(',', '.').toDoubleOrNull()
-                        val lon = editPointLon.replace(',', '.').toDoubleOrNull()
-                        val h = editPointHeight.replace(',', '.').toDoubleOrNull()
+                        val first = editPointLat.replace(',', '.').toDoubleOrNull()
+                        val second = editPointLon.replace(',', '.').toDoubleOrNull()
+                        val inputHeight = editPointHeight.replace(',', '.').toDoubleOrNull()
+
                         if (p == null) {
                             toolResult = "Abra o cree un proyecto primero."
                         } else if (editPointNumber.isBlank()) {
                             toolResult = "Indique el número o nombre del punto."
-                        } else if (lat == null || lon == null || lat !in -90.0..90.0 || lon !in -180.0..180.0) {
-                            toolResult = "Revise latitud y longitud."
-                        } else {
-                            val existing = editingPointId?.let { id -> savedPoints.firstOrNull { it.id == id } }
-                            val edited = SurveyPoint(
-                                id = existing?.id ?: UUID.randomUUID().toString(),
-                                projectId = p.id,
-                                pointNumber = editPointNumber.trim(),
-                                description = editPointDescription.trim(),
-                                code = editPointCode.trim(),
-                                antennaHeightM = existing?.antennaHeightM ?: 0.0,
-                                occupationSeconds = existing?.occupationSeconds ?: 0,
-                                latitude = lat,
-                                longitude = lon,
-                                ellipsoidalHeightM = h,
-                                horizontalAccuracyM = existing?.horizontalAccuracyM,
-                                verticalAccuracyM = existing?.verticalAccuracyM,
-                                solution = "EDITADO",
-                                satellites = existing?.satellites,
-                                createdAt = existing?.createdAt ?: System.currentTimeMillis()
-                            )
-                            val updated = if (existing == null) {
-                                savedPoints + edited
+                        } else if (first == null || second == null) {
+                            toolResult = if (p.crsName == "WGS 84 geográficas") {
+                                "Revise latitud y longitud."
                             } else {
-                                savedPoints.map { if (it.id == existing.id) edited else it }
+                                "Revise Norte y Este en ${p.crsName}."
                             }
-                            savedPoints = updated
-                            pointStore.save(p.id, updated)
-                            pointNumber = nextPointNumber(updated)
-                            showPointEditor = false
-                            toolResult = "Punto ${edited.pointNumber} guardado como EDITADO."
+                        } else {
+                            val projectedInput = p.crsName != "WGS 84 geográficas"
+                            val coordinate = runCatching {
+                                if (projectedInput) {
+                                    // En el editor, first=Norte y second=Este.
+                                    ProjectCoordinateEngine.toWgs84(
+                                        eastingM = second,
+                                        northingM = first,
+                                        crsName = p.crsName
+                                    )
+                                } else {
+                                    require(first in -90.0..90.0 && second in -180.0..180.0)
+                                    ProjectCoordinate(
+                                        eastingM = null,
+                                        northingM = null,
+                                        latitude = first,
+                                        longitude = second
+                                    )
+                                }
+                            }.getOrNull()
+
+                            if (coordinate == null ||
+                                coordinate.latitude !in -90.0..90.0 ||
+                                coordinate.longitude !in -180.0..180.0
+                            ) {
+                                toolResult = if (projectedInput) {
+                                    "No se pudieron transformar esas coordenadas de ${p.crsName} a WGS84."
+                                } else {
+                                    "Revise latitud y longitud."
+                                }
+                            } else {
+                                var geoidUndulation: Double? = null
+                                var ellipsoidalHeight: Double? = inputHeight
+                                var orthometricHeight: Double? = null
+
+                                if (p.geoidFileUri != null && inputHeight != null) {
+                                    val geoid = GeoidGridService.undulation(
+                                        context = context,
+                                        uriText = p.geoidFileUri,
+                                        fileName = p.geoidFileName,
+                                        latitude = coordinate.latitude,
+                                        longitude = coordinate.longitude
+                                    ).getOrNull()
+                                    geoidUndulation = geoid?.undulationM
+                                    orthometricHeight = inputHeight
+                                    ellipsoidalHeight = geoidUndulation?.let { inputHeight + it }
+                                }
+
+                                val projected = if (projectedInput) {
+                                    coordinate
+                                } else {
+                                    runCatching {
+                                        ProjectCoordinateEngine.fromWgs84(
+                                            coordinate.latitude,
+                                            coordinate.longitude,
+                                            p.crsName
+                                        )
+                                    }.getOrNull() ?: coordinate
+                                }
+
+                                val existing = editingPointId?.let { id -> savedPoints.firstOrNull { it.id == id } }
+                                val edited = SurveyPoint(
+                                    id = existing?.id ?: UUID.randomUUID().toString(),
+                                    projectId = p.id,
+                                    pointNumber = editPointNumber.trim(),
+                                    description = editPointDescription.trim(),
+                                    code = editPointCode.trim(),
+                                    antennaHeightM = existing?.antennaHeightM ?: 0.0,
+                                    occupationSeconds = existing?.occupationSeconds ?: 0,
+                                    latitude = coordinate.latitude,
+                                    longitude = coordinate.longitude,
+                                    eastingM = projected.eastingM,
+                                    northingM = projected.northingM,
+                                    projectCrsName = p.crsName,
+                                    ellipsoidalHeightM = ellipsoidalHeight,
+                                    orthometricHeightM = orthometricHeight,
+                                    geoidUndulationM = geoidUndulation,
+                                    geoidFileName = p.geoidFileName,
+                                    horizontalAccuracyM = existing?.horizontalAccuracyM,
+                                    verticalAccuracyM = existing?.verticalAccuracyM,
+                                    solution = "EDITADO",
+                                    satellites = existing?.satellites,
+                                    createdAt = existing?.createdAt ?: System.currentTimeMillis()
+                                )
+                                val updated = if (existing == null) {
+                                    savedPoints + edited
+                                } else {
+                                    savedPoints.map { if (it.id == existing.id) edited else it }
+                                }
+                                savedPoints = updated
+                                pointStore.save(p.id, updated)
+                                pointNumber = nextPointNumber(updated)
+                                showPointEditor = false
+                                toolResult = "Punto ${edited.pointNumber} guardado en ${p.crsName} como EDITADO."
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
