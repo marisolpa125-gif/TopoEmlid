@@ -15,7 +15,10 @@ android {
         minSdk = 26
         targetSdk = 36
         val ciRun = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
-        versionCode = ciRun ?: 3
+        // Mantener un rango alto y siempre creciente para evitar que Android
+        // rechace una actualización si alguna compilación anterior usó un
+        // versionCode manual o superior al número de run.
+        versionCode = ciRun?.let { 1_000_000 + it } ?: 1_000_000
         versionName = if (ciRun != null) "0.3.$ciRun" else "0.3.0"
     }
 
