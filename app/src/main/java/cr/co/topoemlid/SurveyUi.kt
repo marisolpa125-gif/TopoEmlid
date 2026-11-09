@@ -154,7 +154,10 @@ fun SurveyScreen(
     var circleUseDiameter by remember { mutableStateOf(false) }
     var divideMode by remember { mutableStateOf(DivideMode.EQUAL_AREA) }
     var dividePartsText by remember { mutableStateOf("2") }
+    var divideTargetAreaText by remember { mutableStateOf("400.00") }
     var divideFrontEdge by remember { mutableIntStateOf(0) }
+    var divideSourcePolygon by remember(project?.id) { mutableStateOf<List<LatLng>>(emptyList()) }
+    var pendingDivideMode by remember { mutableStateOf<DivideMode?>(null) }
     var divisionPreview by remember(project?.id) { mutableStateOf<List<List<LatLng>>>(emptyList()) }
     var activeMapTool by remember { mutableStateOf(MapFieldTool.NONE) }
     var toolPoints by remember { mutableStateOf<List<LatLng>>(emptyList()) }
