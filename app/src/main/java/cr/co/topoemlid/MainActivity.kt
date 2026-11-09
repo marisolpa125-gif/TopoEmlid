@@ -171,6 +171,15 @@ fun TopoEmlidApp() {
         onDispose { fieldSounds.release() }
     }
 
+    LaunchedEffect(gnss.lastNmeaSentence, ntripStatus.connected) {
+        if (ntripStatus.connected) {
+            val sentence = gnss.lastNmeaSentence
+            if (sentence != null && (sentence.startsWith("$GPGGA") || sentence.startsWith("$GNGGA"))) {
+                ntripConnection.sendGga(sentence)
+            }
+        }
+    }
+
     LaunchedEffect(gnss.connected, gnss.solution, gnss.nmeaReceiving) {
         val currentConnected = gnss.connected && gnss.nmeaReceiving
         val oldConnected = previousGnssConnected
