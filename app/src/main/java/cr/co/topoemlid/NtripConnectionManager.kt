@@ -131,7 +131,7 @@ synchronized(outputLock) {
         if (!status.connected || now - lastGgaSentAt < 5_000L) return false
 
         val line = sentence.trim()
-        if (!line.startsWith("$GPGGA") && !line.startsWith("$GNGGA")) return false
+        if (!line.startsWith("\$GPGGA") && !line.startsWith("\$GNGGA")) return false
 
         val s = socket ?: return false
         if (!s.isConnected) return false
