@@ -2527,7 +2527,8 @@ private fun ProjectDetails(
                                     format = ProjectImportFormat.AUTO,
                                     sourceCrs = importSourceCrs,
                                     importPoints = true,
-                                    importGeometries = true
+                                    importLines = true,
+                                    importPolygons = true
                                 )
                             )
                             importMessage = result.fold(
@@ -2938,6 +2939,12 @@ private fun ActiveProjectTransferScreen(project: TopoProject?) {
     var exportMessage by remember(project.id) { mutableStateOf<String?>(null) }
     var importMessage by remember(project.id) { mutableStateOf<String?>(null) }
     var importSourceCrs by remember(project.id) { mutableStateOf(ImportSourceCrs.PROJECT) }
+    var importTextLayout by remember(project.id) { mutableStateOf(TextPointLayout.POINT_NORTH_EAST_ELEV_DESC) }
+    var importSeparator by remember(project.id) { mutableStateOf(TextSeparator.COMMA) }
+    var importPoints by remember(project.id) { mutableStateOf(true) }
+    var importLines by remember(project.id) { mutableStateOf(true) }
+    var importPolygons by remember(project.id) { mutableStateOf(true) }
+    var importPreview by remember(project.id) { mutableStateOf<ProjectImportPreview?>(null) }
     var pendingImportUri by remember(project.id) { mutableStateOf<Uri?>(null) }
     var showImportDialog by remember(project.id) { mutableStateOf(false) }
     var showImportPickerConfirm by remember(project.id) { mutableStateOf(false) }
@@ -2946,6 +2953,10 @@ private fun ActiveProjectTransferScreen(project: TopoProject?) {
         if (uri != null) {
             runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             pendingImportUri = uri
+            importPreview = ProjectImportManager.preview(context, uri).getOrNull()
+            importPoints = true
+            importLines = true
+            importPolygons = true
             showImportDialog = true
         }
     }
