@@ -174,7 +174,7 @@ fun TopoEmlidApp() {
     LaunchedEffect(gnss.lastNmeaSentence, ntripStatus.connected) {
         if (ntripStatus.connected) {
             val sentence = gnss.lastNmeaSentence
-            if (sentence != null && (sentence.startsWith("$GPGGA") || sentence.startsWith("$GNGGA"))) {
+            if (sentence != null && (sentence.startsWith("\$GPGGA") || sentence.startsWith("\$GNGGA"))) {
                 ntripConnection.sendGga(sentence)
             }
         }
