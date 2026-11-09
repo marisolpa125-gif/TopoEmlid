@@ -1884,6 +1884,20 @@ fun SurveyScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
+                if (divideMode == DivideMode.TARGET_AREA) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = divideTargetAreaText,
+                        onValueChange = { divideTargetAreaText = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' } },
+                        label = { Text("Área objetivo (m²)") },
+                        supportingText = {
+                            val total = polygonAreaMeters2(toolPoints)
+                            Text("Área total: %.2f m² • indique el área que desea separar".format(total))
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 if (divideMode == DivideMode.EQUAL_FRONT && toolPoints.size >= 3) {
                     Spacer(Modifier.height(8.dp))
                     Text("Seleccione el lado que será el frente", fontWeight = FontWeight.Bold)
@@ -1912,11 +1926,26 @@ fun SurveyScreen(
                             val result = when (divideMode) {
                                 DivideMode.EQUAL_AREA -> dividePolygonEqualArea(toolPoints, parts)
                                 DivideMode.EQUAL_FRONT -> dividePolygonEqualFront(toolPoints, parts, divideFrontEdge)
-                                DivideMode.BY_LINE -> emptyList()
+                                DivideMode.BY_LINE, DivideMode.TARGET_AREA -> emptyList()
                             }
-                            if (divideMode == DivideMode.BY_LINE) {
+                            if (divideMode == DivideMode.BY_LINE || divideMode == DivideMode.TARGET_AREA) {
+                                val targetArea = divideTargetAreaText.replace(',', '.').toDoubleOrNull()
+                                if (divideMode == DivideMode.TARGET_AREA) {
+                                    val totalArea = polygonAreaMeters2(toolPoints)
+                                    if (targetArea == null || targetArea <= 0.0 || targetArea >= totalArea) {
+                                        toolResult = "Indique un área objetivo mayor que 0 y menor que %.2f m².".format(totalArea)
+                                        return@Button
+                                    }
+                                }
+                                divideSourcePolygon = toolPoints.toList()
+                                pendingDivideMode = divideMode
+                                toolPoints = emptyList()
                                 activeMapTool = MapFieldTool.DIVIDE_LINE
-                                toolResult = "Trace dos puntos sobre el mapa para definir la línea de corte."
+                                toolResult = if (divideMode == DivideMode.TARGET_AREA) {
+                                    "Trace una línea guía con dos puntos. Puede ajustarla a puntos existentes o seguir el rumbo de un lado del polígono. TOPO EMLID la moverá hasta obtener %.2f m².".format(targetArea)
+                                } else {
+                                    "Trace dos puntos sobre el mapa para definir la línea de corte."
+                                }
                             } else {
                                 divisionPreview = result
                                 map.clear()
@@ -1929,7 +1958,12 @@ fun SurveyScreen(
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (divideMode == DivideMode.BY_LINE) "Trazar línea de división" else "Vista previa de división")
+                    Text(
+                        if (divideMode == DivideMode.BY_LINE || divideMode == DivideMode.TARGET_AREA)
+                            "Trazar línea guía"
+                        else
+                            "Vista previa de división"
+                    )
                 }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = { showDividePanel = false }, modifier = Modifier.fillMaxWidth()) {
