@@ -5220,6 +5220,142 @@ private fun dividePolygonEqualFront(polygon: List<LatLng>, parts: Int, edge: Int
     return divideAxis(polygon, parts, b.x - a.x, b.y - a.y, false)
 }
 
+private fun dividePolygonByGuideLine(
+    polygon: List<LatLng>,
+    guideLine: List<LatLng>,
+    targetAreaM2: Double? = null
+): List<List<LatLng>> {
+    if (polygon.size < 3 || guideLine.size < 2) return emptyList()
+
+    val (xy, meanLat) = toXY(polygon)
+    val r = 6371008.8
+    fun toXYAtMean(p: LatLng): XY = XY(
+        r * Math.toRadians(p.longitude) * cos(meanLat),
+        r * Math.toRadians(p.latitude)
+    )
+
+    val ga = toXYAtMean(guideLine[0])
+    val gb = toXYAtMean(guideLine[1])
+    val dx = gb.x - ga.x
+    val dy = gb.y - ga.y
+    val len = hypot(dx, dy)
+    if (len <= 1e-6) return emptyList()
+
+    // d = dirección de la línea guía; n = normal perpendicular.
+    val dX = dx / len
+    val dY = dy / len
+    val nX = -dY
+    val nY = dX
+
+    fun toUV(p: XY): Coordinate = Coordinate(
+        p.x * nX + p.y * nY,
+        p.x * dX + p.y * dY
+    )
+    fun uvToXY(c: Coordinate): XY = XY(
+        c.x * nX + c.y * dX,
+        c.x * nY + c.y * dY
+    )
+
+    val factory = GeometryFactory()
+    val ring = (xy.map(::toUV) + toUV(xy.first())).toTypedArray()
+    val source = runCatching {
+        factory.createPolygon(factory.createLinearRing(ring))
+    }.getOrNull() ?: return emptyList()
+
+    if (!source.isValid || source.area <= 1e-6) return emptyList()
+
+    val env = source.envelopeInternal
+    val pad = max(env.width, env.height).coerceAtLeast(1.0) * 6.0
+
+    fun slab(minU: Double, maxU: Double): Polygon {
+        val minV = env.minY - pad
+        val maxV = env.maxY + pad
+        return factory.createPolygon(
+            factory.createLinearRing(
+                arrayOf(
+                    Coordinate(minU, minV),
+                    Coordinate(maxU, minV),
+                    Coordinate(maxU, maxV),
+                    Coordinate(minU, maxV),
+                    Coordinate(minU, minV)
+                )
+            )
+        )
+    }
+
+    fun leftGeometry(cutU: Double): Geometry =
+        runCatching { source.intersection(slab(env.minX - pad, cutU)) }.getOrElse { return source }
+
+    fun leftArea(cutU: Double): Double =
+        runCatching { source.intersection(slab(env.minX - pad, cutU)).area }.getOrDefault(0.0)
+
+    fun solveCutForLeftArea(wanted: Double): Double {
+        var lo = env.minX
+        var hi = env.maxX
+        repeat(72) {
+            val mid = (lo + hi) / 2.0
+            if (leftArea(mid) < wanted) lo = mid else hi = mid
+        }
+        return (lo + hi) / 2.0
+    }
+
+    val guideMid = XY((ga.x + gb.x) / 2.0, (ga.y + gb.y) / 2.0)
+    val guideU = guideMid.x * nX + guideMid.y * nY
+    val totalArea = source.area
+
+    val cutU = if (targetAreaM2 == null) {
+        guideU
+    } else {
+        if (targetAreaM2 <= 0.0 || targetAreaM2 >= totalArea) return emptyList()
+
+        // Hay dos cortes paralelos posibles que pueden producir el área pedida:
+        // uno dejando el área objetivo a la izquierda y otro a la derecha.
+        // Elegimos el que requiera desplazar menos la línea dibujada por el usuario.
+        val cutLeftTarget = solveCutForLeftArea(targetAreaM2)
+        val cutRightTarget = solveCutForLeftArea(totalArea - targetAreaM2)
+        if (abs(cutLeftTarget - guideU) <= abs(cutRightTarget - guideU)) {
+            cutLeftTarget
+        } else {
+            cutRightTarget
+        }
+    }
+
+    val left = runCatching {
+        source.intersection(slab(env.minX - pad, cutU))
+    }.getOrNull() ?: return emptyList()
+    val right = runCatching {
+        source.intersection(slab(cutU, env.maxX + pad))
+    }.getOrNull() ?: return emptyList()
+
+    fun extractPolygons(g: Geometry): List<Polygon> {
+        if (g.isEmpty) return emptyList()
+        if (g is Polygon) return listOf(g)
+        val out = mutableListOf<Polygon>()
+        for (i in 0 until g.numGeometries) {
+            val child = g.getGeometryN(i)
+            if (child is Polygon) out += child
+            else if (child.numGeometries > 1) out += extractPolygons(child)
+        }
+        return out
+    }
+
+    val pieces = (extractPolygons(left) + extractPolygons(right))
+        .filter { it.area > 1e-4 }
+        .mapNotNull { poly ->
+            val coords = poly.exteriorRing.coordinates
+            if (coords.size < 4) null
+            else fromXY(coords.dropLast(1).map(::uvToXY), meanLat)
+        }
+
+    if (pieces.size < 2) return emptyList()
+
+    val covered = pieces.sumOf(::polygonAreaMeters2)
+    val original = polygonAreaMeters2(polygon)
+    if (original <= 0.0 || abs(covered - original) / original > 0.01) return emptyList()
+
+    return pieces
+}
+
 private fun renderDivisionPolygons(map: MapLibreMap, pieces: List<List<LatLng>>) {
     pieces.forEach { p ->
         if (p.size >= 3) {
