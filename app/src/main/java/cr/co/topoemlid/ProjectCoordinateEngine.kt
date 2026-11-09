@@ -31,6 +31,28 @@ object ProjectCoordinateEngine {
             "+towgs84=-0.16959,0.35312,0.51846,-0.03385,0.16325,-0.03446,0.03693 +units=m +no_defs"
     )
 
+    fun toWgs84(eastingM: Double, northingM: Double, crsName: String): ProjectCoordinate {
+        if (crsName == "WGS 84 geográficas") {
+            return ProjectCoordinate(null, null, northingM, eastingM)
+        }
+
+        val source = when (crsName) {
+            "CR-SIRGAS" -> crSirgasCrtm05
+            "CRTM05" -> cr05Crtm05
+            else -> crSirgasCrtm05
+        }
+
+        val src = ProjCoordinate(eastingM, northingM)
+        val dst = ProjCoordinate()
+        transformFactory.createTransform(source, wgs84).transform(src, dst)
+        return ProjectCoordinate(
+            eastingM = eastingM,
+            northingM = northingM,
+            latitude = dst.y,
+            longitude = dst.x
+        )
+    }
+
     fun fromWgs84(latitude: Double, longitude: Double, crsName: String): ProjectCoordinate {
         if (crsName == "WGS 84 geográficas") {
             return ProjectCoordinate(null, null, latitude, longitude)
