@@ -34,8 +34,11 @@ enum class ImportSourceCrs(val label: String) {
 data class ProjectImportOptions(
     val format: ProjectImportFormat = ProjectImportFormat.AUTO,
     val sourceCrs: ImportSourceCrs = ImportSourceCrs.PROJECT,
+    val textLayout: TextPointLayout = TextPointLayout.POINT_NORTH_EAST_ELEV_DESC,
+    val separator: TextSeparator = TextSeparator.COMMA,
     val importPoints: Boolean = true,
-    val importGeometries: Boolean = true
+    val importLines: Boolean = true,
+    val importPolygons: Boolean = true
 )
 
 data class ProjectImportResult(
@@ -77,16 +80,6 @@ object ProjectImportManager {
             ImportSourceCrs.CR_SIRGAS -> "CR-SIRGAS"
         }
 
-        // Hasta que el motor geodésico transforme oficialmente CRTM05/CR-SIRGAS,
-        // solo se importa directamente WGS84. Evita interpretar Este/Norte como lat/lon.
-        if (!effectiveCrs.contains("WGS", ignoreCase = true)) {
-            error(
-                "La importación de coordenadas proyectadas $effectiveCrs quedará habilitada " +
-                    "cuando se complete la transformación geodésica del proyecto. " +
-                    "No se importaron datos para evitar coordenadas incorrectas."
-            )
-        }
-
         val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: error("No se pudo leer el archivo.")
         val text = if (format in setOf(
@@ -107,10 +100,15 @@ object ProjectImportManager {
             ProjectImportFormat.CSV,
             ProjectImportFormat.TXT -> {
                 parseDelimitedMixed(
+                    context = context,
                     text = text,
-                    projectId = project.id,
+                    project = project,
+                    effectiveCrs = effectiveCrs,
+                    layout = options.textLayout,
+                    separator = options.separator,
                     importPoints = options.importPoints,
-                    importGeometries = options.importGeometries,
+                    importLines = options.importLines,
+                    importPolygons = options.importPolygons,
                     pointsOut = points,
                     geometriesOut = geometries
                 )
@@ -127,33 +125,37 @@ object ProjectImportManager {
                         "Point" -> if (options.importPoints) {
                             val c = geometry.optJSONArray("coordinates") ?: continue
                             if (c.length() >= 2) {
-                                points += SurveyPoint(
-                                    id = UUID.randomUUID().toString(),
-                                    projectId = project.id,
+                                val coord = sourceCoordinateToWgs84(
+                                    x = c.optDouble(0),
+                                    y = c.optDouble(1),
+                                    effectiveCrs = effectiveCrs
+                                ) ?: continue
+                                points += buildImportedPoint(
+                                    project = project,
                                     pointNumber = props.optString("point", (points.size + 1).toString()),
                                     description = props.optString("description", ""),
                                     code = props.optString("code", ""),
-                                    antennaHeightM = project.antennaHeightM,
-                                    occupationSeconds = 1,
-                                    latitude = c.optDouble(1),
-                                    longitude = c.optDouble(0),
-                                    ellipsoidalHeightM = c.optDouble(2).takeUnless { it.isNaN() }
+                                    latitude = coord.latitude,
+                                    longitude = coord.longitude,
+                                    elevation = c.optDouble(2).takeUnless { it.isNaN() }
                                 )
                             }
                         }
-                        "LineString" -> if (options.importGeometries) {
+                        "LineString" -> if (options.importLines) {
                             addGeometryFromCoords(
                                 geometries,
                                 tool = "LINE",
-                                coords = geometry.optJSONArray("coordinates")
+                                coords = geometry.optJSONArray("coordinates"),
+                                effectiveCrs = effectiveCrs
                             )
                         }
-                        "Polygon" -> if (options.importGeometries) {
+                        "Polygon" -> if (options.importPolygons) {
                             val rings = geometry.optJSONArray("coordinates")
                             addGeometryFromCoords(
                                 geometries,
                                 tool = "POLYGON",
-                                coords = rings?.optJSONArray(0)
+                                coords = rings?.optJSONArray(0),
+                                effectiveCrs = effectiveCrs
                             )
                         }
                     }
@@ -169,34 +171,38 @@ object ProjectImportManager {
                     pointRegex.findAll(text).forEach { m ->
                         val parts = m.groupValues[2].trim().split(",")
                         if (parts.size >= 2) {
-                            points += SurveyPoint(
-                                id = UUID.randomUUID().toString(),
-                                projectId = project.id,
-                                pointNumber = stripXml(m.groupValues[1]).ifBlank { (points.size + 1).toString() },
-                                description = "",
-                                code = "",
-                                antennaHeightM = project.antennaHeightM,
-                                occupationSeconds = 1,
-                                latitude = parts[1].toDoubleOrNull(),
-                                longitude = parts[0].toDoubleOrNull(),
-                                ellipsoidalHeightM = parts.getOrNull(2)?.toDoubleOrNull()
-                            )
+                            val x = parts[0].toDoubleOrNull()
+                            val y = parts[1].toDoubleOrNull()
+                            val coord = if (x != null && y != null) sourceCoordinateToWgs84(x, y, effectiveCrs) else null
+                            if (coord != null) {
+                                points += buildImportedPoint(
+                                    project = project,
+                                    pointNumber = stripXml(m.groupValues[1]).ifBlank { (points.size + 1).toString() },
+                                    description = "",
+                                    code = "",
+                                    latitude = coord.latitude,
+                                    longitude = coord.longitude,
+                                    elevation = parts.getOrNull(2)?.toDoubleOrNull()
+                                )
+                            }
                         }
                     }
                 }
 
-                if (options.importGeometries) {
+                if (options.importLines) {
                     Regex(
                         "<LineString>[\\s\\S]*?<coordinates>([^<]+)</coordinates>[\\s\\S]*?</LineString>",
                         RegexOption.IGNORE_CASE
                     ).findAll(text).forEach { m ->
-                        addGeometryFromKml(geometries, "LINE", m.groupValues[1])
+                        addGeometryFromKml(geometries, "LINE", m.groupValues[1], effectiveCrs)
                     }
+                }
+                if (options.importPolygons) {
                     Regex(
                         "<Polygon>[\\s\\S]*?<coordinates>([^<]+)</coordinates>[\\s\\S]*?</Polygon>",
                         RegexOption.IGNORE_CASE
                     ).findAll(text).forEach { m ->
-                        addGeometryFromKml(geometries, "POLYGON", m.groupValues[1])
+                        addGeometryFromKml(geometries, "POLYGON", m.groupValues[1], effectiveCrs)
                     }
                 }
             }
@@ -204,9 +210,11 @@ object ProjectImportManager {
             ProjectImportFormat.DXF -> {
                 parseDxf(
                     text = text,
-                    projectId = project.id,
+                    project = project,
+                    effectiveCrs = effectiveCrs,
                     importPoints = options.importPoints,
-                    importGeometries = options.importGeometries,
+                    importLines = options.importLines,
+                    importPolygons = options.importPolygons,
                     pointsOut = points,
                     geometriesOut = geometries
                 )
@@ -215,9 +223,11 @@ object ProjectImportManager {
             ProjectImportFormat.SHAPE_ZIP -> {
                 parseShapefileZip(
                     bytes = bytes,
-                    projectId = project.id,
+                    project = project,
+                    effectiveCrs = effectiveCrs,
                     importPoints = options.importPoints,
-                    importGeometries = options.importGeometries,
+                    importLines = options.importLines,
+                    importPolygons = options.importPolygons,
                     pointsOut = points,
                     geometriesOut = geometries
                 )
