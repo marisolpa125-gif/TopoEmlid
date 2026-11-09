@@ -14,6 +14,8 @@ class NtripConnectionManager(
 ) {
     @Volatile private var socket: Socket? = null
     @Volatile private var worker: Thread? = null
+    private val outputLock = Any()
+    @Volatile private var lastGgaSentAt: Long = 0L
 
     var status by mutableStateOf(NtripLiveStatus())
         private set
@@ -58,8 +60,10 @@ class NtripConnectionManager(
                     append("Connection: close\r\n\r\n")
                 }
 
-                s.getOutputStream().write(request.toByteArray(Charsets.US_ASCII))
-                s.getOutputStream().flush()
+synchronized(outputLock) {
+                    s.getOutputStream().write(request.toByteArray(Charsets.US_ASCII))
+                    s.getOutputStream().flush()
+                }
 
                 val input = s.getInputStream()
                 val header = readHeader(input)
@@ -122,11 +126,40 @@ class NtripConnectionManager(
         }
     }
 
+    fun sendGga(sentence: String): Boolean {
+        val now = System.currentTimeMillis()
+        if (!status.connected || now - lastGgaSentAt < 5_000L) return false
+
+        val line = sentence.trim()
+        if (!line.startsWith("$GPGGA") && !line.startsWith("$GNGGA")) return false
+
+        val s = socket ?: return false
+        if (!s.isConnected) return false
+
+        val sent = runCatching {
+            synchronized(outputLock) {
+                s.getOutputStream().write((line + "\r\n").toByteArray(Charsets.US_ASCII))
+                s.getOutputStream().flush()
+            }
+            true
+        }.getOrDefault(false)
+
+        if (sent) {
+            lastGgaSentAt = now
+            status = status.copy(
+                ggaSentCount = status.ggaSentCount + 1L,
+                lastGgaSentAt = now
+            )
+        }
+        return sent
+    }
+
     fun disconnect() {
         worker?.interrupt()
         worker = null
         runCatching { socket?.close() }
         socket = null
+        lastGgaSentAt = 0L
         status = NtripLiveStatus()
     }
 
