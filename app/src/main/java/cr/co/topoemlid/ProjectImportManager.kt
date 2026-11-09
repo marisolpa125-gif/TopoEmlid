@@ -4,10 +4,7 @@ import android.content.Context
 import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.io.ByteArrayInputStream
-import java.io.DataInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
@@ -47,30 +44,76 @@ data class ProjectImportResult(
     val message: String
 )
 
+data class ProjectImportPreview(
+    val format: ProjectImportFormat,
+    val points: Int,
+    val lines: Int,
+    val polygons: Int
+)
+
 object ProjectImportManager {
+
+    fun preview(context: Context, uri: Uri): Result<ProjectImportPreview> = runCatching {
+        val display = displayName(context, uri)
+        val format = detectFormat(display, ProjectImportFormat.AUTO)
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: error("No se pudo leer el archivo.")
+        val text = if (format in setOf(
+                ProjectImportFormat.TXT, ProjectImportFormat.CSV,
+                ProjectImportFormat.GEOJSON, ProjectImportFormat.KML, ProjectImportFormat.DXF
+            )
+        ) bytes.toString(Charsets.UTF_8) else ""
+
+        when (format) {
+            ProjectImportFormat.GEOJSON -> {
+                val features = JSONObject(text).optJSONArray("features") ?: JSONArray()
+                var p = 0; var l = 0; var g = 0
+                for (i in 0 until features.length()) {
+                    when (features.optJSONObject(i)?.optJSONObject("geometry")?.optString("type")) {
+                        "Point", "MultiPoint" -> p++
+                        "LineString", "MultiLineString" -> l++
+                        "Polygon", "MultiPolygon" -> g++
+                    }
+                }
+                ProjectImportPreview(format, p, l, g)
+            }
+            ProjectImportFormat.KML -> ProjectImportPreview(
+                format,
+                Regex("<Point[\\s>]", RegexOption.IGNORE_CASE).findAll(text).count(),
+                Regex("<LineString[\\s>]", RegexOption.IGNORE_CASE).findAll(text).count(),
+                Regex("<Polygon[\\s>]", RegexOption.IGNORE_CASE).findAll(text).count()
+            )
+            ProjectImportFormat.DXF -> {
+                val upper = text.uppercase()
+                ProjectImportPreview(
+                    format,
+                    Regex("(?m)^\\s*POINT\\s*$").findAll(upper).count(),
+                    Regex("(?m)^\\s*LINE\\s*$").findAll(upper).count() +
+                        Regex("(?m)^\\s*LWPOLYLINE\\s*$").findAll(upper).count(),
+                    Regex("(?m)^\\s*HATCH\\s*$").findAll(upper).count()
+                )
+            }
+            ProjectImportFormat.SHAPE_ZIP -> previewShapeZip(bytes)
+            ProjectImportFormat.TXT, ProjectImportFormat.CSV ->
+                ProjectImportPreview(format, text.lineSequence().count { it.isNotBlank() }, 0, 0)
+            ProjectImportFormat.DWG -> ProjectImportPreview(format, 0, 0, 0)
+            ProjectImportFormat.AUTO -> error("Formato no resuelto.")
+        }
+    }
+
     fun import(
         context: Context,
         project: TopoProject,
         uri: Uri,
         options: ProjectImportOptions
     ): Result<ProjectImportResult> = runCatching {
-        val display = runCatching {
-            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (cursor.moveToFirst() && idx >= 0) cursor.getString(idx) else null
-            }
-        }.getOrNull().orEmpty().ifBlank { uri.lastPathSegment.orEmpty() }.lowercase()
-
-        val format = when {
-            options.format != ProjectImportFormat.AUTO -> options.format
-            display.endsWith(".csv") -> ProjectImportFormat.CSV
-            display.endsWith(".txt") -> ProjectImportFormat.TXT
-            display.endsWith(".geojson") || display.endsWith(".json") -> ProjectImportFormat.GEOJSON
-            display.endsWith(".kml") -> ProjectImportFormat.KML
-            display.endsWith(".dxf") -> ProjectImportFormat.DXF
-            display.endsWith(".zip") -> ProjectImportFormat.SHAPE_ZIP
-            display.endsWith(".dwg") -> ProjectImportFormat.DWG
-            else -> error("No se pudo detectar el formato del archivo.")
+        val display = displayName(context, uri)
+        val format = detectFormat(display, options.format)
+        if (format == ProjectImportFormat.DWG) {
+            error(
+                "DWG fue detectado, pero TOPO EMLID todavía no incluye un lector DWG seguro. " +
+                    "Convierta el archivo a DXF para conservar coordenadas y geometrías correctamente."
+            )
         }
 
         val effectiveCrs = when (options.sourceCrs) {
@@ -83,163 +126,32 @@ object ProjectImportManager {
         val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: error("No se pudo leer el archivo.")
         val text = if (format in setOf(
-                ProjectImportFormat.CSV,
-                ProjectImportFormat.TXT,
-                ProjectImportFormat.GEOJSON,
-                ProjectImportFormat.KML,
+                ProjectImportFormat.CSV, ProjectImportFormat.TXT,
+                ProjectImportFormat.GEOJSON, ProjectImportFormat.KML,
                 ProjectImportFormat.DXF
             )
-        ) {
-            bytes.toString(Charsets.UTF_8)
-        } else ""
+        ) bytes.toString(Charsets.UTF_8) else ""
 
         val points = mutableListOf<SurveyPoint>()
         val geometries = JSONArray()
 
         when (format) {
-            ProjectImportFormat.CSV,
-            ProjectImportFormat.TXT -> {
-                parseDelimitedMixed(
-                    context = context,
-                    text = text,
-                    project = project,
-                    effectiveCrs = effectiveCrs,
-                    layout = options.textLayout,
-                    separator = options.separator,
-                    importPoints = options.importPoints,
-                    importLines = options.importLines,
-                    importPolygons = options.importPolygons,
-                    pointsOut = points,
-                    geometriesOut = geometries
-                )
-            }
+            ProjectImportFormat.TXT, ProjectImportFormat.CSV ->
+                parseDelimited(text, project, effectiveCrs, options, points, geometries)
 
-            ProjectImportFormat.GEOJSON -> {
-                val root = JSONObject(text)
-                val features = root.optJSONArray("features") ?: JSONArray()
-                for (i in 0 until features.length()) {
-                    val feature = features.optJSONObject(i) ?: continue
-                    val geometry = feature.optJSONObject("geometry") ?: continue
-                    val props = feature.optJSONObject("properties") ?: JSONObject()
-                    when (geometry.optString("type")) {
-                        "Point" -> if (options.importPoints) {
-                            val c = geometry.optJSONArray("coordinates") ?: continue
-                            if (c.length() >= 2) {
-                                val coord = sourceCoordinateToWgs84(
-                                    x = c.optDouble(0),
-                                    y = c.optDouble(1),
-                                    effectiveCrs = effectiveCrs
-                                ) ?: continue
-                                points += buildImportedPoint(
-                                    project = project,
-                                    pointNumber = props.optString("point", (points.size + 1).toString()),
-                                    description = props.optString("description", ""),
-                                    code = props.optString("code", ""),
-                                    latitude = coord.latitude,
-                                    longitude = coord.longitude,
-                                    elevation = c.optDouble(2).takeUnless { it.isNaN() }
-                                )
-                            }
-                        }
-                        "LineString" -> if (options.importLines) {
-                            addGeometryFromCoords(
-                                geometries,
-                                tool = "LINE",
-                                coords = geometry.optJSONArray("coordinates"),
-                                effectiveCrs = effectiveCrs
-                            )
-                        }
-                        "Polygon" -> if (options.importPolygons) {
-                            val rings = geometry.optJSONArray("coordinates")
-                            addGeometryFromCoords(
-                                geometries,
-                                tool = "POLYGON",
-                                coords = rings?.optJSONArray(0),
-                                effectiveCrs = effectiveCrs
-                            )
-                        }
-                    }
-                }
-            }
+            ProjectImportFormat.GEOJSON ->
+                parseGeoJson(text, project, effectiveCrs, options, points, geometries)
 
-            ProjectImportFormat.KML -> {
-                if (options.importPoints) {
-                    val pointRegex = Regex(
-                        "<Placemark[\\s\\S]*?<name>([\\s\\S]*?)</name>[\\s\\S]*?<Point>[\\s\\S]*?<coordinates>([^<]+)</coordinates>[\\s\\S]*?</Point>[\\s\\S]*?</Placemark>",
-                        RegexOption.IGNORE_CASE
-                    )
-                    pointRegex.findAll(text).forEach { m ->
-                        val parts = m.groupValues[2].trim().split(",")
-                        if (parts.size >= 2) {
-                            val x = parts[0].toDoubleOrNull()
-                            val y = parts[1].toDoubleOrNull()
-                            val coord = if (x != null && y != null) sourceCoordinateToWgs84(x, y, effectiveCrs) else null
-                            if (coord != null) {
-                                points += buildImportedPoint(
-                                    project = project,
-                                    pointNumber = stripXml(m.groupValues[1]).ifBlank { (points.size + 1).toString() },
-                                    description = "",
-                                    code = "",
-                                    latitude = coord.latitude,
-                                    longitude = coord.longitude,
-                                    elevation = parts.getOrNull(2)?.toDoubleOrNull()
-                                )
-                            }
-                        }
-                    }
-                }
+            ProjectImportFormat.KML ->
+                parseKml(text, project, effectiveCrs, options, points, geometries)
 
-                if (options.importLines) {
-                    Regex(
-                        "<LineString>[\\s\\S]*?<coordinates>([^<]+)</coordinates>[\\s\\S]*?</LineString>",
-                        RegexOption.IGNORE_CASE
-                    ).findAll(text).forEach { m ->
-                        addGeometryFromKml(geometries, "LINE", m.groupValues[1], effectiveCrs)
-                    }
-                }
-                if (options.importPolygons) {
-                    Regex(
-                        "<Polygon>[\\s\\S]*?<coordinates>([^<]+)</coordinates>[\\s\\S]*?</Polygon>",
-                        RegexOption.IGNORE_CASE
-                    ).findAll(text).forEach { m ->
-                        addGeometryFromKml(geometries, "POLYGON", m.groupValues[1], effectiveCrs)
-                    }
-                }
-            }
+            ProjectImportFormat.DXF ->
+                parseDxf(text, project, effectiveCrs, options, points, geometries)
 
-            ProjectImportFormat.DXF -> {
-                parseDxf(
-                    text = text,
-                    project = project,
-                    effectiveCrs = effectiveCrs,
-                    importPoints = options.importPoints,
-                    importLines = options.importLines,
-                    importPolygons = options.importPolygons,
-                    pointsOut = points,
-                    geometriesOut = geometries
-                )
-            }
+            ProjectImportFormat.SHAPE_ZIP ->
+                parseShapefileZip(bytes, project, effectiveCrs, options, points, geometries)
 
-            ProjectImportFormat.SHAPE_ZIP -> {
-                parseShapefileZip(
-                    bytes = bytes,
-                    project = project,
-                    effectiveCrs = effectiveCrs,
-                    importPoints = options.importPoints,
-                    importLines = options.importLines,
-                    importPolygons = options.importPolygons,
-                    pointsOut = points,
-                    geometriesOut = geometries
-                )
-            }
-
-            ProjectImportFormat.DWG ->
-                error(
-                    "DWG fue detectado, pero no se puede leer de forma segura sin un lector CAD especializado. " +
-                        "Convierta el archivo a DXF para importarlo directamente en TOPO EMLID."
-                )
-
-            ProjectImportFormat.AUTO -> error("Formato no resuelto.")
+            ProjectImportFormat.DWG, ProjectImportFormat.AUTO -> error("Formato no resuelto.")
         }
 
         if (points.isNotEmpty()) {
@@ -255,206 +167,308 @@ object ProjectImportManager {
             prefs.edit().putString(key, current.toString()).apply()
         }
 
+        val lineCount = (0 until geometries.length()).count {
+            geometries.getJSONObject(it).optString("tool") != "POLYGON"
+        }
+        val polygonCount = geometries.length() - lineCount
         ProjectImportResult(
             pointsAdded = points.size,
             geometriesAdded = geometries.length(),
-            message = "Importados ${points.size} puntos y ${geometries.length()} figuras."
+            message = "Importados ${points.size} puntos, $lineCount líneas y $polygonCount polígonos."
         )
     }
 
-    private fun parseDelimitedMixed(
+    private fun displayName(context: Context, uri: Uri): String =
+        runCatching {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (cursor.moveToFirst() && idx >= 0) cursor.getString(idx) else null
+            }
+        }.getOrNull().orEmpty().ifBlank { uri.lastPathSegment.orEmpty() }.lowercase()
+
+    private fun detectFormat(display: String, requested: ProjectImportFormat): ProjectImportFormat {
+        if (requested != ProjectImportFormat.AUTO) return requested
+        return when {
+            display.endsWith(".csv") -> ProjectImportFormat.CSV
+            display.endsWith(".txt") -> ProjectImportFormat.TXT
+            display.endsWith(".geojson") || display.endsWith(".json") -> ProjectImportFormat.GEOJSON
+            display.endsWith(".kml") -> ProjectImportFormat.KML
+            display.endsWith(".dxf") -> ProjectImportFormat.DXF
+            display.endsWith(".zip") -> ProjectImportFormat.SHAPE_ZIP
+            display.endsWith(".dwg") -> ProjectImportFormat.DWG
+            else -> error("No se pudo detectar el formato del archivo.")
+        }
+    }
+
+    private fun sourceToWgs84(x: Double, y: Double, crs: String): ProjectCoordinate? =
+        runCatching {
+            if (crs.contains("WGS", ignoreCase = true)) {
+                if (y !in -90.0..90.0 || x !in -180.0..180.0) return@runCatching null
+                ProjectCoordinate(null, null, y, x)
+            } else {
+                ProjectCoordinateEngine.toWgs84(x, y, crs)
+            }
+        }.getOrNull()
+
+    private fun buildPoint(
+        project: TopoProject,
+        number: String,
+        description: String,
+        code: String,
+        latitude: Double,
+        longitude: Double,
+        elevation: Double?
+    ): SurveyPoint {
+        val projected = runCatching {
+            ProjectCoordinateEngine.fromWgs84(latitude, longitude, project.crsName)
+        }.getOrNull()
+        val geoidal = project.geoidFileUri != null
+        return SurveyPoint(
+            id = UUID.randomUUID().toString(),
+            projectId = project.id,
+            pointNumber = number,
+            description = description,
+            code = code,
+            antennaHeightM = 0.0,
+            occupationSeconds = 1,
+            latitude = latitude,
+            longitude = longitude,
+            eastingM = projected?.eastingM,
+            northingM = projected?.northingM,
+            projectCrsName = project.crsName,
+            ellipsoidalHeightM = if (geoidal) null else elevation,
+            orthometricHeightM = if (geoidal) elevation else null,
+            geoidFileName = project.geoidFileName,
+            solution = "IMPORTADO"
+        )
+    }
+
+    private fun parseDelimited(
         text: String,
-        projectId: String,
-        importPoints: Boolean,
-        importGeometries: Boolean,
+        project: TopoProject,
+        effectiveCrs: String,
+        options: ProjectImportOptions,
         pointsOut: MutableList<SurveyPoint>,
         geometriesOut: JSONArray
     ) {
-        val lines = text.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .toList()
+        val lines = text.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList()
         if (lines.isEmpty()) return
 
         fun split(line: String): List<String> {
-            val sep = when {
-                line.contains(';') -> ';'
-                line.contains('\t') -> '\t'
-                line.count { it == ',' } >= 2 -> ','
-                else -> ' '
-            }
-            val raw = if (sep == ' ') line.split(Regex("\\s+")) else line.split(sep)
+            val sep = options.separator.value
+            val raw = if (sep == " ") line.split(Regex("\\s+")) else line.split(sep)
             return raw.map { it.trim().trim('"').replace("\"\"", "\"") }
         }
 
         val first = split(lines.first()).map { it.uppercase() }
-
-        // Formato mixto generado por TOPO EMLID cuando se exporta "Todo".
         if (first.contains("TIPO") && first.contains("LATITUD") && first.contains("LONGITUD")) {
-            val typeIdx = first.indexOf("TIPO")
-            val idIdx = first.indexOf("ID")
-            val vertexIdx = first.indexOf("VERTICE")
-            val latIdx = first.indexOf("LATITUD")
-            val lonIdx = first.indexOf("LONGITUD")
-            val elevIdx = first.indexOf("ELEVACION")
-            val descIdx = first.indexOf("DESCRIPCION")
-            val toolIdx = first.indexOf("HERRAMIENTA")
-
-            data class TempGeom(
-                val tool: String,
-                val vertices: MutableList<Pair<Int, Pair<Double, Double>>> = mutableListOf()
-            )
-            val geometryGroups = linkedMapOf<String, TempGeom>()
-
-            lines.drop(1).forEach { line ->
-                val p = split(line)
-                fun col(index: Int): String = if (index >= 0) p.getOrNull(index).orEmpty() else ""
-                val type = col(typeIdx).uppercase()
-                val lat = col(latIdx).replace(',', '.').toDoubleOrNull()
-                val lon = col(lonIdx).replace(',', '.').toDoubleOrNull()
-                if (lat == null || lon == null) return@forEach
-
-                if (type == "PUNTO" && importPoints) {
-                    pointsOut += SurveyPoint(
-                        id = UUID.randomUUID().toString(),
-                        projectId = projectId,
-                        pointNumber = col(idIdx).ifBlank { (pointsOut.size + 1).toString() },
-                        description = col(descIdx),
-                        code = "",
-                        antennaHeightM = 0.0,
-                        occupationSeconds = 1,
-                        latitude = lat,
-                        longitude = lon,
-                        ellipsoidalHeightM = col(elevIdx).replace(',', '.').toDoubleOrNull()
-                    )
-                } else if (type == "FIGURA" && importGeometries) {
-                    val id = col(idIdx).ifBlank { "geometry-${geometryGroups.size + 1}" }
-                    val tool = col(toolIdx).ifBlank { "LINE" }
-                    val vertex = col(vertexIdx).toIntOrNull() ?: Int.MAX_VALUE
-                    geometryGroups.getOrPut(id) { TempGeom(tool) }
-                        .vertices += vertex to (lat to lon)
-                }
-            }
-
-            geometryGroups.forEach { (id, g) ->
-                val pts = JSONArray()
-                g.vertices.sortedBy { it.first }.forEach { (_, coord) ->
-                    pts.put(JSONObject().put("lat", coord.first).put("lon", coord.second))
-                }
-                if (pts.length() >= 2) {
-                    geometriesOut.put(
-                        JSONObject()
-                            .put("id", id)
-                            .put("tool", g.tool)
-                            .put("parallelOffsetM", 1.0)
-                            .put("points", pts)
-                    )
-                }
-            }
+            parseTopoMixed(lines, ::split, project, options, pointsOut, geometriesOut)
             return
         }
 
-        // Formatos clásicos de puntos: P,LAT,LON[,Z,DESC] o LAT,LON[,Z].
-        if (!importPoints) return
+        if (!options.importPoints) return
+        val fields = options.textLayout.fields
+        require(fields.isNotEmpty()) { "Seleccione un orden de columnas válido para TXT/CSV." }
+
         lines.forEach { line ->
             val parts = split(line)
-            if (parts.size < 2) return@forEach
+            if (parts.size < fields.size) return@forEach
+            val values = fields.mapIndexed { idx, field -> field to parts.getOrNull(idx).orEmpty() }.toMap()
 
-            val firstNum = parts[0].replace(',', '.').toDoubleOrNull()
-            val secondNum = parts.getOrNull(1)?.replace(',', '.')?.toDoubleOrNull()
-            val thirdNum = parts.getOrNull(2)?.replace(',', '.')?.toDoubleOrNull()
+            val point = values[PointExportField.POINT].orEmpty().ifBlank { (pointsOut.size + 1).toString() }
+            val desc = values[PointExportField.DESCRIPTION].orEmpty()
+            val z = values[PointExportField.ELEVATION]?.replace(',', '.')?.toDoubleOrNull()
 
-            val pName: String
-            val pLat: Double
-            val pLon: Double
-            val idx: Int
-            if (firstNum == null && secondNum != null && thirdNum != null) {
-                pName = parts[0]
-                pLat = secondNum
-                pLon = thirdNum
-                idx = 3
-            } else if (firstNum != null && secondNum != null) {
-                pName = (pointsOut.size + 1).toString()
-                pLat = firstNum
-                pLon = secondNum
-                idx = 2
-            } else {
-                return@forEach
-            }
+            val latDirect = values[PointExportField.LATITUDE]?.replace(',', '.')?.toDoubleOrNull()
+            val lonDirect = values[PointExportField.LONGITUDE]?.replace(',', '.')?.toDoubleOrNull()
+            val north = values[PointExportField.NORTH]?.replace(',', '.')?.toDoubleOrNull()
+            val east = values[PointExportField.EAST]?.replace(',', '.')?.toDoubleOrNull()
 
-            if (pLat !in -90.0..90.0 || pLon !in -180.0..180.0) return@forEach
-            val z = parts.getOrNull(idx)?.replace(',', '.')?.toDoubleOrNull()
-            val desc = parts.drop(idx + if (z != null) 1 else 0).joinToString(" ").trim()
+            val coord = when {
+                latDirect != null && lonDirect != null ->
+                    sourceToWgs84(lonDirect, latDirect, "WGS 84 geográficas")
+                north != null && east != null ->
+                    sourceToWgs84(east, north, effectiveCrs)
+                else -> null
+            } ?: return@forEach
 
-            pointsOut += SurveyPoint(
-                id = UUID.randomUUID().toString(),
-                projectId = projectId,
-                pointNumber = pName,
-                description = desc,
-                code = "",
-                antennaHeightM = 0.0,
-                occupationSeconds = 1,
-                latitude = pLat,
-                longitude = pLon,
-                ellipsoidalHeightM = z
+            pointsOut += buildPoint(
+                project, point, desc, "",
+                coord.latitude, coord.longitude, z
             )
+        }
+    }
+
+    private fun parseTopoMixed(
+        lines: List<String>,
+        split: (String) -> List<String>,
+        project: TopoProject,
+        options: ProjectImportOptions,
+        pointsOut: MutableList<SurveyPoint>,
+        geometriesOut: JSONArray
+    ) {
+        val header = split(lines.first()).map { it.uppercase() }
+        fun idx(name: String) = header.indexOf(name)
+        val typeIdx = idx("TIPO"); val idIdx = idx("ID"); val vertexIdx = idx("VERTICE")
+        val latIdx = idx("LATITUD"); val lonIdx = idx("LONGITUD")
+        val elevIdx = idx("ELEVACION"); val descIdx = idx("DESCRIPCION"); val toolIdx = idx("HERRAMIENTA")
+
+        data class TempGeom(val tool: String, val vertices: MutableList<Pair<Int, Pair<Double, Double>>> = mutableListOf())
+        val groups = linkedMapOf<String, TempGeom>()
+
+        lines.drop(1).forEach { line ->
+            val p = split(line)
+            fun col(i: Int) = if (i >= 0) p.getOrNull(i).orEmpty() else ""
+            val lat = col(latIdx).replace(',', '.').toDoubleOrNull() ?: return@forEach
+            val lon = col(lonIdx).replace(',', '.').toDoubleOrNull() ?: return@forEach
+            when (col(typeIdx).uppercase()) {
+                "PUNTO" -> if (options.importPoints) {
+                    pointsOut += buildPoint(
+                        project,
+                        col(idIdx).ifBlank { (pointsOut.size + 1).toString() },
+                        col(descIdx), "", lat, lon,
+                        col(elevIdx).replace(',', '.').toDoubleOrNull()
+                    )
+                }
+                "FIGURA" -> {
+                    val tool = col(toolIdx).ifBlank { "LINE" }.uppercase()
+                    val allowed = (tool == "POLYGON" && options.importPolygons) ||
+                        (tool != "POLYGON" && options.importLines)
+                    if (allowed) {
+                        val id = col(idIdx).ifBlank { "geometry-${groups.size + 1}" }
+                        groups.getOrPut(id) { TempGeom(tool) }
+                            .vertices += (col(vertexIdx).toIntOrNull() ?: Int.MAX_VALUE) to (lat to lon)
+                    }
+                }
+            }
+        }
+        groups.forEach { (id, g) ->
+            val pts = JSONArray()
+            g.vertices.sortedBy { it.first }.forEach { (_, c) ->
+                pts.put(JSONObject().put("lat", c.first).put("lon", c.second))
+            }
+            if (pts.length() >= 2) addGeometry(geometriesOut, id, g.tool, pts)
+        }
+    }
+
+    private fun parseGeoJson(
+        text: String,
+        project: TopoProject,
+        effectiveCrs: String,
+        options: ProjectImportOptions,
+        pointsOut: MutableList<SurveyPoint>,
+        geometriesOut: JSONArray
+    ) {
+        val features = JSONObject(text).optJSONArray("features") ?: JSONArray()
+        for (i in 0 until features.length()) {
+            val feature = features.optJSONObject(i) ?: continue
+            val geometry = feature.optJSONObject("geometry") ?: continue
+            val props = feature.optJSONObject("properties") ?: JSONObject()
+            when (geometry.optString("type")) {
+                "Point" -> if (options.importPoints) {
+                    val c = geometry.optJSONArray("coordinates") ?: continue
+                    if (c.length() >= 2) {
+                        val coord = sourceToWgs84(c.optDouble(0), c.optDouble(1), effectiveCrs) ?: continue
+                        pointsOut += buildPoint(
+                            project,
+                            props.optString("point", (pointsOut.size + 1).toString()),
+                            props.optString("description", ""),
+                            props.optString("code", ""),
+                            coord.latitude, coord.longitude,
+                            c.optDouble(2).takeUnless { it.isNaN() }
+                        )
+                    }
+                }
+                "LineString" -> if (options.importLines) {
+                    coordsToGeometry(geometriesOut, "LINE", geometry.optJSONArray("coordinates"), effectiveCrs)
+                }
+                "Polygon" -> if (options.importPolygons) {
+                    coordsToGeometry(
+                        geometriesOut, "POLYGON",
+                        geometry.optJSONArray("coordinates")?.optJSONArray(0), effectiveCrs
+                    )
+                }
+            }
+        }
+    }
+
+    private fun parseKml(
+        text: String,
+        project: TopoProject,
+        effectiveCrs: String,
+        options: ProjectImportOptions,
+        pointsOut: MutableList<SurveyPoint>,
+        geometriesOut: JSONArray
+    ) {
+        if (options.importPoints) {
+            val pointRegex = Regex(
+                "<Placemark[\\s\\S]*?<name>([\\s\\S]*?)</name>[\\s\\S]*?<Point>[\\s\\S]*?<coordinates>([^<]+)</coordinates>[\\s\\S]*?</Point>[\\s\\S]*?</Placemark>",
+                RegexOption.IGNORE_CASE
+            )
+            pointRegex.findAll(text).forEach { m ->
+                val p = m.groupValues[2].trim().split(",")
+                val x = p.getOrNull(0)?.toDoubleOrNull()
+                val y = p.getOrNull(1)?.toDoubleOrNull()
+                val coord = if (x != null && y != null) sourceToWgs84(x, y, effectiveCrs) else null
+                if (coord != null) {
+                    pointsOut += buildPoint(
+                        project,
+                        stripXml(m.groupValues[1]).ifBlank { (pointsOut.size + 1).toString() },
+                        "", "", coord.latitude, coord.longitude,
+                        p.getOrNull(2)?.toDoubleOrNull()
+                    )
+                }
+            }
+        }
+        if (options.importLines) {
+            Regex("<LineString>[\\s\\S]*?<coordinates>([^<]+)</coordinates>[\\s\\S]*?</LineString>", RegexOption.IGNORE_CASE)
+                .findAll(text).forEach { addKmlGeometry(geometriesOut, "LINE", it.groupValues[1], effectiveCrs) }
+        }
+        if (options.importPolygons) {
+            Regex("<Polygon>[\\s\\S]*?<coordinates>([^<]+)</coordinates>[\\s\\S]*?</Polygon>", RegexOption.IGNORE_CASE)
+                .findAll(text).forEach { addKmlGeometry(geometriesOut, "POLYGON", it.groupValues[1], effectiveCrs) }
         }
     }
 
     private fun parseDxf(
         text: String,
-        projectId: String,
-        importPoints: Boolean,
-        importGeometries: Boolean,
+        project: TopoProject,
+        effectiveCrs: String,
+        options: ProjectImportOptions,
         pointsOut: MutableList<SurveyPoint>,
         geometriesOut: JSONArray
     ) {
-        val rawLines = text.replace("\r", "").split("\n")
-        if (rawLines.size < 2) error("DXF vacío o no es DXF ASCII.")
-
+        val raw = text.replace("\r", "").split("\n")
+        if (raw.size < 2) error("DXF vacío o no es DXF ASCII.")
         data class PairCode(val code: Int, val value: String)
         val pairs = mutableListOf<PairCode>()
         var i = 0
-        while (i + 1 < rawLines.size) {
-            val code = rawLines[i].trim().toIntOrNull()
-            val value = rawLines[i + 1].trim()
-            if (code != null) pairs += PairCode(code, value)
+        while (i + 1 < raw.size) {
+            raw[i].trim().toIntOrNull()?.let { pairs += PairCode(it, raw[i + 1].trim()) }
             i += 2
         }
 
-        fun addPoint(x: Double?, y: Double?, z: Double?, label: String?) {
-            if (!importPoints || x == null || y == null) return
-            // DXF geográfico exportado por TOPO EMLID usa X=lon, Y=lat.
-            if (y !in -90.0..90.0 || x !in -180.0..180.0) return
-            pointsOut += SurveyPoint(
-                id = UUID.randomUUID().toString(),
-                projectId = projectId,
-                pointNumber = label?.ifBlank { null } ?: (pointsOut.size + 1).toString(),
-                description = "",
-                code = "",
-                antennaHeightM = 0.0,
-                occupationSeconds = 1,
-                latitude = y,
-                longitude = x,
-                ellipsoidalHeightM = z
+        fun addPoint(x: Double?, y: Double?, z: Double?) {
+            if (!options.importPoints || x == null || y == null) return
+            val coord = sourceToWgs84(x, y, effectiveCrs) ?: return
+            pointsOut += buildPoint(
+                project, (pointsOut.size + 1).toString(), "", "",
+                coord.latitude, coord.longitude, z
             )
         }
 
-        fun addLine(points: List<Pair<Double, Double>>, closed: Boolean) {
-            if (!importGeometries || points.size < 2) return
+        fun addLine(rawPts: List<Pair<Double, Double>>, closed: Boolean) {
+            val polygon = closed && rawPts.size >= 3
+            if ((polygon && !options.importPolygons) || (!polygon && !options.importLines)) return
             val pts = JSONArray()
-            points.forEach { (x, y) ->
-                if (y in -90.0..90.0 && x in -180.0..180.0) {
-                    pts.put(JSONObject().put("lat", y).put("lon", x))
+            rawPts.forEach { (x, y) ->
+                sourceToWgs84(x, y, effectiveCrs)?.let {
+                    pts.put(JSONObject().put("lat", it.latitude).put("lon", it.longitude))
                 }
             }
-            if (pts.length() < 2) return
-            geometriesOut.put(
-                JSONObject()
-                    .put("id", UUID.randomUUID().toString())
-                    .put("tool", if (closed && pts.length() >= 3) "POLYGON" else "LINE")
-                    .put("parallelOffsetM", 1.0)
-                    .put("points", pts)
+            if (pts.length() >= 2) addGeometry(
+                geometriesOut, UUID.randomUUID().toString(),
+                if (polygon) "POLYGON" else "LINE", pts
             )
         }
 
@@ -462,33 +476,28 @@ object ProjectImportManager {
         while (p < pairs.size) {
             if (pairs[p].code != 0) { p++; continue }
             val type = pairs[p].value.uppercase()
-            val startEntity = p
             var q = p + 1
             while (q < pairs.size && pairs[q].code != 0) q++
-            val entity = pairs.subList(startEntity + 1, q)
-
+            val e = pairs.subList(p + 1, q)
             when (type) {
-                "POINT" -> {
-                    val x = entity.firstOrNull { it.code == 10 }?.value?.toDoubleOrNull()
-                    val y = entity.firstOrNull { it.code == 20 }?.value?.toDoubleOrNull()
-                    val z = entity.firstOrNull { it.code == 30 }?.value?.toDoubleOrNull()
-                    addPoint(x, y, z, null)
-                }
+                "POINT" -> addPoint(
+                    e.firstOrNull { it.code == 10 }?.value?.toDoubleOrNull(),
+                    e.firstOrNull { it.code == 20 }?.value?.toDoubleOrNull(),
+                    e.firstOrNull { it.code == 30 }?.value?.toDoubleOrNull()
+                )
                 "LINE" -> {
-                    val x1 = entity.firstOrNull { it.code == 10 }?.value?.toDoubleOrNull()
-                    val y1 = entity.firstOrNull { it.code == 20 }?.value?.toDoubleOrNull()
-                    val x2 = entity.firstOrNull { it.code == 11 }?.value?.toDoubleOrNull()
-                    val y2 = entity.firstOrNull { it.code == 21 }?.value?.toDoubleOrNull()
-                    if (x1 != null && y1 != null && x2 != null && y2 != null) {
-                        addLine(listOf(x1 to y1, x2 to y2), false)
-                    }
+                    val x1=e.firstOrNull{it.code==10}?.value?.toDoubleOrNull()
+                    val y1=e.firstOrNull{it.code==20}?.value?.toDoubleOrNull()
+                    val x2=e.firstOrNull{it.code==11}?.value?.toDoubleOrNull()
+                    val y2=e.firstOrNull{it.code==21}?.value?.toDoubleOrNull()
+                    if (x1!=null&&y1!=null&&x2!=null&&y2!=null) addLine(listOf(x1 to y1,x2 to y2),false)
                 }
                 "LWPOLYLINE" -> {
-                    val xs = entity.filter { it.code == 10 }.mapNotNull { it.value.toDoubleOrNull() }
-                    val ys = entity.filter { it.code == 20 }.mapNotNull { it.value.toDoubleOrNull() }
-                    val count = minOf(xs.size, ys.size)
-                    val closed = (entity.firstOrNull { it.code == 70 }?.value?.toIntOrNull() ?: 0) and 1 == 1
-                    addLine((0 until count).map { xs[it] to ys[it] }, closed)
+                    val xs=e.filter{it.code==10}.mapNotNull{it.value.toDoubleOrNull()}
+                    val ys=e.filter{it.code==20}.mapNotNull{it.value.toDoubleOrNull()}
+                    val count=minOf(xs.size,ys.size)
+                    val closed=((e.firstOrNull{it.code==70}?.value?.toIntOrNull()?:0) and 1)==1
+                    addLine((0 until count).map{xs[it] to ys[it]},closed)
                 }
             }
             p = q
@@ -497,178 +506,130 @@ object ProjectImportManager {
 
     private fun parseShapefileZip(
         bytes: ByteArray,
-        projectId: String,
-        importPoints: Boolean,
-        importGeometries: Boolean,
+        project: TopoProject,
+        effectiveCrs: String,
+        options: ProjectImportOptions,
         pointsOut: MutableList<SurveyPoint>,
         geometriesOut: JSONArray
     ) {
-        val shpFiles = mutableListOf<Pair<String, ByteArray>>()
-        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory && entry.name.lowercase().endsWith(".shp")) {
-                    shpFiles += entry.name to zip.readBytes()
-                }
-                zip.closeEntry()
-            }
-        }
+        val shpFiles = readShpFiles(bytes)
         if (shpFiles.isEmpty()) error("El ZIP no contiene ningún archivo .shp.")
 
-        fun leInt(b: ByteArray, offset: Int): Int =
-            ByteBuffer.wrap(b, offset, 4).order(ByteOrder.LITTLE_ENDIAN).int
-        fun leDouble(b: ByteArray, offset: Int): Double =
-            ByteBuffer.wrap(b, offset, 8).order(ByteOrder.LITTLE_ENDIAN).double
-        fun beInt(b: ByteArray, offset: Int): Int =
-            ByteBuffer.wrap(b, offset, 4).order(ByteOrder.BIG_ENDIAN).int
-
-        shpFiles.forEach { (_, shp) ->
-            if (shp.size < 100 || beInt(shp, 0) != 9994) return@forEach
-            var offset = 100
-            while (offset + 8 <= shp.size) {
-                val contentWords = beInt(shp, offset + 4)
-                val contentBytes = contentWords * 2
-                val body = offset + 8
-                if (contentBytes < 4 || body + contentBytes > shp.size) break
-                val type = leInt(shp, body)
-
-                when (type) {
-                    1 -> if (importPoints && body + 20 <= shp.size) {
-                        val x = leDouble(shp, body + 4)
-                        val y = leDouble(shp, body + 12)
-                        if (y in -90.0..90.0 && x in -180.0..180.0) {
-                            pointsOut += SurveyPoint(
-                                id = UUID.randomUUID().toString(),
-                                projectId = projectId,
-                                pointNumber = (pointsOut.size + 1).toString(),
-                                description = "",
-                                code = "",
-                                antennaHeightM = 0.0,
-                                occupationSeconds = 1,
-                                latitude = y,
-                                longitude = x
-                            )
-                        }
+        shpFiles.forEach { shp ->
+            if (shp.size < 100 || beInt(shp,0) != 9994) return@forEach
+            var offset=100
+            while(offset+8<=shp.size){
+                val contentBytes=beInt(shp,offset+4)*2
+                val body=offset+8
+                if(contentBytes<4||body+contentBytes>shp.size) break
+                when(val type=leInt(shp,body)){
+                    1 -> if(options.importPoints && body+20<=shp.size){
+                        val coord=sourceToWgs84(leDouble(shp,body+4),leDouble(shp,body+12),effectiveCrs)
+                        if(coord!=null) pointsOut += buildPoint(project,(pointsOut.size+1).toString(),"","",coord.latitude,coord.longitude,null)
                     }
-
-                    3, 5 -> if (importGeometries && body + 44 <= shp.size) {
-                        val numParts = leInt(shp, body + 36)
-                        val numPoints = leInt(shp, body + 40)
-                        val partsStart = body + 44
-                        val pointsStart = partsStart + numParts * 4
-                        if (
-                            numParts >= 1 &&
-                            numPoints >= 2 &&
-                            pointsStart + numPoints * 16 <= body + contentBytes
-                        ) {
-                            val partStarts = IntArray(numParts) { idx -> leInt(shp, partsStart + idx * 4) }
-                            for (partIndex in 0 until numParts) {
-                                val from = partStarts[partIndex]
-                                val to = if (partIndex + 1 < numParts) partStarts[partIndex + 1] else numPoints
-                                if (from < 0 || to > numPoints || to - from < 2) continue
-                                val pts = JSONArray()
-                                for (idx in from until to) {
-                                    val po = pointsStart + idx * 16
-                                    val x = leDouble(shp, po)
-                                    val y = leDouble(shp, po + 8)
-                                    if (y in -90.0..90.0 && x in -180.0..180.0) {
-                                        pts.put(JSONObject().put("lat", y).put("lon", x))
-                                    }
-                                }
-                                if (pts.length() >= 2) {
-                                    // Shapefile type 5 = Polygon; type 3 = PolyLine.
-                                    // Remove duplicated closing vertex because TOPO EMLID closes polygons on render/export.
-                                    if (type == 5 && pts.length() >= 3) {
-                                        val first = pts.getJSONObject(0)
-                                        val last = pts.getJSONObject(pts.length() - 1)
-                                        if (
-                                            first.optDouble("lat") == last.optDouble("lat") &&
-                                            first.optDouble("lon") == last.optDouble("lon")
-                                        ) {
-                                            pts.remove(pts.length() - 1)
+                    3,5 -> {
+                        val allowed=(type==3&&options.importLines)||(type==5&&options.importPolygons)
+                        if(allowed && body+44<=shp.size){
+                            val numParts=leInt(shp,body+36); val numPoints=leInt(shp,body+40)
+                            val partsStart=body+44; val pointsStart=partsStart+numParts*4
+                            if(numParts>=1&&numPoints>=2&&pointsStart+numPoints*16<=body+contentBytes){
+                                val starts=IntArray(numParts){leInt(shp,partsStart+it*4)}
+                                for(pi in 0 until numParts){
+                                    val from=starts[pi]; val to=if(pi+1<numParts) starts[pi+1] else numPoints
+                                    val pts=JSONArray()
+                                    for(j in from until to){
+                                        val po=pointsStart+j*16
+                                        sourceToWgs84(leDouble(shp,po),leDouble(shp,po+8),effectiveCrs)?.let {
+                                            pts.put(JSONObject().put("lat",it.latitude).put("lon",it.longitude))
                                         }
                                     }
-                                    geometriesOut.put(
-                                        JSONObject()
-                                            .put("id", UUID.randomUUID().toString())
-                                            .put("tool", if (type == 5) "POLYGON" else "LINE")
-                                            .put("parallelOffsetM", 1.0)
-                                            .put("points", pts)
-                                    )
+                                    if(type==5 && pts.length()>=3){
+                                        val f=pts.getJSONObject(0); val l=pts.getJSONObject(pts.length()-1)
+                                        if(f.optDouble("lat")==l.optDouble("lat")&&f.optDouble("lon")==l.optDouble("lon")) pts.remove(pts.length()-1)
+                                    }
+                                    if(pts.length()>=2) addGeometry(geometriesOut,UUID.randomUUID().toString(),if(type==5)"POLYGON" else "LINE",pts)
                                 }
                             }
                         }
                     }
-
-                    8 -> if (importPoints && body + 40 <= shp.size) {
-                        val numPoints = leInt(shp, body + 36)
-                        val pointsStart = body + 40
-                        if (numPoints >= 1 && pointsStart + numPoints * 16 <= body + contentBytes) {
-                            repeat(numPoints) { idx ->
-                                val po = pointsStart + idx * 16
-                                val x = leDouble(shp, po)
-                                val y = leDouble(shp, po + 8)
-                                if (y in -90.0..90.0 && x in -180.0..180.0) {
-                                    pointsOut += SurveyPoint(
-                                        id = UUID.randomUUID().toString(),
-                                        projectId = projectId,
-                                        pointNumber = (pointsOut.size + 1).toString(),
-                                        description = "",
-                                        code = "",
-                                        antennaHeightM = 0.0,
-                                        occupationSeconds = 1,
-                                        latitude = y,
-                                        longitude = x
-                                    )
-                                }
+                    8 -> if(options.importPoints && body+40<=shp.size){
+                        val n=leInt(shp,body+36); val start=body+40
+                        repeat(n){j->
+                            val po=start+j*16
+                            sourceToWgs84(leDouble(shp,po),leDouble(shp,po+8),effectiveCrs)?.let {
+                                pointsOut += buildPoint(project,(pointsOut.size+1).toString(),"","",it.latitude,it.longitude,null)
                             }
                         }
                     }
                 }
-
-                offset = body + contentBytes
+                offset=body+contentBytes
             }
         }
     }
 
-
-    private fun addGeometryFromCoords(array: JSONArray, tool: String, coords: JSONArray?) {
+    private fun coordsToGeometry(array: JSONArray, tool: String, coords: JSONArray?, crs: String) {
         if (coords == null || coords.length() < 2) return
         val pts = JSONArray()
         for (i in 0 until coords.length()) {
             val c = coords.optJSONArray(i) ?: continue
             if (c.length() < 2) continue
-            pts.put(JSONObject().put("lat", c.optDouble(1)).put("lon", c.optDouble(0)))
+            sourceToWgs84(c.optDouble(0), c.optDouble(1), crs)?.let {
+                pts.put(JSONObject().put("lat", it.latitude).put("lon", it.longitude))
+            }
         }
-        if (pts.length() < 2) return
+        if (pts.length() >= 2) addGeometry(array, UUID.randomUUID().toString(), tool, pts)
+    }
+
+    private fun addKmlGeometry(array: JSONArray, tool: String, raw: String, crs: String) {
+        val pts=JSONArray()
+        raw.trim().split(Regex("\\s+")).forEach { token ->
+            val p=token.split(",")
+            val x=p.getOrNull(0)?.toDoubleOrNull() ?: return@forEach
+            val y=p.getOrNull(1)?.toDoubleOrNull() ?: return@forEach
+            sourceToWgs84(x,y,crs)?.let { pts.put(JSONObject().put("lat",it.latitude).put("lon",it.longitude)) }
+        }
+        if(pts.length()>=2) addGeometry(array,UUID.randomUUID().toString(),tool,pts)
+    }
+
+    private fun addGeometry(array: JSONArray, id: String, tool: String, pts: JSONArray) {
         array.put(
             JSONObject()
-                .put("id", UUID.randomUUID().toString())
-                .put("tool", tool)
-                .put("parallelOffsetM", 1.0)
-                .put("points", pts)
+                .put("id",id)
+                .put("tool",tool)
+                .put("parallelOffsetM",1.0)
+                .put("points",pts)
         )
     }
 
-    private fun addGeometryFromKml(array: JSONArray, tool: String, raw: String) {
-        val pts = JSONArray()
-        raw.trim().split(Regex("\\s+")).forEach { token ->
-            val p = token.split(",")
-            val lon = p.getOrNull(0)?.toDoubleOrNull() ?: return@forEach
-            val lat = p.getOrNull(1)?.toDoubleOrNull() ?: return@forEach
-            pts.put(JSONObject().put("lat", lat).put("lon", lon))
+    private fun readShpFiles(bytes: ByteArray): List<ByteArray> {
+        val out=mutableListOf<ByteArray>()
+        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+            while(true){
+                val e=zip.nextEntry ?: break
+                if(!e.isDirectory && e.name.lowercase().endsWith(".shp")) out += zip.readBytes()
+                zip.closeEntry()
+            }
         }
-        if (pts.length() >= 2) {
-            array.put(
-                JSONObject()
-                    .put("id", UUID.randomUUID().toString())
-                    .put("tool", tool)
-                    .put("parallelOffsetM", 1.0)
-                    .put("points", pts)
-            )
-        }
+        return out
     }
 
-    private fun stripXml(value: String): String =
-        value.replace(Regex("<[^>]+>"), "").trim()
+    private fun previewShapeZip(bytes: ByteArray): ProjectImportPreview {
+        var p=0; var l=0; var g=0
+        readShpFiles(bytes).forEach { shp ->
+            if(shp.size<100||beInt(shp,0)!=9994) return@forEach
+            var offset=100
+            while(offset+8<=shp.size){
+                val cb=beInt(shp,offset+4)*2; val body=offset+8
+                if(cb<4||body+cb>shp.size) break
+                when(leInt(shp,body)){1,8->p++;3->l++;5->g++}
+                offset=body+cb
+            }
+        }
+        return ProjectImportPreview(ProjectImportFormat.SHAPE_ZIP,p,l,g)
+    }
+
+    private fun leInt(b: ByteArray, o: Int)=ByteBuffer.wrap(b,o,4).order(ByteOrder.LITTLE_ENDIAN).int
+    private fun leDouble(b: ByteArray, o: Int)=ByteBuffer.wrap(b,o,8).order(ByteOrder.LITTLE_ENDIAN).double
+    private fun beInt(b: ByteArray, o: Int)=ByteBuffer.wrap(b,o,4).order(ByteOrder.BIG_ENDIAN).int
+    private fun stripXml(value:String)=value.replace(Regex("<[^>]+>"),"").trim()
 }
