@@ -147,6 +147,13 @@ fun NtripProfilesScreen(
                 if (liveStatus.bytesForwarded > 0L) {
                     Text("Enviado al Reach: ${liveStatus.bytesForwarded} bytes", style = MaterialTheme.typography.bodySmall)
                 }
+                if (liveStatus.ggaSentCount > 0L) {
+                    Text(
+                        "Posición del rover enviada al caster: ${liveStatus.ggaSentCount} GGA",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 if (gnss.solution.isNotBlank()) {
                     Text(
                         "Solución GNSS: ${gnss.solution}" +
