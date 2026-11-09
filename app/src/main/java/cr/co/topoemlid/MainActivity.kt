@@ -2417,6 +2417,12 @@ private fun ProjectDetails(
     var exportMessage by remember(project.id) { mutableStateOf<String?>(null) }
     var importMessage by remember(project.id) { mutableStateOf<String?>(null) }
     var importSourceCrs by remember(project.id) { mutableStateOf(ImportSourceCrs.PROJECT) }
+    var importTextLayout by remember(project.id) { mutableStateOf(TextPointLayout.POINT_NORTH_EAST_ELEV_DESC) }
+    var importSeparator by remember(project.id) { mutableStateOf(TextSeparator.COMMA) }
+    var importPoints by remember(project.id) { mutableStateOf(true) }
+    var importLines by remember(project.id) { mutableStateOf(true) }
+    var importPolygons by remember(project.id) { mutableStateOf(true) }
+    var importPreview by remember(project.id) { mutableStateOf<ProjectImportPreview?>(null) }
     var pendingImportUri by remember(project.id) { mutableStateOf<Uri?>(null) }
     var showImportDialog by remember(project.id) { mutableStateOf(false) }
     var showImportPickerConfirm by remember(project.id) { mutableStateOf(false) }
@@ -2457,6 +2463,10 @@ private fun ProjectDetails(
                 )
             }
             pendingImportUri = uri
+            importPreview = ProjectImportManager.preview(context, uri).getOrNull()
+            importPoints = true
+            importLines = true
+            importPolygons = true
             showImportDialog = true
         }
     }
@@ -2983,51 +2993,150 @@ private fun ActiveProjectTransferScreen(project: TopoProject?) {
 
     if (showImportDialog && pendingImportUri != null) {
         AlertDialog(
-            onDismissRequest = { showImportDialog = false; pendingImportUri = null },
+            onDismissRequest = {
+                showImportDialog = false
+                pendingImportUri = null
+                importPreview = null
+            },
             title = { Text("Importar al proyecto activo") },
             text = {
-                Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
                     Text("Proyecto activo", fontWeight = FontWeight.Bold)
                     Text(project.name)
+                    Text("CRS del trabajo: ${project.crsName}", style = MaterialTheme.typography.bodySmall)
+
+                    importPreview?.let { preview ->
+                        Spacer(Modifier.height(8.dp))
+                        Text("Archivo detectado: ${preview.format.label}", fontWeight = FontWeight.Bold)
+                        if (preview.format != ProjectImportFormat.TXT && preview.format != ProjectImportFormat.CSV) {
+                            Text(
+                                "Detectado: ${preview.points} puntos • ${preview.lines} líneas • ${preview.polygons} polígonos",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+
                     Spacer(Modifier.height(10.dp))
                     Text("Sistema de coordenadas del archivo", fontWeight = FontWeight.Bold)
                     ImportSourceCrs.entries.forEach { option ->
-                        Row(Modifier.fillMaxWidth().clickable { importSourceCrs = option }.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            Modifier.fillMaxWidth().clickable { importSourceCrs = option }.padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             RadioButton(selected = importSourceCrs == option, onClick = { importSourceCrs = option })
                             Text(option.label)
                         }
                     }
+
+                    val detectedFormat = importPreview?.format
+                    if (detectedFormat == ProjectImportFormat.TXT || detectedFormat == ProjectImportFormat.CSV) {
+                        Spacer(Modifier.height(10.dp))
+                        Text("Orden de columnas", fontWeight = FontWeight.Bold)
+                        TextPointLayout.entries
+                            .filter { it != TextPointLayout.CUSTOM && it != TextPointLayout.POINT_DESC }
+                            .forEach { option ->
+                                Row(
+                                    Modifier.fillMaxWidth().clickable { importTextLayout = option }.padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = importTextLayout == option,
+                                        onClick = { importTextLayout = option }
+                                    )
+                                    Text(option.label, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+
+                        Spacer(Modifier.height(8.dp))
+                        Text("Separador", fontWeight = FontWeight.Bold)
+                        TextSeparator.entries.forEach { option ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable { importSeparator = option }.padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(selected = importSeparator == option, onClick = { importSeparator = option })
+                                Text(option.label, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    Text("Qué desea importar", fontWeight = FontWeight.Bold)
+                    Row(
+                        Modifier.fillMaxWidth().clickable { importPoints = !importPoints },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = importPoints, onCheckedChange = { importPoints = it })
+                        Text("Puntos")
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().clickable { importLines = !importLines },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = importLines, onCheckedChange = { importLines = it })
+                        Text("Líneas")
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().clickable { importPolygons = !importPolygons },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = importPolygons, onCheckedChange = { importPolygons = it })
+                        Text("Polígonos")
+                    }
+
                     Spacer(Modifier.height(8.dp))
-                    Text("TXT, CSV, GeoJSON, KML, DXF y Shapefile ZIP están habilitados. El contenido compatible se importa automáticamente: puntos, líneas y polígonos. DWG requiere conversión previa a DXF.", style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(6.dp))
-                    Text("Los datos compatibles se agregarán únicamente a " + project.name + ".", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Las coordenadas se interpretarán en el sistema escogido y TOPO EMLID las transformará internamente para el mapa, conservando el CRS del trabajo.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    if (detectedFormat == ProjectImportFormat.DWG) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "DWG se reconoce, pero todavía requiere conversión a DXF para una lectura segura.",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    val uri = pendingImportUri
-                    if (uri != null) {
-                        val result = ProjectImportManager.import(
-                            context = context,
-                            project = project,
-                            uri = uri,
-                            options = ProjectImportOptions(
-                                format = ProjectImportFormat.AUTO,
-                                sourceCrs = importSourceCrs,
-                                importPoints = true,
-                                importGeometries = true
+                Button(
+                    enabled = importPoints || importLines || importPolygons,
+                    onClick = {
+                        val uri = pendingImportUri
+                        if (uri != null) {
+                            val result = ProjectImportManager.import(
+                                context = context,
+                                project = project,
+                                uri = uri,
+                                options = ProjectImportOptions(
+                                    format = ProjectImportFormat.AUTO,
+                                    sourceCrs = importSourceCrs,
+                                    textLayout = importTextLayout,
+                                    separator = importSeparator,
+                                    importPoints = importPoints,
+                                    importLines = importLines,
+                                    importPolygons = importPolygons
+                                )
                             )
-                        )
-                        importMessage = result.fold(
-                            onSuccess = { it.message },
-                            onFailure = { it.message ?: "No se pudo importar el archivo." }
-                        )
+                            importMessage = result.fold(
+                                onSuccess = { it.message },
+                                onFailure = { it.message ?: "No se pudo importar el archivo." }
+                            )
+                        }
+                        showImportDialog = false
+                        pendingImportUri = null
+                        importPreview = null
                     }
+                ) { Text("Importar") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = {
                     showImportDialog = false
                     pendingImportUri = null
-                }) { Text("Importar") }
-            },
-            dismissButton = { OutlinedButton(onClick = { showImportDialog = false; pendingImportUri = null }) { Text("Cancelar") } }
+                    importPreview = null
+                }) { Text("Cancelar") }
+            }
         )
     }
 
@@ -3147,7 +3256,7 @@ private fun ActiveProjectTransferScreen(project: TopoProject?) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp)) {
                 Text("Importar", fontWeight = FontWeight.Bold)
-                Text("Agregar automáticamente puntos, líneas y polígonos desde TXT, CSV, DXF, GeoJSON, KML o Shapefile ZIP. DWG se detecta y solicita conversión a DXF.", style = MaterialTheme.typography.bodySmall)
+                Text("Importe TXT, CSV, DXF, GeoJSON, KML o Shapefile ZIP respetando el CRS del trabajo. Puede escoger separador y orden de columnas en TXT/CSV, y seleccionar puntos, líneas o polígonos.", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = { showImportPickerConfirm = true },
