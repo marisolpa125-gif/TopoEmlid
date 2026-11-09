@@ -4901,7 +4901,11 @@ private fun uniqueDivisionVertices(pieces: List<List<LatLng>>, toleranceM: Doubl
 private enum class DivideMode(val label: String, val help: String) {
     EQUAL_AREA("Áreas iguales", "Divide en 2 o más lotes con áreas aproximadamente iguales."),
     EQUAL_FRONT("Frentes iguales", "Seleccione el frente y divídalo en distancias iguales."),
-    BY_LINE("Por línea de corte", "Trace una línea de corte manual sobre el polígono.")
+    BY_LINE("Por línea de corte", "Trace una línea de corte manual sobre el polígono."),
+    TARGET_AREA(
+        "Por área objetivo",
+        "Trace una línea guía e indique cuántos m² desea separar. La línea se ajustará manteniendo su dirección."
+    )
 }
 
 
