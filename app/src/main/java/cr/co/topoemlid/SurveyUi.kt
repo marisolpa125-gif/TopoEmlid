@@ -1215,6 +1215,8 @@ fun SurveyScreen(
                                             }
                                             editingOriginalGeometry = null
                                             toolPoints = emptyList()
+                                            divideSourcePolygon = emptyList()
+                                            pendingDivideMode = null
                                             toolResult = null
                                             activeMapTool = MapFieldTool.NONE
                                             mapRef?.clear()
@@ -1231,6 +1233,44 @@ fun SurveyScreen(
                                                     showDividePanel = true
                                                 } else {
                                                     toolResult = "Para dividir se necesita un polígono con al menos 3 vértices."
+                                                }
+                                            } else if (activeMapTool == MapFieldTool.DIVIDE_LINE) {
+                                                val source = divideSourcePolygon
+                                                val guide = toolPoints.take(2)
+                                                val mode = pendingDivideMode
+                                                if (source.size < 3 || guide.size < 2 || mode == null) {
+                                                    toolResult = "Falta el polígono o la línea guía para realizar la división."
+                                                } else {
+                                                    val targetArea = if (mode == DivideMode.TARGET_AREA) {
+                                                        divideTargetAreaText.replace(',', '.').toDoubleOrNull()
+                                                    } else null
+                                                    val result = dividePolygonByGuideLine(
+                                                        polygon = source,
+                                                        guideLine = guide,
+                                                        targetAreaM2 = targetArea
+                                                    )
+                                                    if (result.size >= 2) {
+                                                        divisionPreview = result
+                                                        activeMapTool = MapFieldTool.NONE
+                                                        toolPoints = emptyList()
+                                                        divideSourcePolygon = emptyList()
+                                                        pendingDivideMode = null
+                                                        mapRef?.let { map ->
+                                                            map.clear()
+                                                            redrawCommitted(map)
+                                                            renderDivisionPolygons(map, result)
+                                                        }
+                                                        toolResult = if (mode == DivideMode.TARGET_AREA && targetArea != null) {
+                                                            val nearest = result.minByOrNull { abs(polygonAreaMeters2(it) - targetArea) }
+                                                            "División por área objetivo: solicitado %.2f m² • obtenido %.2f m² • Use Guardar división para conservarla."
+                                                                .format(targetArea, nearest?.let(::polygonAreaMeters2) ?: 0.0)
+                                                        } else {
+                                                            divisionSummary("Por línea de corte", result) +
+                                                                " • Use Guardar división para conservarla."
+                                                        }
+                                                    } else {
+                                                        toolResult = "La línea guía no produjo una división válida. Trace una línea que cruce o pueda desplazarse dentro del polígono."
+                                                    }
                                                 }
                                             } else if (activeMapTool == MapFieldTool.RECTANGLE && toolPoints.size < 3) {
                                                 toolResult = "Marque 3 puntos: dos para el ancho y uno para el largo."
