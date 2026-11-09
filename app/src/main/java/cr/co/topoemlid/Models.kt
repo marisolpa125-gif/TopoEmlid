@@ -44,6 +44,8 @@ data class NtripLiveStatus(
     val bytesForwarded: Long = 0L,
     val lastDataAt: Long? = null,
     val startedAt: Long? = null,
+    val ggaSentCount: Long = 0L,
+    val lastGgaSentAt: Long? = null,
     val lastError: String? = null
 )
 
