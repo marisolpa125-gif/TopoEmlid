@@ -240,6 +240,8 @@ class ReceiverConnectionManager(context: Context) {
                 }
 
                 val reader = BufferedReader(InputStreamReader(s.inputStream))
+                var lastGgaAtMs = 0L
+                var smoothedGgaHz: Double? = null
 
                 // Watch actual NMEA traffic, not just the Bluetooth socket state.
                 // If no sentence arrives for several seconds, force the socket closed
@@ -274,20 +276,19 @@ class ReceiverConnectionManager(context: Context) {
 
                 while (!Thread.currentThread().isInterrupted) {
                     val line = reader.readLine() ?: break
-                    if (line.startsWith("$")) {
-                        postStatus(
-                            status.copy(
-                                connected = true,
-                                receiverName = profile.name,
-                                connectionTransport = "Bluetooth / NMEA",
-                                nmeaReceiving = true,
-                                lastNmeaSentence = line.take(160),
-                                lastNmeaAt = System.currentTimeMillis()
-                            )
-                        )
-                    }
-
                     NmeaParser.parseGga(line)?.let { gga ->
+                        val now = System.currentTimeMillis()
+                        if (lastGgaAtMs > 0L) {
+                            val dt = now - lastGgaAtMs
+                            if (dt in 50L..5_000L) {
+                                val instantHz = 1000.0 / dt.toDouble()
+                                smoothedGgaHz = smoothedGgaHz?.let { old ->
+                                    old * 0.70 + instantHz * 0.30
+                                } ?: instantHz
+                            }
+                        }
+                        lastGgaAtMs = now
+
                         val solution = when (gga.fixQuality) {
                             4 -> {
                                 floatStreak = 0
@@ -323,9 +324,10 @@ class ReceiverConnectionManager(context: Context) {
                                 longitude = gga.longitude,
                                 ellipsoidalHeightM = gga.ellipsoidalHeightM,
                                 correctionAgeS = gga.correctionAgeS,
+                                ggaRateHz = smoothedGgaHz,
                                 nmeaReceiving = true,
                                 lastNmeaSentence = line.take(160),
-                                lastNmeaAt = System.currentTimeMillis()
+                                lastNmeaAt = now
                             )
                         )
                     }
