@@ -1777,83 +1777,6 @@ private fun ensureStakeoutCriticalOverlayOnTop(
 }
 
 @Composable
-private fun rememberGnssMagneticHeadingDegrees(
-    latitude: Double,
-    longitude: Double,
-    altitudeM: Double?
-): Double? {
-    data class Pos(val lat: Double, val lon: Double, val t: Long)
-
-    var samples by remember { mutableStateOf<List<Pos>>(emptyList()) }
-    var magneticHeading by remember { mutableStateOf<Double?>(null) }
-
-    fun circularDifferenceDeg(a: Double, b: Double): Double {
-        var d = (a - b + 540.0) % 360.0 - 180.0
-        if (d < -180.0) d += 360.0
-        return d
-    }
-
-    LaunchedEffect(latitude, longitude) {
-        val now = System.currentTimeMillis()
-        samples = (samples + Pos(latitude, longitude, now))
-            .filter { now - it.t <= 1800L }
-            .takeLast(10)
-
-        val first = samples.firstOrNull()
-        val last = samples.lastOrNull()
-        if (first != null && last != null && first !== last) {
-            val meanLatRad = Math.toRadians((first.lat + last.lat) / 2.0)
-            val north = (last.lat - first.lat) * 111132.0
-            val east = (last.lon - first.lon) * (111320.0 * cos(meanLatRad))
-            val movedM = hypot(north, east)
-
-            // El rumbo se calcula con una ventana de movimiento, no con dos épocas
-            // consecutivas. Así se actualiza fluido mientras camina pero no se invierte
-            // por el jitter centimétrico del RTK cuando está casi quieto.
-            if (movedM >= 0.35) {
-                val trueBearing =
-                    (Math.toDegrees(atan2(east, north)) + 360.0) % 360.0
-                val declination = GeomagneticField(
-                    latitude.toFloat(),
-                    longitude.toFloat(),
-                    (altitudeM ?: 0.0).toFloat(),
-                    now
-                ).declination.toDouble()
-                val rawMagnetic =
-                    (trueBearing - declination + 360.0) % 360.0
-
-                val old = magneticHeading
-                val accept = if (old == null) {
-                    true
-                } else {
-                    val turn = abs(circularDifferenceDeg(rawMagnetic, old))
-                    // Un giro casi opuesto requiere más desplazamiento para aceptarlo;
-                    // evita que el norte "salte" 180° por una sola posición mala.
-                    turn <= 100.0 || movedM >= 0.90
-                }
-
-                if (accept) {
-                    magneticHeading = if (old == null) {
-                        rawMagnetic
-                    } else {
-                        val oldRad = Math.toRadians(old)
-                        val newRad = Math.toRadians(rawMagnetic)
-                        val alpha = 0.16
-                        val x =
-                            (1.0 - alpha) * cos(oldRad) + alpha * cos(newRad)
-                        val y =
-                            (1.0 - alpha) * sin(oldRad) + alpha * sin(newRad)
-                        (Math.toDegrees(atan2(y, x)) + 360.0) % 360.0
-                    }
-                }
-            }
-        }
-    }
-
-    return magneticHeading
-}
-
-@Composable
 private fun StakeoutGuidancePanel(
     project: TopoProject?,
     target: SurveyPoint?,
@@ -1899,11 +1822,6 @@ private fun StakeoutGuidancePanel(
     val rawNorthM = projectedDelta?.first ?: ((target.latitude - lat) * metersPerDegLat)
     val rawEastM = projectedDelta?.second ?: ((target.longitude - lon) * metersPerDegLon)
     val rawDistanceM = hypot(rawNorthM, rawEastM)
-    val magneticHeadingDeg = rememberGnssMagneticHeadingDegrees(
-        latitude = lat,
-        longitude = lon,
-        altitudeM = gnss.ellipsoidalHeightM
-    )
     val magneticDeclinationDeg = remember(lat, lon, gnss.ellipsoidalHeightM) {
         GeomagneticField(
             lat.toFloat(),
@@ -2021,38 +1939,27 @@ private fun StakeoutGuidancePanel(
         else -> "COTA OK"
     }
 
-    val movementCorrection = magneticHeadingDeg?.let { headingDeg ->
-        val declinationRad = Math.toRadians(magneticDeclinationDeg)
-        val headingRad = Math.toRadians(headingDeg)
-
-        val magEast = eastM * cos(declinationRad) - northM * sin(declinationRad)
-        val magNorth = northM * cos(declinationRad) + eastM * sin(declinationRad)
-
-        val rightM = magEast * cos(headingRad) - magNorth * sin(headingRad)
-        val forwardM = magEast * sin(headingRad) + magNorth * cos(headingRad)
-        forwardM to rightM
+    val correctionDirection = buildString {
+        val ns = when {
+            northM > 0.0005 -> "NORTE"
+            northM < -0.0005 -> "SUR"
+            else -> ""
+        }
+        val ew = when {
+            eastM > 0.0005 -> "ESTE"
+            eastM < -0.0005 -> "OESTE"
+            else -> ""
+        }
+        append(
+            when {
+                ns.isNotEmpty() && ew.isNotEmpty() -> "$ns-$ew"
+                ns.isNotEmpty() -> ns
+                ew.isNotEmpty() -> ew
+                else -> "CENTRO"
+            }
+        )
     }
 
-    val forwardM = movementCorrection?.first
-    val rightM = movementCorrection?.second
-
-    // Una sola corrección final alimenta tanto los números como la mira.
-    val visualForwardM = forwardM ?: northM
-    val visualRightM = rightM ?: eastM
-    val visualDistanceM = hypot(visualForwardM, visualRightM)
-
-    val forwardLabel = when {
-        forwardM == null -> nsLabel
-        forwardM > 0.0005 -> "AVANCE"
-        forwardM < -0.0005 -> "RETROCESO"
-        else -> "ADELANTE/ATRÁS OK"
-    }
-    val lateralLabel = when {
-        rightM == null -> ewLabel
-        rightM > 0.0005 -> "DERECHA"
-        rightM < -0.0005 -> "IZQUIERDA"
-        else -> "LATERAL OK"
-    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -2071,8 +1978,7 @@ private fun StakeoutGuidancePanel(
                 style = MaterialTheme.typography.bodySmall
             )
             Text(
-                magneticHeadingDeg?.let { "Rumbo magnético de avance: %.0f°".format(it) }
-                    ?: "Rumbo magnético: avance unos centímetros para orientarlo",
+                "Mira orientada al norte magnético",
                 style = MaterialTheme.typography.labelSmall
             )
 
@@ -2113,21 +2019,15 @@ private fun StakeoutGuidancePanel(
                     ) {
                         Text(
                             when {
-                                forwardM == null && northM > 0.0005 -> "↑"
-                                forwardM == null && northM < -0.0005 -> "↓"
-                                forwardM != null && forwardM > 0.0005 -> "↑"
-                                forwardM != null && forwardM < -0.0005 -> "↓"
+                                northM > 0.0005 -> "↑"
+                                northM < -0.0005 -> "↓"
                                 else -> "✓"
                             },
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(forwardLabel, fontWeight = FontWeight.Bold)
-                        Text("%.3f m".format(abs(visualForwardM)))
-                        Text(
-                            "$nsLabel %.3f m".format(abs(northM)),
-                            style = MaterialTheme.typography.labelSmall
-                        )
+                        Text(nsLabel, fontWeight = FontWeight.Bold)
+                        Text("%.3f m".format(abs(northM)))
                     }
                 }
 
@@ -2142,21 +2042,15 @@ private fun StakeoutGuidancePanel(
                     ) {
                         Text(
                             when {
-                                rightM == null && eastM > 0.0005 -> "→"
-                                rightM == null && eastM < -0.0005 -> "←"
-                                rightM != null && rightM > 0.0005 -> "→"
-                                rightM != null && rightM < -0.0005 -> "←"
+                                eastM > 0.0005 -> "→"
+                                eastM < -0.0005 -> "←"
                                 else -> "✓"
                             },
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(lateralLabel, fontWeight = FontWeight.Bold)
-                        Text("%.3f m".format(abs(visualRightM)))
-                        Text(
-                            "$ewLabel %.3f m".format(abs(eastM)),
-                            style = MaterialTheme.typography.labelSmall
-                        )
+                        Text(ewLabel, fontWeight = FontWeight.Bold)
+                        Text("%.3f m".format(abs(eastM)))
                     }
                 }
 
@@ -2187,7 +2081,16 @@ private fun StakeoutGuidancePanel(
 
             Spacer(Modifier.height(10.dp))
             Text(
-                "El punto amarillo indica hacia dónde mover la antena para llegar al objetivo.",
+                if (correctionDirection == "CENTRO")
+                    "ANTENA SOBRE EL PUNTO"
+                else
+                    "MOVER ANTENA AL $correctionDirection",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Centro = punto a replantear. El punto amarillo/verde = posición actual de la antena.",
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Bold
             )
@@ -2232,10 +2135,8 @@ private fun StakeoutGuidancePanel(
                             style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
                         )
 
-                        // La tablet solo visualiza. La orientación de la mira sale
-                        // del rumbo GNSS del Reach. Arriba = dirección real de avance.
-                        // La rosa se expresa respecto al norte magnético local.
-                        val headingMagRad = Math.toRadians(magneticHeadingDeg ?: 0.0)
+                        // Rosa fija al norte magnético.
+                        // Centro = objetivo; marcador = posición actual de la antena.
                         val declinationRad = Math.toRadians(magneticDeclinationDeg)
 
                         fun projectToMagnetic(worldEast: Double, worldNorth: Double): Pair<Double, Double> {
@@ -2246,32 +2147,22 @@ private fun StakeoutGuidancePanel(
                             return magEast to magNorth
                         }
 
-                        fun magneticToScreen(magEast: Double, magNorth: Double, scalePx: Float): Offset {
-                            val right =
-                                magEast * cos(headingMagRad) - magNorth * sin(headingMagRad)
-                            val forward =
-                                magEast * sin(headingMagRad) + magNorth * cos(headingMagRad)
-                            return Offset(
-                                center.x + (right * scalePx).toFloat(),
-                                center.y - (forward * scalePx).toFloat()
+                        fun magneticToScreen(magEast: Double, magNorth: Double, scalePx: Float): Offset =
+                            Offset(
+                                center.x + (magEast * scalePx).toFloat(),
+                                center.y - (magNorth * scalePx).toFloat()
                             )
-                        }
-
-                        val northEdge = magneticToScreen(0.0, 1.0, maxR)
-                        val southEdge = magneticToScreen(0.0, -1.0, maxR)
-                        val eastEdge = magneticToScreen(1.0, 0.0, maxR)
-                        val westEdge = magneticToScreen(-1.0, 0.0, maxR)
 
                         drawLine(
                             color = Color(0xFF355A7A),
-                            start = westEdge,
-                            end = eastEdge,
+                            start = Offset(center.x - maxR, center.y),
+                            end = Offset(center.x + maxR, center.y),
                             strokeWidth = 2.5f
                         )
                         drawLine(
                             color = Color(0xFF355A7A),
-                            start = northEdge,
-                            end = southEdge,
+                            start = Offset(center.x, center.y - maxR),
+                            end = Offset(center.x, center.y + maxR),
                             strokeWidth = 2.5f
                         )
 
@@ -2297,26 +2188,36 @@ private fun StakeoutGuidancePanel(
                             )
                         }
 
+                        val displayDistanceM = hypot(northM, eastM)
                         val displayScaleM = when {
-                            visualDistanceM > 5.0 -> 10.0
-                            visualDistanceM > 0.5 -> 2.0
-                            visualDistanceM > 0.10 -> 0.5
-                            visualDistanceM > 0.05 -> 0.20
-                            visualDistanceM > 0.02 -> 0.10
+                            displayDistanceM > 5.0 -> 10.0
+                            displayDistanceM > 0.5 -> 2.0
+                            displayDistanceM > 0.10 -> 0.5
+                            displayDistanceM > 0.05 -> 0.20
+                            displayDistanceM > 0.02 -> 0.10
                             else -> 0.05
                         }
 
-                        // El punto amarillo usa EXACTAMENTE la misma corrección
-                        // que muestran AVANCE/RETROCESO e IZQUIERDA/DERECHA.
-                        val markerX = (
-                            center.x + (visualRightM / displayScaleM * maxR).toFloat()
-                        ).coerceIn(center.x - maxR, center.x + maxR)
-                        val markerY = (
-                            center.y - (visualForwardM / displayScaleM * maxR).toFloat()
-                        ).coerceIn(center.y - maxR, center.y + maxR)
+                        // northM/eastM son objetivo - antena (corrección).
+                        // Para dibujar la ANTENA respecto al objetivo usamos el signo opuesto.
+                        val antennaNorth = -northM
+                        val antennaEast = -eastM
+                        val (antennaMagEast, antennaMagNorth) =
+                            projectToMagnetic(
+                                antennaEast / displayScaleM,
+                                antennaNorth / displayScaleM
+                            )
+
+                        val marker = magneticToScreen(
+                            antennaMagEast,
+                            antennaMagNorth,
+                            maxR
+                        )
+                        val markerX = marker.x.coerceIn(center.x - maxR, center.x + maxR)
+                        val markerY = marker.y.coerceIn(center.y - maxR, center.y + maxR)
 
                         drawCircle(
-                            color = Color(0xFFFFC107),
+                            color = if (withinTolerance) Color(0xFF2E7D32) else Color(0xFFFFC107),
                             radius = 14f,
                             center = Offset(markerX, markerY)
                         )
@@ -2342,9 +2243,6 @@ private fun StakeoutGuidancePanel(
                     }
 
                     if (withinTolerance) {
-                        Canvas(Modifier.matchParentSize()) {
-                            drawRect(Color(0x5534A853))
-                        }
                         Text(
                             if (pointCentered) "PUNTO CENTRADO" else "DENTRO DE TOLERANCIA",
                             modifier = Modifier
