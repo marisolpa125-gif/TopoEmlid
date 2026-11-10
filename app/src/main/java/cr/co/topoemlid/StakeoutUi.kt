@@ -2,6 +2,11 @@ package cr.co.topoemlid
 
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.view.Surface
 import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Paint
@@ -15,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -76,6 +82,7 @@ fun StakeoutScreen(
     var mode by remember { mutableStateOf(StakeoutMode.POINT) }
     var selectedGeometryId by remember { mutableStateOf<String?>(null) }
     var showMapPicker by remember { mutableStateOf(false) }
+    var targetToleranceM by rememberSaveable { mutableDoubleStateOf(0.02) }
     var startPointId by remember { mutableStateOf<String?>(null) }
     var endPointId by remember { mutableStateOf<String?>(null) }
     var offsetText by remember { mutableStateOf("1.00") }
@@ -137,7 +144,7 @@ fun StakeoutScreen(
                     continue
                 }
 
-                if (distance <= 0.005) {
+                if (distance <= targetToleranceM) {
                     // Dentro de 5 mm en planta: tono realmente continuo.
                     // DTMF se mantiene activo hasta stopTone(); la elevación no interviene.
                     if (!continuousCenterTone) {
@@ -869,6 +876,8 @@ private fun StakeoutActiveView(
     pointDisplaySettings: PointDisplaySettings,
     ntrip: NtripLiveStatus,
     onTargetSelected: (String) -> Unit,
+    toleranceM: Double,
+    onToleranceChanged: (Double) -> Unit,
     onStop: () -> Unit
 ) {
     val currentDistanceM = run {
@@ -980,7 +989,13 @@ private fun StakeoutActiveView(
                         .padding(top = 168.dp, start = 12.dp, end = 12.dp, bottom = 12.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
-                    StakeoutGuidancePanel(project = project, target = target, gnss = gnss)
+                    StakeoutGuidancePanel(
+                        project = project,
+                        target = target,
+                        gnss = gnss,
+                        toleranceM = toleranceM,
+                        onToleranceChanged = onToleranceChanged
+                    )
                 }
             }
         }
@@ -1212,7 +1227,8 @@ private fun StakeoutCompactOverlay(
     val northM = (tLat - lat) * 111132.0
     val eastM = (tLon - lon) * (111320.0 * cos(Math.toRadians(tLat)))
     val distanceM = hypot(northM, eastM)
-    val targetReached = distanceM <= 0.005
+    val targetReached = distanceM <= toleranceM
+    val magneticHeadingDeg = rememberMagneticHeadingDegrees()
 
     val context = LocalContext.current
     val useGeoid = !project?.geoidFileUri.isNullOrBlank()
@@ -1767,7 +1783,9 @@ private fun ensureStakeoutCriticalOverlayOnTop(
 private fun StakeoutGuidancePanel(
     project: TopoProject?,
     target: SurveyPoint?,
-    gnss: GnssStatus
+    gnss: GnssStatus,
+    toleranceM: Double,
+    onToleranceChanged: (Double) -> Unit
 ) {
     if (target == null || target.latitude == null || target.longitude == null) {
         Card(Modifier.fillMaxWidth()) {
