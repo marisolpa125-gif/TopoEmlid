@@ -139,7 +139,6 @@ fun StakeoutScreen(
 
         var continuousCenterTone = false
         var centeredSinceMs: Long? = null
-        var floatNotified = false
         try {
             while (true) {
                 val distance = latestStakeoutDistance
@@ -174,15 +173,12 @@ fun StakeoutScreen(
                     continuousCenterTone = false
                     delay(40)
                 }
+                // FLOAT conserva únicamente el anuncio de voz GNSS ya existente.
+                // No emitir un pitido extra de llegada ni confirmar precisión.
                 if (isFloat && distance <= latestTolerance) {
-                    if (!floatNotified) {
-                        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 90)
-                        floatNotified = true
-                    }
                     delay(200)
                     continue
                 }
-                floatNotified = false
                 if (isFix && distance <= latestTolerance) {
                     delay(120)
                     continue
