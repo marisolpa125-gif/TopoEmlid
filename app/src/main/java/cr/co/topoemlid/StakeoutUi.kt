@@ -1796,6 +1796,7 @@ private fun StakeoutGuidancePanel(
         return
     }
 
+    val context = LocalContext.current
     val lat = gnss.latitude
     val lon = gnss.longitude
     if (!gnss.connected || lat == null || lon == null) {
@@ -1924,7 +1925,6 @@ private fun StakeoutGuidancePanel(
     val distanceM = hypot(northM, eastM)
 
 
-    val context = LocalContext.current
     val useGeoid = !project?.geoidFileUri.isNullOrBlank()
     val targetElevation = if (useGeoid) {
         target.orthometricHeightM ?: target.ellipsoidalHeightM?.let { h ->
