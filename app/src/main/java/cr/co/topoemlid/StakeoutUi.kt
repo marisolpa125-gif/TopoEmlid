@@ -1848,7 +1848,7 @@ private fun StakeoutGuidancePanel(
     }
 
     LaunchedEffect(rawNorthM, rawEastM, target.id) {
-        recentDeltas = (recentDeltas + (rawNorthM to rawEastM)).takeLast(7)
+        recentDeltas = (recentDeltas + (rawNorthM to rawEastM)).takeLast(5)
 
         val stableNorth = median(recentDeltas.map { it.first })
         val stableEast = median(recentDeltas.map { it.second })
@@ -1856,25 +1856,26 @@ private fun StakeoutGuidancePanel(
         val currentVisualDistance = hypot(displayNorthM, displayEastM)
 
         val alpha = when {
-            stableDistance > 2.0 -> 0.85
-            stableDistance > 0.50 -> 0.62
-            stableDistance > 0.10 -> 0.40
-            else -> 0.24
+            stableDistance > 2.0 -> 0.90
+            stableDistance > 0.50 -> 0.75
+            stableDistance > 0.10 -> 0.60
+            stableDistance > 0.03 -> 0.52
+            else -> 0.45
         }
 
         val jump = hypot(stableNorth - displayNorthM, stableEast - displayEastM)
         val effectiveAlpha = when {
-            stableDistance < 0.50 && jump > 0.20 -> min(alpha, 0.16)
-            currentVisualDistance < 0.10 && jump > 0.10 -> min(alpha, 0.12)
+            stableDistance < 0.50 && jump > 0.25 -> min(alpha, 0.18)
+            currentVisualDistance < 0.10 && jump > 0.12 -> min(alpha, 0.16)
             else -> alpha
         }
 
         displayNorthM += (stableNorth - displayNorthM) * effectiveAlpha
         displayEastM += (stableEast - displayEastM) * effectiveAlpha
 
-        // Zona muerta visual de 4 mm para que no tiemble alrededor del centro.
-        if (abs(displayNorthM) < 0.004) displayNorthM = 0.0
-        if (abs(displayEastM) < 0.004) displayEastM = 0.0
+        // Zona muerta visual mínima de 2 mm: estabiliza sin ocultar desplazamientos reales.
+        if (abs(displayNorthM) < 0.002) displayNorthM = 0.0
+        if (abs(displayEastM) < 0.002) displayEastM = 0.0
     }
 
     val stableNorthM = median(recentDeltas.map { it.first })
