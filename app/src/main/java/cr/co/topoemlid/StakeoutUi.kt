@@ -5,6 +5,7 @@ import android.media.ToneGenerator
 import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Paint
+import android.hardware.GeomagneticField
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
@@ -16,6 +17,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -1775,6 +1777,60 @@ private fun ensureStakeoutCriticalOverlayOnTop(
 }
 
 @Composable
+private fun rememberGnssMagneticHeadingDegrees(
+    latitude: Double,
+    longitude: Double,
+    altitudeM: Double?
+): Double? {
+    var previousLat by remember { mutableStateOf<Double?>(null) }
+    var previousLon by remember { mutableStateOf<Double?>(null) }
+    var magneticHeading by remember { mutableStateOf<Double?>(null) }
+
+    LaunchedEffect(latitude, longitude) {
+        val pLat = previousLat
+        val pLon = previousLon
+
+        if (pLat != null && pLon != null) {
+            val meanLatRad = Math.toRadians((pLat + latitude) / 2.0)
+            val north = (latitude - pLat) * 111132.0
+            val east = (longitude - pLon) * (111320.0 * cos(meanLatRad))
+            val movedM = hypot(north, east)
+
+            // Solo actualizar rumbo cuando el rover realmente se movió.
+            // Evita que el rumbo gire por ruido GNSS mientras está quieto.
+            if (movedM >= 0.12) {
+                val trueBearing = (Math.toDegrees(atan2(east, north)) + 360.0) % 360.0
+                val declination = GeomagneticField(
+                    latitude.toFloat(),
+                    longitude.toFloat(),
+                    (altitudeM ?: 0.0).toFloat(),
+                    System.currentTimeMillis()
+                ).declination.toDouble()
+
+                val rawMagnetic = (trueBearing - declination + 360.0) % 360.0
+
+                magneticHeading = magneticHeading?.let { old ->
+                    val oldRad = Math.toRadians(old)
+                    val newRad = Math.toRadians(rawMagnetic)
+                    val alpha = 0.22
+                    val x = (1.0 - alpha) * cos(oldRad) + alpha * cos(newRad)
+                    val y = (1.0 - alpha) * sin(oldRad) + alpha * sin(newRad)
+                    (Math.toDegrees(atan2(y, x)) + 360.0) % 360.0
+                } ?: rawMagnetic
+
+                previousLat = latitude
+                previousLon = longitude
+            }
+        } else {
+            previousLat = latitude
+            previousLon = longitude
+        }
+    }
+
+    return magneticHeading
+}
+
+@Composable
 private fun StakeoutGuidancePanel(
     project: TopoProject?,
     target: SurveyPoint?,
@@ -1820,6 +1876,19 @@ private fun StakeoutGuidancePanel(
     val rawNorthM = projectedDelta?.first ?: ((target.latitude - lat) * metersPerDegLat)
     val rawEastM = projectedDelta?.second ?: ((target.longitude - lon) * metersPerDegLon)
     val rawDistanceM = hypot(rawNorthM, rawEastM)
+    val magneticHeadingDeg = rememberGnssMagneticHeadingDegrees(
+        latitude = lat,
+        longitude = lon,
+        altitudeM = gnss.ellipsoidalHeightM
+    )
+    val magneticDeclinationDeg = remember(lat, lon, gnss.ellipsoidalHeightM) {
+        GeomagneticField(
+            lat.toFloat(),
+            lon.toFloat(),
+            (gnss.ellipsoidalHeightM ?: 0.0).toFloat(),
+            System.currentTimeMillis()
+        ).declination.toDouble()
+    }
 
     // La posición RTK cruda se conserva para cálculos/guardado. La mira usa
     // una ventana mediana corta para rechazar saltos aislados de varios centímetros.
@@ -1941,6 +2010,11 @@ private fun StakeoutGuidancePanel(
             Text(
                 "Distancia estable al objetivo: %.3f m".format(stableDistanceM),
                 style = MaterialTheme.typography.bodySmall
+            )
+            Text(
+                magneticHeadingDeg?.let { "Rumbo magnético de avance: %.0f°".format(it) }
+                    ?: "Rumbo magnético: avance unos centímetros para orientarlo",
+                style = MaterialTheme.typography.labelSmall
             )
 
             Spacer(Modifier.height(8.dp))
@@ -2087,27 +2161,70 @@ private fun StakeoutGuidancePanel(
                             style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
                         )
 
-                        // Mira fija al sistema de coordenadas del proyecto.
-                        // La orientación física de la tablet NO interviene:
-                        // Norte siempre arriba, Este derecha, Sur abajo, Oeste izquierda.
-                        fun screenOffset(worldEast: Double, worldNorth: Double, scalePx: Float): Offset =
-                            Offset(
-                                center.x + (worldEast * scalePx).toFloat(),
-                                center.y - (worldNorth * scalePx).toFloat()
+                        // La tablet solo visualiza. La orientación de la mira sale
+                        // del rumbo GNSS del Reach. Arriba = dirección real de avance.
+                        // La rosa se expresa respecto al norte magnético local.
+                        val headingMagRad = Math.toRadians(magneticHeadingDeg ?: 0.0)
+                        val declinationRad = Math.toRadians(magneticDeclinationDeg)
+
+                        fun projectToMagnetic(worldEast: Double, worldNorth: Double): Pair<Double, Double> {
+                            val magEast =
+                                worldEast * cos(declinationRad) - worldNorth * sin(declinationRad)
+                            val magNorth =
+                                worldNorth * cos(declinationRad) + worldEast * sin(declinationRad)
+                            return magEast to magNorth
+                        }
+
+                        fun magneticToScreen(magEast: Double, magNorth: Double, scalePx: Float): Offset {
+                            val right =
+                                magEast * cos(headingMagRad) - magNorth * sin(headingMagRad)
+                            val forward =
+                                magEast * sin(headingMagRad) + magNorth * cos(headingMagRad)
+                            return Offset(
+                                center.x + (right * scalePx).toFloat(),
+                                center.y - (forward * scalePx).toFloat()
                             )
+                        }
+
+                        val northEdge = magneticToScreen(0.0, 1.0, maxR)
+                        val southEdge = magneticToScreen(0.0, -1.0, maxR)
+                        val eastEdge = magneticToScreen(1.0, 0.0, maxR)
+                        val westEdge = magneticToScreen(-1.0, 0.0, maxR)
 
                         drawLine(
                             color = Color(0xFF355A7A),
-                            start = Offset(center.x - maxR, center.y),
-                            end = Offset(center.x + maxR, center.y),
+                            start = westEdge,
+                            end = eastEdge,
                             strokeWidth = 2.5f
                         )
                         drawLine(
                             color = Color(0xFF355A7A),
-                            start = Offset(center.x, center.y - maxR),
-                            end = Offset(center.x, center.y + maxR),
+                            start = northEdge,
+                            end = southEdge,
                             strokeWidth = 2.5f
                         )
+
+                        val labelPaint = Paint().apply {
+                            color = android.graphics.Color.rgb(31, 41, 55)
+                            textSize = 34f
+                            textAlign = Paint.Align.CENTER
+                            isFakeBoldText = true
+                        }
+                        val labelR = maxR * 1.12f
+                        listOf(
+                            Triple("N", 0.0, 1.0),
+                            Triple("E", 1.0, 0.0),
+                            Triple("S", 0.0, -1.0),
+                            Triple("O", -1.0, 0.0)
+                        ).forEach { (label, e, n) ->
+                            val p = magneticToScreen(e, n, labelR)
+                            drawContext.canvas.nativeCanvas.drawText(
+                                label,
+                                p.x,
+                                p.y + labelPaint.textSize * 0.35f,
+                                labelPaint
+                            )
+                        }
 
                         val displayScaleM = when {
                             distanceM > 5.0 -> 10.0
@@ -2115,10 +2232,14 @@ private fun StakeoutGuidancePanel(
                             distanceM > 0.10 -> 0.5
                             else -> 0.10
                         }
-                        val marker = screenOffset(
-                            worldEast = eastM / displayScaleM,
-                            worldNorth = northM / displayScaleM,
-                            scalePx = maxR
+                        val (targetMagEast, targetMagNorth) = projectToMagnetic(
+                            eastM / displayScaleM,
+                            northM / displayScaleM
+                        )
+                        val marker = magneticToScreen(
+                            targetMagEast,
+                            targetMagNorth,
+                            maxR
                         )
                         val markerX = marker.x.coerceIn(center.x - maxR, center.x + maxR)
                         val markerY = marker.y.coerceIn(center.y - maxR, center.y + maxR)
@@ -2147,28 +2268,6 @@ private fun StakeoutGuidancePanel(
                             end = Offset(center.x, center.y + 11f),
                             strokeWidth = 3f
                         )
-                    }
-
-                    Text(
-                        "N",
-                        modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter).padding(top = 8.dp),
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                    Text(
-                        "S",
-                        modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).padding(bottom = 8.dp),
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                    Row(
-                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center).width(270.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                    ) {
-                        Text("O", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
-                        Spacer(Modifier.width(1.dp))
-                        Text("E", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
                     }
 
                     if (targetReached) {
