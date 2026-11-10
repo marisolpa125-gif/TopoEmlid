@@ -460,6 +460,14 @@ class ReachBleAdminClient(
         closeGattOnly()
     }
 
+    suspend fun sendAdminAction(action: ReachLocalAction): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                ensureConnected().getOrThrow()
+                sendAction(action.wireName).getOrThrow()
+            }
+        }
+
     private suspend fun sendAction(name: String, payload: JSONObject? = null): Result<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
