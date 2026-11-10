@@ -1931,6 +1931,12 @@ private fun StakeoutGuidancePanel(
             }
 
             Spacer(Modifier.height(10.dp))
+            Text(
+                "El punto amarillo indica hacia dónde mover la antena para llegar al objetivo.",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(6.dp))
 
             Surface(
                 modifier = Modifier.fillMaxWidth(),
