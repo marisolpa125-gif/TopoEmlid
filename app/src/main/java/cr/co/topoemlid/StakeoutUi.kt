@@ -1917,12 +1917,15 @@ private fun StakeoutGuidancePanel(
         if (abs(displayEastM) < 0.004) displayEastM = 0.0
     }
 
-    val northM = displayNorthM
-    val eastM = displayEastM
-    val distanceM = hypot(northM, eastM)
-
-    // Para "PUNTO ALCANZADO" usamos la medición real, no la suavizada.
     val targetReached = rawDistanceM <= toleranceM
+
+    // Si la medición real ya está dentro de la tolerancia, la mira debe
+    // coincidir visualmente con ese estado y mostrar el objetivo exactamente
+    // en el centro. Fuera de tolerancia se conserva el suavizado visual.
+    val northM = if (targetReached) 0.0 else displayNorthM
+    val eastM = if (targetReached) 0.0 else displayEastM
+    val distanceM = if (targetReached) 0.0 else hypot(northM, eastM)
+
     val magneticHeadingDeg = rememberMagneticHeadingDegrees()
 
     val context = LocalContext.current
