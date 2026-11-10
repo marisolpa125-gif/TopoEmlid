@@ -1786,43 +1786,74 @@ private fun rememberMagneticHeadingDegrees(): Double? {
     var heading by remember { mutableStateOf<Double?>(null) }
 
     DisposableEffect(context) {
-        val sensorManager = context.getSystemService(android.content.Context.SENSOR_SERVICE) as SensorManager
-        val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        val sensorManager =
+            context.getSystemService(android.content.Context.SENSOR_SERVICE) as SensorManager
+        val sensor =
+            sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+                ?: sensorManager.getDefaultSensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR)
 
         if (sensor == null) {
             heading = null
             onDispose { }
         } else {
             val rotation = FloatArray(9)
-            val adjusted = FloatArray(9)
-            val orientation = FloatArray(3)
 
             val listener = object : SensorEventListener {
                 override fun onSensorChanged(event: SensorEvent) {
                     SensorManager.getRotationMatrixFromVector(rotation, event.values)
 
+                    // Android world axes: X=Este, Y=Norte, Z=arriba.
+                    // En campo la tablet va casi vertical en el bastón. En esa postura,
+                    // el borde superior de la pantalla apunta al cielo y NO representa
+                    // la dirección horizontal de avance. Por eso elegimos dinámicamente
+                    // el eje que tenga mejor proyección sobre el plano horizontal:
+                    // - tablet acostada: borde superior de pantalla;
+                    // - tablet vertical: parte trasera de la tablet (-Z), que apunta
+                    //   hacia adelante cuando el usuario mira la pantalla.
                     val displayRotation = context.display?.rotation ?: Surface.ROTATION_0
-                    val (axisX, axisY) = when (displayRotation) {
-                        Surface.ROTATION_90 ->
-                            SensorManager.AXIS_Y to SensorManager.AXIS_MINUS_X
-                        Surface.ROTATION_180 ->
-                            SensorManager.AXIS_MINUS_X to SensorManager.AXIS_MINUS_Y
-                        Surface.ROTATION_270 ->
-                            SensorManager.AXIS_MINUS_Y to SensorManager.AXIS_X
-                        else ->
-                            SensorManager.AXIS_X to SensorManager.AXIS_Y
+
+                    val topEast: Double
+                    val topNorth: Double
+                    when (displayRotation) {
+                        Surface.ROTATION_90 -> {
+                            topEast = -rotation[0].toDouble()
+                            topNorth = -rotation[3].toDouble()
+                        }
+                        Surface.ROTATION_180 -> {
+                            topEast = -rotation[1].toDouble()
+                            topNorth = -rotation[4].toDouble()
+                        }
+                        Surface.ROTATION_270 -> {
+                            topEast = rotation[0].toDouble()
+                            topNorth = rotation[3].toDouble()
+                        }
+                        else -> {
+                            topEast = rotation[1].toDouble()
+                            topNorth = rotation[4].toDouble()
+                        }
                     }
 
-                    SensorManager.remapCoordinateSystem(rotation, axisX, axisY, adjusted)
-                    SensorManager.getOrientation(adjusted, orientation)
+                    val forwardEast = -rotation[2].toDouble()
+                    val forwardNorth = -rotation[5].toDouble()
 
-                    val rawDeg = (Math.toDegrees(orientation[0].toDouble()) + 360.0) % 360.0
+                    val topHorizontal = hypot(topEast, topNorth)
+                    val forwardHorizontal = hypot(forwardEast, forwardNorth)
+
+                    val useForwardAxis = forwardHorizontal > topHorizontal
+                    val east = if (useForwardAxis) forwardEast else topEast
+                    val north = if (useForwardAxis) forwardNorth else topNorth
+                    val horizontal = hypot(east, north)
+                    if (horizontal < 0.15) return
+
+                    val rawDeg = (Math.toDegrees(atan2(east, north)) + 360.0) % 360.0
+
                     heading = heading?.let { old ->
-                        // Suavizado circular para evitar saltos de 359° a 0° y temblor de la mira.
+                        // Suavizado circular: evita temblor y el salto 359° -> 0°.
                         val oldRad = Math.toRadians(old)
                         val newRad = Math.toRadians(rawDeg)
-                        val x = 0.82 * cos(oldRad) + 0.18 * cos(newRad)
-                        val y = 0.82 * sin(oldRad) + 0.18 * sin(newRad)
+                        val alpha = 0.16
+                        val x = (1.0 - alpha) * cos(oldRad) + alpha * cos(newRad)
+                        val y = (1.0 - alpha) * sin(oldRad) + alpha * sin(newRad)
                         (Math.toDegrees(atan2(y, x)) + 360.0) % 360.0
                     } ?: rawDeg
                 }
@@ -1831,9 +1862,7 @@ private fun rememberMagneticHeadingDegrees(): Double? {
             }
 
             sensorManager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
-            onDispose {
-                sensorManager.unregisterListener(listener)
-            }
+            onDispose { sensorManager.unregisterListener(listener) }
         }
     }
 
