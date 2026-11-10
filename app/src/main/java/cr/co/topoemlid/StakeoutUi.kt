@@ -1782,48 +1782,71 @@ private fun rememberGnssMagneticHeadingDegrees(
     longitude: Double,
     altitudeM: Double?
 ): Double? {
-    var previousLat by remember { mutableStateOf<Double?>(null) }
-    var previousLon by remember { mutableStateOf<Double?>(null) }
+    data class Pos(val lat: Double, val lon: Double, val t: Long)
+
+    var samples by remember { mutableStateOf<List<Pos>>(emptyList()) }
     var magneticHeading by remember { mutableStateOf<Double?>(null) }
 
-    LaunchedEffect(latitude, longitude) {
-        val pLat = previousLat
-        val pLon = previousLon
+    fun circularDifferenceDeg(a: Double, b: Double): Double {
+        var d = (a - b + 540.0) % 360.0 - 180.0
+        if (d < -180.0) d += 360.0
+        return d
+    }
 
-        if (pLat != null && pLon != null) {
-            val meanLatRad = Math.toRadians((pLat + latitude) / 2.0)
-            val north = (latitude - pLat) * 111132.0
-            val east = (longitude - pLon) * (111320.0 * cos(meanLatRad))
+    LaunchedEffect(latitude, longitude) {
+        val now = System.currentTimeMillis()
+        samples = (samples + Pos(latitude, longitude, now))
+            .filter { now - it.t <= 1800L }
+            .takeLast(10)
+
+        val first = samples.firstOrNull()
+        val last = samples.lastOrNull()
+        if (first != null && last != null && first !== last) {
+            val meanLatRad = Math.toRadians((first.lat + last.lat) / 2.0)
+            val north = (last.lat - first.lat) * 111132.0
+            val east = (last.lon - first.lon) * (111320.0 * cos(meanLatRad))
             val movedM = hypot(north, east)
 
-            // Solo actualizar rumbo cuando el rover realmente se movió.
-            // Evita que el rumbo gire por ruido GNSS mientras está quieto.
-            if (movedM >= 0.12) {
-                val trueBearing = (Math.toDegrees(atan2(east, north)) + 360.0) % 360.0
+            // El rumbo se calcula con una ventana de movimiento, no con dos épocas
+            // consecutivas. Así se actualiza fluido mientras camina pero no se invierte
+            // por el jitter centimétrico del RTK cuando está casi quieto.
+            if (movedM >= 0.35) {
+                val trueBearing =
+                    (Math.toDegrees(atan2(east, north)) + 360.0) % 360.0
                 val declination = GeomagneticField(
                     latitude.toFloat(),
                     longitude.toFloat(),
                     (altitudeM ?: 0.0).toFloat(),
-                    System.currentTimeMillis()
+                    now
                 ).declination.toDouble()
+                val rawMagnetic =
+                    (trueBearing - declination + 360.0) % 360.0
 
-                val rawMagnetic = (trueBearing - declination + 360.0) % 360.0
+                val old = magneticHeading
+                val accept = if (old == null) {
+                    true
+                } else {
+                    val turn = abs(circularDifferenceDeg(rawMagnetic, old))
+                    // Un giro casi opuesto requiere más desplazamiento para aceptarlo;
+                    // evita que el norte "salte" 180° por una sola posición mala.
+                    turn <= 100.0 || movedM >= 0.90
+                }
 
-                magneticHeading = magneticHeading?.let { old ->
-                    val oldRad = Math.toRadians(old)
-                    val newRad = Math.toRadians(rawMagnetic)
-                    val alpha = 0.22
-                    val x = (1.0 - alpha) * cos(oldRad) + alpha * cos(newRad)
-                    val y = (1.0 - alpha) * sin(oldRad) + alpha * sin(newRad)
-                    (Math.toDegrees(atan2(y, x)) + 360.0) % 360.0
-                } ?: rawMagnetic
-
-                previousLat = latitude
-                previousLon = longitude
+                if (accept) {
+                    magneticHeading = if (old == null) {
+                        rawMagnetic
+                    } else {
+                        val oldRad = Math.toRadians(old)
+                        val newRad = Math.toRadians(rawMagnetic)
+                        val alpha = 0.16
+                        val x =
+                            (1.0 - alpha) * cos(oldRad) + alpha * cos(newRad)
+                        val y =
+                            (1.0 - alpha) * sin(oldRad) + alpha * sin(newRad)
+                        (Math.toDegrees(atan2(y, x)) + 360.0) % 360.0
+                    }
+                }
             }
-        } else {
-            previousLat = latitude
-            previousLon = longitude
         }
     }
 
@@ -1940,15 +1963,18 @@ private fun StakeoutGuidancePanel(
     val stableEastM = median(recentDeltas.map { it.second })
     val stableDistanceM = hypot(stableNorthM, stableEastM)
 
-    // Para declarar objetivo alcanzado exigimos estabilidad: la mediana debe
-    // estar dentro de tolerancia y la lectura instantánea no puede ser un salto lejano.
-    val targetReached =
+    // La mira nunca "teletransporta" el punto al centro.
+    // Siempre muestra la posición estable calculada.
+    val withinTolerance =
         stableDistanceM <= toleranceM &&
             rawDistanceM <= max(toleranceM * 1.5, toleranceM + 0.01)
+    val pointCentered =
+        stableDistanceM <= 0.005 &&
+            rawDistanceM <= 0.015
 
-    val northM = if (targetReached) 0.0 else displayNorthM
-    val eastM = if (targetReached) 0.0 else displayEastM
-    val distanceM = if (targetReached) 0.0 else hypot(northM, eastM)
+    val northM = displayNorthM
+    val eastM = displayEastM
+    val distanceM = hypot(northM, eastM)
 
 
     val context = LocalContext.current
