@@ -160,8 +160,7 @@ fun StakeoutScreen(
                 } else {
                     centeredSinceMs = null
                 }
-                val confirmedCenter = isFix && centeredSinceMs != null &&
-                    nowMs - centeredSinceMs >= 1000L
+                val confirmedCenter = isFix && (centeredSinceMs?.let { nowMs - it >= 1000L } == true)
                 if (confirmedCenter) {
                     if (!continuousCenterTone) {
                         toneGenerator.startTone(ToneGenerator.TONE_DTMF_0)
