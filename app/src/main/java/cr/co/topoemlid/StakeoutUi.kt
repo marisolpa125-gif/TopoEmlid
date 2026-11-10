@@ -6,6 +6,11 @@ import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Paint
 import android.hardware.GeomagneticField
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.content.Context
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
@@ -1831,6 +1836,28 @@ private fun StakeoutGuidancePanel(
         ).declination.toDouble()
     }
 
+    // Rumbo de la tablet medido en reposo. Si falta el sensor, mantener norte arriba.
+    val sensorManager = remember { context.getSystemService(Context.SENSOR_SERVICE) as SensorManager }
+    val rotationSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR) }
+    var headingMagneticDeg by remember { mutableDoubleStateOf(0.0) }
+    var compassEnabled by remember { mutableStateOf(true) }
+    DisposableEffect(sensorManager, rotationSensor, compassEnabled) {
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                val matrix = FloatArray(9)
+                SensorManager.getRotationMatrixFromVector(matrix, event.values)
+                val angles = FloatArray(3)
+                SensorManager.getOrientation(matrix, angles)
+                headingMagneticDeg = (Math.toDegrees(angles[0].toDouble()) + 360.0) % 360.0
+            }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+        }
+        if (compassEnabled && rotationSensor != null) {
+            sensorManager.registerListener(listener, rotationSensor, SensorManager.SENSOR_DELAY_GAME)
+        }
+        onDispose { sensorManager.unregisterListener(listener) }
+    }
+
     // La posición RTK cruda se conserva para cálculos/guardado. La mira usa
     // una ventana mediana corta para rechazar saltos aislados de varios centímetros.
     var recentDeltas by remember(target.id) {
@@ -1892,8 +1919,8 @@ private fun StakeoutGuidancePanel(
         stableDistanceM <= 0.005 &&
             rawDistanceM <= 0.015
 
-    val northM = displayNorthM
-    val eastM = displayEastM
+    val northM = rawNorthM
+    val eastM = rawEastM
     val distanceM = hypot(northM, eastM)
 
 
@@ -1980,10 +2007,16 @@ private fun StakeoutGuidancePanel(
                 style = MaterialTheme.typography.bodySmall
             )
             Text(
-                "Mira orientada al norte magnético",
+                if (rotationSensor == null) "Sin brújula: norte arriba" else if (compassEnabled) "Brújula de tablet activa" else "Norte arriba",
                 style = MaterialTheme.typography.labelSmall
             )
 
+            if (rotationSensor != null) {
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Text("Orientar con tablet")
+                    Switch(checked = compassEnabled, onCheckedChange = { compassEnabled = it })
+                }
+            }
             Spacer(Modifier.height(8.dp))
             Text("Tolerancia de llegada", fontWeight = FontWeight.Bold)
             Row(
@@ -2137,16 +2170,19 @@ private fun StakeoutGuidancePanel(
                             style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
                         )
 
-                        // Rosa fija al norte magnético.
+                        // Rosa giratoria según rumbo magnético de la tablet.
                         // Centro = objetivo; marcador = posición actual de la antena.
                         val declinationRad = Math.toRadians(magneticDeclinationDeg)
+                        val headingRad = Math.toRadians(if (compassEnabled && rotationSensor != null) headingMagneticDeg else 0.0)
 
                         fun projectToMagnetic(worldEast: Double, worldNorth: Double): Pair<Double, Double> {
                             val magEast =
                                 worldEast * cos(declinationRad) - worldNorth * sin(declinationRad)
                             val magNorth =
                                 worldNorth * cos(declinationRad) + worldEast * sin(declinationRad)
-                            return magEast to magNorth
+                            val screenEast = magEast * cos(headingRad) - magNorth * sin(headingRad)
+                            val screenNorth = magNorth * cos(headingRad) + magEast * sin(headingRad)
+                            return screenEast to screenNorth
                         }
 
                         fun magneticToScreen(magEast: Double, magNorth: Double, scalePx: Float): Offset =
@@ -2181,7 +2217,9 @@ private fun StakeoutGuidancePanel(
                             Triple("S", 0.0, -1.0),
                             Triple("O", -1.0, 0.0)
                         ).forEach { (label, e, n) ->
-                            val p = magneticToScreen(e, n, labelR)
+                            val screenE = e * cos(headingRad) - n * sin(headingRad)
+                            val screenN = n * cos(headingRad) + e * sin(headingRad)
+                            val p = magneticToScreen(screenE, screenN, labelR)
                             drawContext.canvas.nativeCanvas.drawText(
                                 label,
                                 p.x,
