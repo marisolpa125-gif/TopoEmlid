@@ -1850,36 +1850,37 @@ private fun StakeoutGuidancePanel(
     LaunchedEffect(rawNorthM, rawEastM, target.id) {
         recentDeltas = (recentDeltas + (rawNorthM to rawEastM)).takeLast(5)
 
-        val stableNorth = median(recentDeltas.map { it.first })
-        val stableEast = median(recentDeltas.map { it.second })
-        val stableDistance = hypot(stableNorth, stableEast)
-        val currentVisualDistance = hypot(displayNorthM, displayEastM)
+        val medianNorth = median(recentDeltas.map { it.first })
+        val medianEast = median(recentDeltas.map { it.second })
+        val jumpFromMedian = hypot(rawNorthM - medianNorth, rawEastM - medianEast)
 
-        val alpha = when {
-            stableDistance > 2.0 -> 0.90
-            stableDistance > 0.50 -> 0.75
-            stableDistance > 0.10 -> 0.60
-            stableDistance > 0.03 -> 0.52
-            else -> 0.45
+        if (rawDistanceM <= 1.0) {
+            // Replanteo fino: seguir la época RTK más reciente casi en tiempo real.
+            // Solo rechazar un salto claramente aislado respecto a las últimas épocas.
+            val useRaw = recentDeltas.size < 3 || jumpFromMedian <= 0.20
+            val targetNorth = if (useRaw) rawNorthM else medianNorth
+            val targetEast = if (useRaw) rawEastM else medianEast
+            val alpha = if (rawDistanceM <= 0.20) 0.92 else 0.86
+
+            displayNorthM += (targetNorth - displayNorthM) * alpha
+            displayEastM += (targetEast - displayEastM) * alpha
+        } else {
+            // Lejos del punto: algo de suavizado hace la guía más estable.
+            displayNorthM += (medianNorth - displayNorthM) * 0.78
+            displayEastM += (medianEast - displayEastM) * 0.78
         }
 
-        val jump = hypot(stableNorth - displayNorthM, stableEast - displayEastM)
-        val effectiveAlpha = when {
-            stableDistance < 0.50 && jump > 0.25 -> min(alpha, 0.18)
-            currentVisualDistance < 0.10 && jump > 0.12 -> min(alpha, 0.16)
-            else -> alpha
-        }
-
-        displayNorthM += (stableNorth - displayNorthM) * effectiveAlpha
-        displayEastM += (stableEast - displayEastM) * effectiveAlpha
-
-        // Zona muerta visual mínima de 2 mm: estabiliza sin ocultar desplazamientos reales.
-        if (abs(displayNorthM) < 0.002) displayNorthM = 0.0
-        if (abs(displayEastM) < 0.002) displayEastM = 0.0
+        // Zona muerta mínima: no esconder desplazamientos de centímetros.
+        if (abs(displayNorthM) < 0.001) displayNorthM = 0.0
+        if (abs(displayEastM) < 0.001) displayEastM = 0.0
     }
 
-    val stableNorthM = median(recentDeltas.map { it.first })
-    val stableEastM = median(recentDeltas.map { it.second })
+    // Para la distancia y el estado de llegada, en la mira fina usamos la
+    // posición RTK actual. Lejos del punto usamos la mediana estable.
+    val medianNorthM = median(recentDeltas.map { it.first })
+    val medianEastM = median(recentDeltas.map { it.second })
+    val stableNorthM = if (rawDistanceM <= 1.0) rawNorthM else medianNorthM
+    val stableEastM = if (rawDistanceM <= 1.0) rawEastM else medianEastM
     val stableDistanceM = hypot(stableNorthM, stableEastM)
 
     // La mira nunca "teletransporta" el punto al centro.
