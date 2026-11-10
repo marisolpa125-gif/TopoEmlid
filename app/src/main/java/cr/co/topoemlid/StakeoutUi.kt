@@ -2036,6 +2036,11 @@ private fun StakeoutGuidancePanel(
     val forwardM = movementCorrection?.first
     val rightM = movementCorrection?.second
 
+    // Una sola corrección final alimenta tanto los números como la mira.
+    val visualForwardM = forwardM ?: northM
+    val visualRightM = rightM ?: eastM
+    val visualDistanceM = hypot(visualForwardM, visualRightM)
+
     val forwardLabel = when {
         forwardM == null -> nsLabel
         forwardM > 0.0005 -> "AVANCE"
@@ -2118,7 +2123,7 @@ private fun StakeoutGuidancePanel(
                             fontWeight = FontWeight.Bold
                         )
                         Text(forwardLabel, fontWeight = FontWeight.Bold)
-                        Text("%.3f m".format(abs(forwardM ?: northM)))
+                        Text("%.3f m".format(abs(visualForwardM)))
                         Text(
                             "$nsLabel %.3f m".format(abs(northM)),
                             style = MaterialTheme.typography.labelSmall
@@ -2147,7 +2152,7 @@ private fun StakeoutGuidancePanel(
                             fontWeight = FontWeight.Bold
                         )
                         Text(lateralLabel, fontWeight = FontWeight.Bold)
-                        Text("%.3f m".format(abs(rightM ?: eastM)))
+                        Text("%.3f m".format(abs(visualRightM)))
                         Text(
                             "$ewLabel %.3f m".format(abs(eastM)),
                             style = MaterialTheme.typography.labelSmall
@@ -2293,22 +2298,22 @@ private fun StakeoutGuidancePanel(
                         }
 
                         val displayScaleM = when {
-                            distanceM > 5.0 -> 10.0
-                            distanceM > 0.5 -> 2.0
-                            distanceM > 0.10 -> 0.5
-                            else -> 0.10
+                            visualDistanceM > 5.0 -> 10.0
+                            visualDistanceM > 0.5 -> 2.0
+                            visualDistanceM > 0.10 -> 0.5
+                            visualDistanceM > 0.05 -> 0.20
+                            visualDistanceM > 0.02 -> 0.10
+                            else -> 0.05
                         }
-                        val (targetMagEast, targetMagNorth) = projectToMagnetic(
-                            eastM / displayScaleM,
-                            northM / displayScaleM
-                        )
-                        val marker = magneticToScreen(
-                            targetMagEast,
-                            targetMagNorth,
-                            maxR
-                        )
-                        val markerX = marker.x.coerceIn(center.x - maxR, center.x + maxR)
-                        val markerY = marker.y.coerceIn(center.y - maxR, center.y + maxR)
+
+                        // El punto amarillo usa EXACTAMENTE la misma corrección
+                        // que muestran AVANCE/RETROCESO e IZQUIERDA/DERECHA.
+                        val markerX = (
+                            center.x + (visualRightM / displayScaleM * maxR).toFloat()
+                        ).coerceIn(center.x - maxR, center.x + maxR)
+                        val markerY = (
+                            center.y - (visualForwardM / displayScaleM * maxR).toFloat()
+                        ).coerceIn(center.y - maxR, center.y + maxR)
 
                         drawCircle(
                             color = Color(0xFFFFC107),
