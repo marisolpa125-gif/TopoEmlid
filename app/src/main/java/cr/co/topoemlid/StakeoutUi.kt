@@ -1780,6 +1780,66 @@ private fun ensureStakeoutCriticalOverlayOnTop(
 }
 
 @Composable
+private fun rememberMagneticHeadingDegrees(): Double? {
+    val context = LocalContext.current
+    var heading by remember { mutableStateOf<Double?>(null) }
+
+    DisposableEffect(context) {
+        val sensorManager = context.getSystemService(android.content.Context.SENSOR_SERVICE) as SensorManager
+        val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+
+        if (sensor == null) {
+            heading = null
+            onDispose { }
+        } else {
+            val rotation = FloatArray(9)
+            val adjusted = FloatArray(9)
+            val orientation = FloatArray(3)
+
+            val listener = object : SensorEventListener {
+                override fun onSensorChanged(event: SensorEvent) {
+                    SensorManager.getRotationMatrixFromVector(rotation, event.values)
+
+                    val displayRotation = context.display?.rotation ?: Surface.ROTATION_0
+                    val (axisX, axisY) = when (displayRotation) {
+                        Surface.ROTATION_90 ->
+                            SensorManager.AXIS_Y to SensorManager.AXIS_MINUS_X
+                        Surface.ROTATION_180 ->
+                            SensorManager.AXIS_MINUS_X to SensorManager.AXIS_MINUS_Y
+                        Surface.ROTATION_270 ->
+                            SensorManager.AXIS_MINUS_Y to SensorManager.AXIS_X
+                        else ->
+                            SensorManager.AXIS_X to SensorManager.AXIS_Y
+                    }
+
+                    SensorManager.remapCoordinateSystem(rotation, axisX, axisY, adjusted)
+                    SensorManager.getOrientation(adjusted, orientation)
+
+                    val rawDeg = (Math.toDegrees(orientation[0].toDouble()) + 360.0) % 360.0
+                    heading = heading?.let { old ->
+                        // Suavizado circular para evitar saltos de 359° a 0° y temblor de la mira.
+                        val oldRad = Math.toRadians(old)
+                        val newRad = Math.toRadians(rawDeg)
+                        val x = 0.82 * cos(oldRad) + 0.18 * cos(newRad)
+                        val y = 0.82 * sin(oldRad) + 0.18 * sin(newRad)
+                        (Math.toDegrees(atan2(y, x)) + 360.0) % 360.0
+                    } ?: rawDeg
+                }
+
+                override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+            }
+
+            sensorManager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+            onDispose {
+                sensorManager.unregisterListener(listener)
+            }
+        }
+    }
+
+    return heading
+}
+
+@Composable
 private fun StakeoutGuidancePanel(
     project: TopoProject?,
     target: SurveyPoint?,
@@ -1808,7 +1868,8 @@ private fun StakeoutGuidancePanel(
     val northM = (target.latitude - lat) * metersPerDegLat
     val eastM = (target.longitude - lon) * metersPerDegLon
     val distanceM = hypot(northM, eastM)
-    val targetReached = distanceM <= 0.005
+    val targetReached = distanceM <= toleranceM
+    val magneticHeadingDeg = rememberMagneticHeadingDegrees()
 
     val context = LocalContext.current
     val useGeoid = !project?.geoidFileUri.isNullOrBlank()
