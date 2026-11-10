@@ -1140,6 +1140,18 @@ private fun StakeoutStatusHeader(
                 style = MaterialTheme.typography.labelSmall
             )
 
+            gnss.ggaRateHz?.let { hz ->
+                Text(
+                    "Actualización de posición: %.1f Hz%s".format(
+                        hz,
+                        if (hz < 2.0) " • LENTA" else ""
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (hz < 2.0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
+            }
+
             HorizontalDivider(Modifier.padding(vertical = 4.dp))
 
             val p = project
