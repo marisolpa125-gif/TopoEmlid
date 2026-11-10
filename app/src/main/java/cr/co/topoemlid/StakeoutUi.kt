@@ -1995,6 +1995,34 @@ private fun StakeoutGuidancePanel(
         else -> "COTA OK"
     }
 
+    val movementCorrection = magneticHeadingDeg?.let { headingDeg ->
+        val declinationRad = Math.toRadians(magneticDeclinationDeg)
+        val headingRad = Math.toRadians(headingDeg)
+
+        val magEast = eastM * cos(declinationRad) - northM * sin(declinationRad)
+        val magNorth = northM * cos(declinationRad) + eastM * sin(declinationRad)
+
+        val rightM = magEast * cos(headingRad) - magNorth * sin(headingRad)
+        val forwardM = magEast * sin(headingRad) + magNorth * cos(headingRad)
+        forwardM to rightM
+    }
+
+    val forwardM = movementCorrection?.first
+    val rightM = movementCorrection?.second
+
+    val forwardLabel = when {
+        forwardM == null -> nsLabel
+        forwardM > 0.0005 -> "AVANCE"
+        forwardM < -0.0005 -> "RETROCESO"
+        else -> "ADELANTE/ATRÁS OK"
+    }
+    val lateralLabel = when {
+        rightM == null -> ewLabel
+        rightM > 0.0005 -> "DERECHA"
+        rightM < -0.0005 -> "IZQUIERDA"
+        else -> "LATERAL OK"
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = androidx.compose.material3.CardDefaults.cardColors(
@@ -2054,15 +2082,21 @@ private fun StakeoutGuidancePanel(
                     ) {
                         Text(
                             when {
-                                northM > 0.0005 -> "↑"
-                                northM < -0.0005 -> "↓"
+                                forwardM == null && northM > 0.0005 -> "↑"
+                                forwardM == null && northM < -0.0005 -> "↓"
+                                forwardM != null && forwardM > 0.0005 -> "↑"
+                                forwardM != null && forwardM < -0.0005 -> "↓"
                                 else -> "✓"
                             },
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(nsLabel, fontWeight = FontWeight.Bold)
-                        Text("%.3f m".format(abs(northM)))
+                        Text(forwardLabel, fontWeight = FontWeight.Bold)
+                        Text("%.3f m".format(abs(forwardM ?: northM)))
+                        Text(
+                            "$nsLabel %.3f m".format(abs(northM)),
+                            style = MaterialTheme.typography.labelSmall
+                        )
                     }
                 }
 
@@ -2077,15 +2111,21 @@ private fun StakeoutGuidancePanel(
                     ) {
                         Text(
                             when {
-                                eastM > 0.0005 -> "→"
-                                eastM < -0.0005 -> "←"
+                                rightM == null && eastM > 0.0005 -> "→"
+                                rightM == null && eastM < -0.0005 -> "←"
+                                rightM != null && rightM > 0.0005 -> "→"
+                                rightM != null && rightM < -0.0005 -> "←"
                                 else -> "✓"
                             },
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(ewLabel, fontWeight = FontWeight.Bold)
-                        Text("%.3f m".format(abs(eastM)))
+                        Text(lateralLabel, fontWeight = FontWeight.Bold)
+                        Text("%.3f m".format(abs(rightM ?: eastM)))
+                        Text(
+                            "$ewLabel %.3f m".format(abs(eastM)),
+                            style = MaterialTheme.typography.labelSmall
+                        )
                     }
                 }
 
