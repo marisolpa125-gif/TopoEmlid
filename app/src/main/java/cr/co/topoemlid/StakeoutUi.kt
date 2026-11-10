@@ -2,11 +2,6 @@ package cr.co.topoemlid
 
 import android.media.AudioManager
 import android.media.ToneGenerator
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
-import android.view.Surface
 import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Paint
@@ -21,7 +16,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -1781,95 +1775,6 @@ private fun ensureStakeoutCriticalOverlayOnTop(
 }
 
 @Composable
-private fun rememberMagneticHeadingDegrees(): Double? {
-    val context = LocalContext.current
-    var heading by remember { mutableStateOf<Double?>(null) }
-
-    DisposableEffect(context) {
-        val sensorManager =
-            context.getSystemService(android.content.Context.SENSOR_SERVICE) as SensorManager
-        val sensor =
-            sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-                ?: sensorManager.getDefaultSensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR)
-
-        if (sensor == null) {
-            heading = null
-            onDispose { }
-        } else {
-            val rotation = FloatArray(9)
-
-            val listener = object : SensorEventListener {
-                override fun onSensorChanged(event: SensorEvent) {
-                    SensorManager.getRotationMatrixFromVector(rotation, event.values)
-
-                    // Android world axes: X=Este, Y=Norte, Z=arriba.
-                    // En campo la tablet va casi vertical en el bastón. En esa postura,
-                    // el borde superior de la pantalla apunta al cielo y NO representa
-                    // la dirección horizontal de avance. Por eso elegimos dinámicamente
-                    // el eje que tenga mejor proyección sobre el plano horizontal:
-                    // - tablet acostada: borde superior de pantalla;
-                    // - tablet vertical: parte trasera de la tablet (-Z), que apunta
-                    //   hacia adelante cuando el usuario mira la pantalla.
-                    val displayRotation = context.display?.rotation ?: Surface.ROTATION_0
-
-                    val topEast: Double
-                    val topNorth: Double
-                    when (displayRotation) {
-                        Surface.ROTATION_90 -> {
-                            topEast = -rotation[0].toDouble()
-                            topNorth = -rotation[3].toDouble()
-                        }
-                        Surface.ROTATION_180 -> {
-                            topEast = -rotation[1].toDouble()
-                            topNorth = -rotation[4].toDouble()
-                        }
-                        Surface.ROTATION_270 -> {
-                            topEast = rotation[0].toDouble()
-                            topNorth = rotation[3].toDouble()
-                        }
-                        else -> {
-                            topEast = rotation[1].toDouble()
-                            topNorth = rotation[4].toDouble()
-                        }
-                    }
-
-                    val forwardEast = -rotation[2].toDouble()
-                    val forwardNorth = -rotation[5].toDouble()
-
-                    val topHorizontal = hypot(topEast, topNorth)
-                    val forwardHorizontal = hypot(forwardEast, forwardNorth)
-
-                    val useForwardAxis = forwardHorizontal > topHorizontal
-                    val east = if (useForwardAxis) forwardEast else topEast
-                    val north = if (useForwardAxis) forwardNorth else topNorth
-                    val horizontal = hypot(east, north)
-                    if (horizontal < 0.15) return
-
-                    val rawDeg = (Math.toDegrees(atan2(east, north)) + 360.0) % 360.0
-
-                    heading = heading?.let { old ->
-                        // Suavizado circular: evita temblor y el salto 359° -> 0°.
-                        val oldRad = Math.toRadians(old)
-                        val newRad = Math.toRadians(rawDeg)
-                        val alpha = 0.16
-                        val x = (1.0 - alpha) * cos(oldRad) + alpha * cos(newRad)
-                        val y = (1.0 - alpha) * sin(oldRad) + alpha * sin(newRad)
-                        (Math.toDegrees(atan2(y, x)) + 360.0) % 360.0
-                    } ?: rawDeg
-                }
-
-                override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
-            }
-
-            sensorManager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
-            onDispose { sensorManager.unregisterListener(listener) }
-        }
-    }
-
-    return heading
-}
-
-@Composable
 private fun StakeoutGuidancePanel(
     project: TopoProject?,
     target: SurveyPoint?,
@@ -1955,7 +1860,6 @@ private fun StakeoutGuidancePanel(
     val eastM = if (targetReached) 0.0 else displayEastM
     val distanceM = if (targetReached) 0.0 else hypot(northM, eastM)
 
-    val magneticHeadingDeg = rememberMagneticHeadingDegrees()
 
     val context = LocalContext.current
     val useGeoid = !project?.geoidFileUri.isNullOrBlank()
@@ -2016,11 +1920,6 @@ private fun StakeoutGuidancePanel(
             Text(
                 "Distancia al objetivo: %.3f m".format(rawDistanceM),
                 style = MaterialTheme.typography.bodySmall
-            )
-            Text(
-                magneticHeadingDeg?.let { "Norte magnético: %.0f°".format(it) }
-                    ?: "Norte magnético: sensor no disponible",
-                style = MaterialTheme.typography.labelSmall
             )
 
             Spacer(Modifier.height(8.dp))
@@ -2167,55 +2066,27 @@ private fun StakeoutGuidancePanel(
                             style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
                         )
 
-                        val headingRad = Math.toRadians(magneticHeadingDeg ?: 0.0)
-                        fun screenOffset(worldEast: Double, worldNorth: Double, scalePx: Float): Offset {
-                            val right = worldEast * cos(headingRad) - worldNorth * sin(headingRad)
-                            val forward = worldEast * sin(headingRad) + worldNorth * cos(headingRad)
-                            return Offset(
-                                center.x + (right * scalePx).toFloat(),
-                                center.y - (forward * scalePx).toFloat()
+                        // Mira fija al sistema de coordenadas del proyecto.
+                        // La orientación física de la tablet NO interviene:
+                        // Norte siempre arriba, Este derecha, Sur abajo, Oeste izquierda.
+                        fun screenOffset(worldEast: Double, worldNorth: Double, scalePx: Float): Offset =
+                            Offset(
+                                center.x + (worldEast * scalePx).toFloat(),
+                                center.y - (worldNorth * scalePx).toFloat()
                             )
-                        }
-
-                        val northEdge = screenOffset(0.0, 1.0, maxR)
-                        val southEdge = screenOffset(0.0, -1.0, maxR)
-                        val eastEdge = screenOffset(1.0, 0.0, maxR)
-                        val westEdge = screenOffset(-1.0, 0.0, maxR)
 
                         drawLine(
                             color = Color(0xFF355A7A),
-                            start = westEdge,
-                            end = eastEdge,
+                            start = Offset(center.x - maxR, center.y),
+                            end = Offset(center.x + maxR, center.y),
                             strokeWidth = 2.5f
                         )
                         drawLine(
                             color = Color(0xFF355A7A),
-                            start = northEdge,
-                            end = southEdge,
+                            start = Offset(center.x, center.y - maxR),
+                            end = Offset(center.x, center.y + maxR),
                             strokeWidth = 2.5f
                         )
-
-                        val labelPaint = Paint().apply {
-                            color = android.graphics.Color.rgb(31, 41, 55)
-                            textSize = 34f
-                            textAlign = Paint.Align.CENTER
-                            isFakeBoldText = true
-                        }
-                        val labelR = maxR * 1.12f
-                        listOf(
-                            Triple("N", 0.0, 1.0),
-                            Triple("E", 1.0, 0.0),
-                            Triple("S", 0.0, -1.0),
-                            Triple("O", -1.0, 0.0)
-                        ).forEach { (label, e, n) ->
-                            val p = screenOffset(e, n, labelR)
-                            drawContext.canvas.nativeCanvas.drawText(
-                                label,
-                                p.x,
-                                p.y + labelPaint.textSize * 0.35f,
-                                labelPaint
-                            )
-                        }
 
                         val displayScaleM = when {
                             distanceM > 5.0 -> 10.0
@@ -2255,6 +2126,28 @@ private fun StakeoutGuidancePanel(
                             end = Offset(center.x, center.y + 11f),
                             strokeWidth = 3f
                         )
+                    }
+
+                    Text(
+                        "N",
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter).padding(top = 8.dp),
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Text(
+                        "S",
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).padding(bottom = 8.dp),
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Row(
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center).width(270.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        Text("O", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+                        Spacer(Modifier.width(1.dp))
+                        Text("E", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
                     }
 
                     if (targetReached) {
