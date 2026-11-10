@@ -1,5 +1,6 @@
 package cr.co.topoemlid
 
+import android.os.SystemClock
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.graphics.Bitmap
@@ -118,6 +119,9 @@ fun StakeoutScreen(
         } else null
     }
     val latestStakeoutDistance by rememberUpdatedState(currentStakeoutDistanceM)
+    val latestGnssSolution by rememberUpdatedState(gnss.solution)
+    val latestGnssConnected by rememberUpdatedState(gnss.connected)
+    val latestTolerance by rememberUpdatedState(targetToleranceM)
     val toneGenerator = remember {
         ToneGenerator(AudioManager.STREAM_MUSIC, 85)
     }
@@ -134,10 +138,12 @@ fun StakeoutScreen(
         if (!showGuidance || mode != StakeoutMode.POINT || selectedPointId == null) return@LaunchedEffect
 
         var continuousCenterTone = false
+        var centeredSinceMs: Long? = null
+        var floatNotified = false
         try {
             while (true) {
                 val distance = latestStakeoutDistance
-                if (distance == null || !gnss.connected) {
+                if (distance == null || !latestGnssConnected) {
                     if (continuousCenterTone) {
                         runCatching { toneGenerator.stopTone() }
                         continuousCenterTone = false
@@ -146,9 +152,17 @@ fun StakeoutScreen(
                     continue
                 }
 
-                if (distance <= targetToleranceM) {
-                    // Dentro de 5 mm en planta: tono realmente continuo.
-                    // DTMF se mantiene activo hasta stopTone(); la elevación no interviene.
+                val isFix = latestGnssSolution.contains("FIX", ignoreCase = true)
+                val isFloat = latestGnssSolution.contains("FLOAT", ignoreCase = true)
+                val nowMs = SystemClock.elapsedRealtime()
+                if (isFix && distance <= 0.005) {
+                    if (centeredSinceMs == null) centeredSinceMs = nowMs
+                } else {
+                    centeredSinceMs = null
+                }
+                val confirmedCenter = isFix && centeredSinceMs != null &&
+                    nowMs - centeredSinceMs >= 1000L
+                if (confirmedCenter) {
                     if (!continuousCenterTone) {
                         toneGenerator.startTone(ToneGenerator.TONE_DTMF_0)
                         continuousCenterTone = true
@@ -156,13 +170,24 @@ fun StakeoutScreen(
                     delay(80)
                     continue
                 }
-
                 if (continuousCenterTone) {
                     runCatching { toneGenerator.stopTone() }
                     continuousCenterTone = false
                     delay(40)
                 }
-
+                if (isFloat && distance <= latestTolerance) {
+                    if (!floatNotified) {
+                        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 90)
+                        floatNotified = true
+                    }
+                    delay(200)
+                    continue
+                }
+                floatNotified = false
+                if (isFix && distance <= latestTolerance) {
+                    delay(120)
+                    continue
+                }
                 when {
                     distance <= 0.05 -> {
                         // Entre 5 cm y 5 mm: pulsos muy rápidos.
@@ -1913,12 +1938,23 @@ private fun StakeoutGuidancePanel(
 
     // La mira nunca "teletransporta" el punto al centro.
     // Siempre muestra la posición estable calculada.
-    val withinTolerance =
-        stableDistanceM <= toleranceM &&
-            rawDistanceM <= max(toleranceM * 1.5, toleranceM + 0.01)
-    val pointCentered =
-        stableDistanceM <= 0.005 &&
-            rawDistanceM <= 0.015
+    val isRtkFix = gnss.connected && gnss.solution.contains("FIX", ignoreCase = true)
+    val isRtkFloat = gnss.connected && gnss.solution.contains("FLOAT", ignoreCase = true)
+    val withinTolerance = rawDistanceM <= toleranceM
+    var centeredSinceMs by remember(target.id) { mutableStateOf<Long?>(null) }
+    var pointCentered by remember(target.id) { mutableStateOf(false) }
+    LaunchedEffect(target.id, rawDistanceM, isRtkFix) {
+        if (!isRtkFix || rawDistanceM > 0.005) {
+            centeredSinceMs = null
+            pointCentered = false
+        } else {
+            if (centeredSinceMs == null) centeredSinceMs = SystemClock.elapsedRealtime()
+            val remaining = 1000L - (SystemClock.elapsedRealtime() - (centeredSinceMs ?: 0L))
+            if (remaining > 0L) delay(remaining)
+            pointCentered = isRtkFix && rawDistanceM <= 0.005 &&
+                SystemClock.elapsedRealtime() - (centeredSinceMs ?: 0L) >= 1000L
+        }
+    }
 
     val northM = rawNorthM
     val eastM = rawEastM
@@ -2257,7 +2293,7 @@ private fun StakeoutGuidancePanel(
                         val markerY = marker.y.coerceIn(center.y - maxR, center.y + maxR)
 
                         drawCircle(
-                            color = if (withinTolerance) Color(0xFF2E7D32) else Color(0xFFFFC107),
+                            color = if (withinTolerance && isRtkFix) Color(0xFF2E7D32) else Color(0xFFFFC107),
                             radius = 14f,
                             center = Offset(markerX, markerY)
                         )
@@ -2284,7 +2320,7 @@ private fun StakeoutGuidancePanel(
 
                     if (withinTolerance) {
                         Text(
-                            if (pointCentered) "PUNTO CENTRADO" else "DENTRO DE TOLERANCIA",
+                            if (pointCentered) "PUNTO CENTRADO" else if (isRtkFloat) "DENTRO DE TOLERANCIA — RTK FLOAT: PRECISIÓN NO CONFIRMADA" else if (isRtkFix) "DENTRO DE TOLERANCIA" else "CERCA DEL OBJETIVO — PRECISIÓN NO CONFIRMADA",
                             modifier = Modifier
                                 .align(androidx.compose.ui.Alignment.TopCenter)
                                 .padding(top = 42.dp),
@@ -2302,7 +2338,7 @@ private fun StakeoutGuidancePanel(
 
             Text(
                 when {
-                    withinTolerance ->
+                    withinTolerance && isRtkFix ->
                         "OBJETIVO ALCANZADO • dentro de la tolerancia seleccionada (%s)"
                             .format(
                                 when {
@@ -2312,6 +2348,8 @@ private fun StakeoutGuidancePanel(
                                     else -> "5 cm"
                                 }
                             )
+                    withinTolerance ->
+                        "Dentro de tolerancia geométrica; precisión GNSS no confirmada."
                     distanceM <= 0.05 ->
                         "Ajuste final: siga la mira en centímetros o milímetros."
                     distanceM <= 0.5 ->
