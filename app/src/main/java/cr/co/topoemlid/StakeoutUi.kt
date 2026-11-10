@@ -1816,16 +1816,17 @@ private fun StakeoutGuidancePanel(
         targetElevation - currentElevation
     } else null
 
-    // La mira muestra el error; las tarjetas muestran la corrección necesaria
-    // para llevar ese error de vuelta al centro.
+    // Una sola convención en toda la vista:
+    // northM/eastM representan el desplazamiento que debe hacer la antena
+    // desde su posición actual hasta el objetivo.
     val nsLabel = when {
-        northM > 0.0005 -> "AL SUR"
-        northM < -0.0005 -> "AL NORTE"
+        northM > 0.0005 -> "AL NORTE"
+        northM < -0.0005 -> "AL SUR"
         else -> "N/S OK"
     }
     val ewLabel = when {
-        eastM > 0.0005 -> "AL OESTE"
-        eastM < -0.0005 -> "AL ESTE"
+        eastM > 0.0005 -> "AL ESTE"
+        eastM < -0.0005 -> "AL OESTE"
         else -> "E/O OK"
     }
     val verticalLabel = when {
@@ -1869,8 +1870,8 @@ private fun StakeoutGuidancePanel(
                     ) {
                         Text(
                             when {
-                                northM > 0.0005 -> "↓"
-                                northM < -0.0005 -> "↑"
+                                northM > 0.0005 -> "↑"
+                                northM < -0.0005 -> "↓"
                                 else -> "✓"
                             },
                             style = MaterialTheme.typography.headlineSmall,
@@ -1892,8 +1893,8 @@ private fun StakeoutGuidancePanel(
                     ) {
                         Text(
                             when {
-                                eastM > 0.0005 -> "←"
-                                eastM < -0.0005 -> "→"
+                                eastM > 0.0005 -> "→"
+                                eastM < -0.0005 -> "←"
                                 else -> "✓"
                             },
                             style = MaterialTheme.typography.headlineSmall,
@@ -1989,6 +1990,8 @@ private fun StakeoutGuidancePanel(
                             distanceM > 0.10 -> 0.5
                             else -> 0.10
                         }
+                        // El punto amarillo representa hacia dónde debe moverse
+                        // la antena para llegar al objetivo: N arriba, E derecha.
                         val dx = (eastM / displayScaleM * maxR).toFloat().coerceIn(-maxR, maxR)
                         val dy = (-northM / displayScaleM * maxR).toFloat().coerceIn(-maxR, maxR)
 
