@@ -964,7 +964,12 @@ private fun ReceiverSubPage(
             }
 
             ReceiverPage.WIFI -> ReceiverWifiLocalPanel(receiver)
-            ReceiverPage.INFO -> ReceiverInfoLocalPanel(receiver, gnss)
+            ReceiverPage.INFO -> ReceiverInfoLocalPanel(
+                receiver = receiver,
+                gnss = gnss,
+                onPauseReceiverForBle = onPauseReceiverForBle,
+                onResumeReceiverAfterBle = onResumeReceiverAfterBle
+            )
             ReceiverPage.ADVANCED -> ReceiverAdvancedIoPanel(
                 receiver = receiver,
                 onPauseReceiverForBle = onPauseReceiverForBle,
@@ -1065,7 +1070,7 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
 
     Spacer(Modifier.height(8.dp))
     OutlinedButton(
-        enabled = host.isNotBlank() && !loading,
+        enabled = !loading,
         onClick = {
             loading = true
             error = null
@@ -1103,7 +1108,12 @@ private fun ReceiverWifiLocalPanel(receiver: ReceiverProfile) {
 }
 
 @Composable
-private fun ReceiverInfoLocalPanel(receiver: ReceiverProfile, gnss: GnssStatus) {
+private fun ReceiverInfoLocalPanel(
+    receiver: ReceiverProfile,
+    gnss: GnssStatus,
+    onPauseReceiverForBle: () -> Unit,
+    onResumeReceiverAfterBle: () -> Unit
+) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val localPrefs = remember { context.getSharedPreferences("reach_local_hosts", Context.MODE_PRIVATE) }
@@ -1121,24 +1131,64 @@ private fun ReceiverInfoLocalPanel(receiver: ReceiverProfile, gnss: GnssStatus) 
     var device by remember { mutableStateOf<ReachDeviceStatus?>(null) }
     var wifi by remember { mutableStateOf<ReachWifiStatus?>(null) }
     var confirmAction by remember { mutableStateOf<ReachLocalAction?>(null) }
+    val bleClient = remember(receiver.address, receiver.name) {
+        ReachBleAdminClient(context, receiver.address, receiver.name)
+    }
+
+    fun successMessage(action: ReachLocalAction): String = when (action) {
+        ReachLocalAction.FIND_REACH -> "Orden enviada: el receptor debe parpadear sus luces."
+        ReachLocalAction.REBOOT -> "Orden de reinicio enviada."
+        ReachLocalAction.SHUTDOWN -> "Orden de apagado enviada."
+        ReachLocalAction.RESET_RTK -> "Orden de reinicio RTK enviada."
+    }
 
     fun runAction(action: ReachLocalAction) {
-        if (host.isBlank()) return
         loading = true
         error = null
         message = null
         scope.launch {
-            val result = ReachLocalApiClient(host).sendAction(action)
-            result
-                .onSuccess {
-                    message = when (action) {
-                        ReachLocalAction.FIND_REACH -> "Orden enviada: el receptor debe parpadear sus luces."
-                        ReachLocalAction.REBOOT -> "Orden de reinicio enviada."
-                        ReachLocalAction.SHUTDOWN -> "Orden de apagado enviada."
-                        ReachLocalAction.RESET_RTK -> "Orden de reinicio RTK enviada."
-                    }
+            var localError: Throwable? = null
+            val localResult = if (host.isNotBlank()) {
+                ReachLocalApiClient(host).sendAction(action).also { result ->
+                    result.exceptionOrNull()?.let { localError = it }
                 }
-                .onFailure { error = it.message ?: "No se pudo enviar la orden al Reach." }
+            } else {
+                Result.failure(IllegalStateException("Sin host local configurado."))
+            }
+
+            if (localResult.isSuccess) {
+                message = successMessage(action) + " • Vía local."
+                loading = false
+                return@launch
+            }
+
+            message = "La vía local no respondió; intentando por BLE…"
+            val restoreAfterBle =
+                action == ReachLocalAction.FIND_REACH || action == ReachLocalAction.RESET_RTK
+
+            val bleResult = runCatching {
+                onPauseReceiverForBle()
+                kotlinx.coroutines.delay(1_800L)
+                bleClient.sendAdminAction(action).getOrThrow()
+            }
+
+            bleClient.close()
+
+            if (restoreAfterBle) {
+                kotlinx.coroutines.delay(700L)
+                onResumeReceiverAfterBle()
+            }
+
+            bleResult
+                .onSuccess {
+                    message = successMessage(action) + " • Vía BLE."
+                }
+                .onFailure { bleError ->
+                    val localText = localError?.message ?: "sin respuesta local"
+                    error = "Falló la vía local ($localText) y también BLE: " +
+                        (bleError.message ?: "sin detalle")
+                }
+
             loading = false
         }
     }
@@ -1164,7 +1214,7 @@ private fun ReceiverInfoLocalPanel(receiver: ReceiverProfile, gnss: GnssStatus) 
 
     Spacer(Modifier.height(8.dp))
     Button(
-        enabled = host.isNotBlank() && !loading,
+        enabled = !loading,
         onClick = {
             loading = true
             error = null
@@ -1224,25 +1274,25 @@ private fun ReceiverInfoLocalPanel(receiver: ReceiverProfile, gnss: GnssStatus) 
     Spacer(Modifier.height(8.dp))
     OutlinedButton(
         onClick = { runAction(ReachLocalAction.FIND_REACH) },
-        enabled = host.isNotBlank() && !loading,
+        enabled = !loading,
         modifier = Modifier.fillMaxWidth()
     ) { Text("Parpadear luces / Identificar") }
 
     OutlinedButton(
         onClick = { confirmAction = ReachLocalAction.RESET_RTK },
-        enabled = host.isNotBlank() && !loading,
+        enabled = !loading,
         modifier = Modifier.fillMaxWidth()
     ) { Text("Reiniciar RTK") }
 
     OutlinedButton(
         onClick = { confirmAction = ReachLocalAction.REBOOT },
-        enabled = host.isNotBlank() && !loading,
+        enabled = !loading,
         modifier = Modifier.fillMaxWidth()
     ) { Text("Reiniciar receptor") }
 
     Button(
         onClick = { confirmAction = ReachLocalAction.SHUTDOWN },
-        enabled = host.isNotBlank() && !loading,
+        enabled = !loading,
         modifier = Modifier.fillMaxWidth(),
         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
     ) { Text("Apagar receptor") }
