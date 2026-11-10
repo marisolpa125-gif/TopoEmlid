@@ -178,6 +178,7 @@ fun SurveyScreen(
 
     var measuring by remember { mutableStateOf(false) }
     var secondsRemaining by remember { mutableIntStateOf(0) }
+    val latestGnss by rememberUpdatedState(gnss)
     var lastMessage by remember { mutableStateOf<String?>(null) }
     var pendingQuickMeasureCode by remember { mutableStateOf<String?>(null) }
     var quickCodes by remember(project?.id) {
@@ -375,19 +376,66 @@ fun SurveyScreen(
             return@LaunchedEffect
         }
 
-        while (secondsRemaining > 0 && measuring) {
-            delay(1000)
-            secondsRemaining -= 1
+        data class Sample(
+            val lat: Double,
+            val lon: Double,
+            val h: Double?,
+            val hAcc: Double?,
+            val vAcc: Double?,
+            val satellites: Int?,
+            val solution: String
+        )
+
+        val allSamples = mutableListOf<Sample>()
+        val fixSamples = mutableListOf<Sample>()
+        val startedAt = System.currentTimeMillis()
+        var lastShownSecond = 0
+
+        while (measuring && secondsRemaining > 0) {
+            val g = latestGnss
+            val latNow = g.latitude
+            val lonNow = g.longitude
+            if (g.connected && latNow != null && lonNow != null) {
+                val sample = Sample(
+                    lat = latNow,
+                    lon = lonNow,
+                    h = g.ellipsoidalHeightM,
+                    hAcc = g.horizontalAccuracyM,
+                    vAcc = g.verticalAccuracyM,
+                    satellites = g.satellites,
+                    solution = g.solution
+                )
+                allSamples += sample
+                if (g.solution.contains("FIX", ignoreCase = true)) {
+                    fixSamples += sample
+                }
+            }
+
+            delay(200)
+
+            val elapsed = ((System.currentTimeMillis() - startedAt) / 1000L).toInt()
+            if (elapsed > lastShownSecond) {
+                val remaining = (seconds.toIntOrNull()?.coerceIn(1, 600) ?: 5) - elapsed
+                secondsRemaining = remaining.coerceAtLeast(0)
+                lastShownSecond = elapsed
+            }
         }
 
         if (measuring && secondsRemaining == 0) {
-            val lat = gnss.latitude
-            val lon = gnss.longitude
-            if (lat == null || lon == null) {
+            val chosen = if (fixSamples.size >= 3) fixSamples else allSamples
+            if (chosen.isEmpty()) {
                 measuring = false
                 lastMessage = "No hay coordenadas GNSS válidas para guardar."
                 return@LaunchedEffect
             }
+
+            val lat = chosen.map { it.lat }.average()
+            val lon = chosen.map { it.lon }.average()
+            val ellipsoidal = chosen.mapNotNull { it.h }.takeIf { it.isNotEmpty() }?.average()
+            val horizontalAccuracy = chosen.mapNotNull { it.hAcc }.takeIf { it.isNotEmpty() }?.average()
+            val verticalAccuracy = chosen.mapNotNull { it.vAcc }.takeIf { it.isNotEmpty() }?.average()
+            val satellitesAvg = chosen.mapNotNull { it.satellites }.takeIf { it.isNotEmpty() }?.average()?.roundToInt()
+            val solutionForSaved = if (fixSamples.size >= 3) "FIX" else chosen.last().solution
 
             val projected = runCatching {
                 ProjectCoordinateEngine.fromWgs84(lat, lon, p.crsName)
@@ -396,8 +444,6 @@ fun SurveyScreen(
                 lastMessage = "No se pudo transformar al CRS del proyecto: ${it.message}"
                 return@LaunchedEffect
             }
-
-            val ellipsoidal = gnss.ellipsoidalHeightM
             var geoidUndulation: Double? = null
             var orthometric: Double? = null
             if (ellipsoidal != null && p.geoidFileUri != null) {
@@ -435,10 +481,10 @@ fun SurveyScreen(
                 orthometricHeightM = orthometric,
                 geoidUndulationM = geoidUndulation,
                 geoidFileName = p.geoidFileName,
-                verticalAccuracyM = gnss.verticalAccuracyM,
-                horizontalAccuracyM = gnss.horizontalAccuracyM,
-                solution = gnss.solution,
-                satellites = gnss.satellites
+                verticalAccuracyM = verticalAccuracy,
+                horizontalAccuracyM = horizontalAccuracy,
+                solution = solutionForSaved,
+                satellites = satellitesAvg
             )
 
             val updated = savedPoints + saved
