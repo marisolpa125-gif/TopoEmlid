@@ -27,6 +27,7 @@ data class GnssStatus(
     val nmeaReceiving: Boolean = false,
     val lastNmeaSentence: String? = null,
     val lastNmeaAt: Long? = null,
+    val ggaRateHz: Double? = null,
     val correctionAgeS: Double? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
