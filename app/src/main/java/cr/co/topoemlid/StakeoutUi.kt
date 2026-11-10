@@ -1870,8 +1870,33 @@ private fun StakeoutGuidancePanel(
                 "Distancia al objetivo: %.3f m".format(distanceM),
                 style = MaterialTheme.typography.bodySmall
             )
+            Text(
+                magneticHeadingDeg?.let { "Norte magnético: %.0f°".format(it) }
+                    ?: "Norte magnético: sensor no disponible",
+                style = MaterialTheme.typography.labelSmall
+            )
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
+            Text("Tolerancia de llegada", fontWeight = FontWeight.Bold)
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(
+                    0.005 to "5 mm",
+                    0.01 to "1 cm",
+                    0.02 to "2 cm",
+                    0.05 to "5 cm"
+                ).forEach { (value, label) ->
+                    FilterChip(
+                        selected = abs(toleranceM - value) < 0.0001,
+                        onClick = { onToleranceChanged(value) },
+                        label = { Text(label) }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(10.dp)
 
             Row(
                 Modifier.fillMaxWidth(),
@@ -1995,18 +2020,55 @@ private fun StakeoutGuidancePanel(
                             style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
                         )
 
+                        val headingRad = Math.toRadians(magneticHeadingDeg ?: 0.0)
+                        fun screenOffset(worldEast: Double, worldNorth: Double, scalePx: Float): Offset {
+                            val right = worldEast * cos(headingRad) - worldNorth * sin(headingRad)
+                            val forward = worldEast * sin(headingRad) + worldNorth * cos(headingRad)
+                            return Offset(
+                                center.x + (right * scalePx).toFloat(),
+                                center.y - (forward * scalePx).toFloat()
+                            )
+                        }
+
+                        val northEdge = screenOffset(0.0, 1.0, maxR)
+                        val southEdge = screenOffset(0.0, -1.0, maxR)
+                        val eastEdge = screenOffset(1.0, 0.0, maxR)
+                        val westEdge = screenOffset(-1.0, 0.0, maxR)
+
                         drawLine(
                             color = Color(0xFF355A7A),
-                            start = Offset(center.x - maxR, center.y),
-                            end = Offset(center.x + maxR, center.y),
+                            start = westEdge,
+                            end = eastEdge,
                             strokeWidth = 2.5f
                         )
                         drawLine(
                             color = Color(0xFF355A7A),
-                            start = Offset(center.x, center.y - maxR),
-                            end = Offset(center.x, center.y + maxR),
+                            start = northEdge,
+                            end = southEdge,
                             strokeWidth = 2.5f
                         )
+
+                        val labelPaint = Paint().apply {
+                            color = android.graphics.Color.rgb(31, 41, 55)
+                            textSize = 34f
+                            textAlign = Paint.Align.CENTER
+                            isFakeBoldText = true
+                        }
+                        val labelR = maxR * 1.12f
+                        listOf(
+                            Triple("N", 0.0, 1.0),
+                            Triple("E", 1.0, 0.0),
+                            Triple("S", 0.0, -1.0),
+                            Triple("O", -1.0, 0.0)
+                        ).forEach { (label, e, n) ->
+                            val p = screenOffset(e, n, labelR)
+                            drawContext.canvas.nativeCanvas.drawText(
+                                label,
+                                p.x,
+                                p.y + labelPaint.textSize * 0.35f,
+                                labelPaint
+                            )
+                        }
 
                         val displayScaleM = when {
                             distanceM > 5.0 -> 10.0
@@ -2014,20 +2076,23 @@ private fun StakeoutGuidancePanel(
                             distanceM > 0.10 -> 0.5
                             else -> 0.10
                         }
-                        // El punto amarillo representa hacia dónde debe moverse
-                        // la antena para llegar al objetivo: N arriba, E derecha.
-                        val dx = (eastM / displayScaleM * maxR).toFloat().coerceIn(-maxR, maxR)
-                        val dy = (-northM / displayScaleM * maxR).toFloat().coerceIn(-maxR, maxR)
+                        val marker = screenOffset(
+                            worldEast = eastM / displayScaleM,
+                            worldNorth = northM / displayScaleM,
+                            scalePx = maxR
+                        )
+                        val markerX = marker.x.coerceIn(center.x - maxR, center.x + maxR)
+                        val markerY = marker.y.coerceIn(center.y - maxR, center.y + maxR)
 
                         drawCircle(
                             color = Color(0xFFFFC107),
                             radius = 14f,
-                            center = Offset(center.x + dx, center.y + dy)
+                            center = Offset(markerX, markerY)
                         )
                         drawCircle(
                             color = Color(0xFF1F2937),
                             radius = 14f,
-                            center = Offset(center.x + dx, center.y + dy),
+                            center = Offset(markerX, markerY),
                             style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)
                         )
 
@@ -2060,41 +2125,7 @@ private fun StakeoutGuidancePanel(
                         )
                     }
 
-                    Text(
-                        "N",
-                        modifier = Modifier
-                            .align(androidx.compose.ui.Alignment.TopCenter)
-                            .padding(top = 10.dp),
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                    Text(
-                        "S",
-                        modifier = Modifier
-                            .align(androidx.compose.ui.Alignment.BottomCenter)
-                            .padding(bottom = 10.dp),
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                    Row(
-                        modifier = Modifier
-                            .align(androidx.compose.ui.Alignment.Center)
-                            .width(270.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "O",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.titleLarge
-                        )
-                        Spacer(Modifier.width(1.dp))
-                        Text(
-                            "E",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.titleLarge
-                        )
-                    }
+
                 }
             }
 
@@ -2102,16 +2133,24 @@ private fun StakeoutGuidancePanel(
 
             Text(
                 when {
-                    distanceM <= 0.005 ->
-                        "OBJETIVO ALCANZADO • posición horizontal dentro de 5 mm"
+                    distanceM <= toleranceM ->
+                        "OBJETIVO ALCANZADO • dentro de la tolerancia seleccionada (%s)"
+                            .format(
+                                when {
+                                    toleranceM <= 0.0051 -> "5 mm"
+                                    toleranceM <= 0.0101 -> "1 cm"
+                                    toleranceM <= 0.0201 -> "2 cm"
+                                    else -> "5 cm"
+                                }
+                            )
                     distanceM <= 0.05 ->
-                        "Ajuste final: siga las flechas en centímetros o milímetros."
+                        "Ajuste final: siga la mira en centímetros o milímetros."
                     distanceM <= 0.5 ->
-                        "Lleve la mira amarilla al centro."
+                        "Lleve el punto amarillo al centro."
                     else ->
-                        "Acérquese siguiendo las indicaciones Norte/Sur y Este/Oeste."
+                        "Acérquese siguiendo la mira y las correcciones Norte/Sur y Este/Oeste."
                 },
-                fontWeight = if (distanceM <= 0.005) FontWeight.Bold else FontWeight.Normal,
+                fontWeight = if (distanceM <= toleranceM) FontWeight.Bold else FontWeight.Normal,
                 style = MaterialTheme.typography.bodyMedium
             )
 
