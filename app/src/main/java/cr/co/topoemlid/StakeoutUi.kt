@@ -1866,8 +1866,25 @@ private fun StakeoutGuidancePanel(
 
     val metersPerDegLat = 111132.0
     val metersPerDegLon = 111320.0 * cos(Math.toRadians(target.latitude))
-    val rawNorthM = (target.latitude - lat) * metersPerDegLat
-    val rawEastM = (target.longitude - lon) * metersPerDegLon
+
+    val projectedDelta = if (
+        project != null &&
+        project.crsName != "WGS 84 geográficas" &&
+        target.eastingM != null &&
+        target.northingM != null
+    ) {
+        runCatching {
+            val currentProjected = ProjectCoordinateEngine.fromWgs84(lat, lon, project.crsName)
+            val currentE = currentProjected.eastingM
+            val currentN = currentProjected.northingM
+            if (currentE != null && currentN != null) {
+                (target.northingM - currentN) to (target.eastingM - currentE)
+            } else null
+        }.getOrNull()
+    } else null
+
+    val rawNorthM = projectedDelta?.first ?: ((target.latitude - lat) * metersPerDegLat)
+    val rawEastM = projectedDelta?.second ?: ((target.longitude - lon) * metersPerDegLon)
     val rawDistanceM = hypot(rawNorthM, rawEastM)
 
     // La posición RTK cruda se conserva para cálculos/guardado. La mira usa
