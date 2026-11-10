@@ -2341,12 +2341,12 @@ private fun StakeoutGuidancePanel(
                         )
                     }
 
-                    if (targetReached) {
+                    if (withinTolerance) {
                         Canvas(Modifier.matchParentSize()) {
                             drawRect(Color(0x5534A853))
                         }
                         Text(
-                            "PUNTO ALCANZADO",
+                            if (pointCentered) "PUNTO CENTRADO" else "DENTRO DE TOLERANCIA",
                             modifier = Modifier
                                 .align(androidx.compose.ui.Alignment.TopCenter)
                                 .padding(top = 42.dp),
@@ -2364,7 +2364,7 @@ private fun StakeoutGuidancePanel(
 
             Text(
                 when {
-                    targetReached ->
+                    withinTolerance ->
                         "OBJETIVO ALCANZADO • dentro de la tolerancia seleccionada (%s)"
                             .format(
                                 when {
@@ -2381,7 +2381,7 @@ private fun StakeoutGuidancePanel(
                     else ->
                         "Acérquese siguiendo la mira y las correcciones Norte/Sur y Este/Oeste."
                 },
-                fontWeight = if (targetReached) FontWeight.Bold else FontWeight.Normal,
+                fontWeight = if (withinTolerance) FontWeight.Bold else FontWeight.Normal,
                 style = MaterialTheme.typography.bodyMedium
             )
 
