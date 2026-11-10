@@ -1822,40 +1822,61 @@ private fun StakeoutGuidancePanel(
     val rawDistanceM = hypot(rawNorthM, rawEastM)
 
     // La posición RTK cruda se conserva para cálculos/guardado. La mira usa
-    // una versión suavizada únicamente para evitar saltos visuales cerca del objetivo.
+    // una ventana mediana corta para rechazar saltos aislados de varios centímetros.
+    var recentDeltas by remember(target.id) {
+        mutableStateOf(listOf(rawNorthM to rawEastM))
+    }
     var displayNorthM by remember(target.id) { mutableDoubleStateOf(rawNorthM) }
     var displayEastM by remember(target.id) { mutableDoubleStateOf(rawEastM) }
 
+    fun median(values: List<Double>): Double {
+        if (values.isEmpty()) return 0.0
+        val sorted = values.sorted()
+        val mid = sorted.size / 2
+        return if (sorted.size % 2 == 1) sorted[mid]
+        else (sorted[mid - 1] + sorted[mid]) / 2.0
+    }
+
     LaunchedEffect(rawNorthM, rawEastM, target.id) {
+        recentDeltas = (recentDeltas + (rawNorthM to rawEastM)).takeLast(7)
+
+        val stableNorth = median(recentDeltas.map { it.first })
+        val stableEast = median(recentDeltas.map { it.second })
+        val stableDistance = hypot(stableNorth, stableEast)
         val currentVisualDistance = hypot(displayNorthM, displayEastM)
+
         val alpha = when {
-            rawDistanceM > 2.0 -> 0.80
-            rawDistanceM > 0.50 -> 0.55
-            rawDistanceM > 0.10 -> 0.32
-            else -> 0.18
+            stableDistance > 2.0 -> 0.85
+            stableDistance > 0.50 -> 0.62
+            stableDistance > 0.10 -> 0.40
+            else -> 0.24
         }
 
-        // Si el salto instantáneo es enorme cerca del punto, amortiguarlo aún más.
-        val jump = hypot(rawNorthM - displayNorthM, rawEastM - displayEastM)
+        val jump = hypot(stableNorth - displayNorthM, stableEast - displayEastM)
         val effectiveAlpha = when {
-            rawDistanceM < 0.50 && jump > 0.20 -> min(alpha, 0.12)
-            currentVisualDistance < 0.10 && jump > 0.10 -> min(alpha, 0.10)
+            stableDistance < 0.50 && jump > 0.20 -> min(alpha, 0.16)
+            currentVisualDistance < 0.10 && jump > 0.10 -> min(alpha, 0.12)
             else -> alpha
         }
 
-        displayNorthM += (rawNorthM - displayNorthM) * effectiveAlpha
-        displayEastM += (rawEastM - displayEastM) * effectiveAlpha
+        displayNorthM += (stableNorth - displayNorthM) * effectiveAlpha
+        displayEastM += (stableEast - displayEastM) * effectiveAlpha
 
-        // Zona muerta visual muy pequeña para que el punto no tiemble alrededor del centro.
+        // Zona muerta visual de 4 mm para que no tiemble alrededor del centro.
         if (abs(displayNorthM) < 0.004) displayNorthM = 0.0
         if (abs(displayEastM) < 0.004) displayEastM = 0.0
     }
 
-    val targetReached = rawDistanceM <= toleranceM
+    val stableNorthM = median(recentDeltas.map { it.first })
+    val stableEastM = median(recentDeltas.map { it.second })
+    val stableDistanceM = hypot(stableNorthM, stableEastM)
 
-    // Si la medición real ya está dentro de la tolerancia, la mira debe
-    // coincidir visualmente con ese estado y mostrar el objetivo exactamente
-    // en el centro. Fuera de tolerancia se conserva el suavizado visual.
+    // Para declarar objetivo alcanzado exigimos estabilidad: la mediana debe
+    // estar dentro de tolerancia y la lectura instantánea no puede ser un salto lejano.
+    val targetReached =
+        stableDistanceM <= toleranceM &&
+            rawDistanceM <= max(toleranceM * 1.5, toleranceM + 0.01)
+
     val northM = if (targetReached) 0.0 else displayNorthM
     val eastM = if (targetReached) 0.0 else displayEastM
     val distanceM = if (targetReached) 0.0 else hypot(northM, eastM)
@@ -1918,7 +1939,7 @@ private fun StakeoutGuidancePanel(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                "Distancia al objetivo: %.3f m".format(rawDistanceM),
+                "Distancia estable al objetivo: %.3f m".format(stableDistanceM),
                 style = MaterialTheme.typography.bodySmall
             )
 
@@ -2173,7 +2194,7 @@ private fun StakeoutGuidancePanel(
 
             Text(
                 when {
-                    rawDistanceM <= toleranceM ->
+                    targetReached ->
                         "OBJETIVO ALCANZADO • dentro de la tolerancia seleccionada (%s)"
                             .format(
                                 when {
@@ -2190,7 +2211,7 @@ private fun StakeoutGuidancePanel(
                     else ->
                         "Acérquese siguiendo la mira y las correcciones Norte/Sur y Este/Oeste."
                 },
-                fontWeight = if (rawDistanceM <= toleranceM) FontWeight.Bold else FontWeight.Normal,
+                fontWeight = if (targetReached) FontWeight.Bold else FontWeight.Normal,
                 style = MaterialTheme.typography.bodyMedium
             )
 
