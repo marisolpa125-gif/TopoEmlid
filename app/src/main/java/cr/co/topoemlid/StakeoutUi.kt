@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -244,6 +245,8 @@ fun StakeoutScreen(
             pointDisplaySettings = pointDisplaySettings,
             ntrip = ntrip,
             onTargetSelected = { id -> onSelectedPointIdChanged(id) },
+            toleranceM = targetToleranceM,
+            onToleranceChanged = { targetToleranceM = it },
             onStop = {
                 onActiveChanged(false)
                 showGuidance = false
@@ -1227,8 +1230,6 @@ private fun StakeoutCompactOverlay(
     val northM = (tLat - lat) * 111132.0
     val eastM = (tLon - lon) * (111320.0 * cos(Math.toRadians(tLat)))
     val distanceM = hypot(northM, eastM)
-    val targetReached = distanceM <= toleranceM
-    val magneticHeadingDeg = rememberMagneticHeadingDegrees()
 
     val context = LocalContext.current
     val useGeoid = !project?.geoidFileUri.isNullOrBlank()
@@ -1957,7 +1958,7 @@ private fun StakeoutGuidancePanel(
                 }
             }
 
-            Spacer(Modifier.height(10.dp)
+            Spacer(Modifier.height(10.dp))
 
             Row(
                 Modifier.fillMaxWidth(),
