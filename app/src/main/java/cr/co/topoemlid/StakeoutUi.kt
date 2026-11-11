@@ -138,29 +138,14 @@ fun StakeoutScreen(
         if (!showGuidance || mode != StakeoutMode.POINT || selectedPointId == null) return@LaunchedEffect
 
         var continuousCenterTone = false
-        var centeredSinceMs: Long? = null
         try {
             while (true) {
                 val distance = latestStakeoutDistance
-                if (distance == null || !latestGnssConnected) {
-                    if (continuousCenterTone) {
-                        runCatching { toneGenerator.stopTone() }
-                        continuousCenterTone = false
-                    }
-                    delay(250)
-                    continue
-                }
-
-                val isFix = latestGnssSolution.contains("FIX", ignoreCase = true)
-                val isFloat = latestGnssSolution.contains("FLOAT", ignoreCase = true)
-                val nowMs = SystemClock.elapsedRealtime()
-                if (isFix && distance <= 0.005) {
-                    if (centeredSinceMs == null) centeredSinceMs = nowMs
-                } else {
-                    centeredSinceMs = null
-                }
-                val confirmedCenter = isFix && (centeredSinceMs?.let { nowMs - it >= 1000L } == true)
-                if (confirmedCenter) {
+                val isFix = latestGnssConnected &&
+                    latestGnssSolution.contains("FIX", ignoreCase = true) &&
+                    !latestGnssSolution.contains("NO FIX", ignoreCase = true)
+                val inside = distance != null && distance <= latestTolerance && isFix
+                if (inside) {
                     if (!continuousCenterTone) {
                         toneGenerator.startTone(ToneGenerator.TONE_DTMF_0)
                         continuousCenterTone = true
@@ -169,23 +154,17 @@ fun StakeoutScreen(
                     continue
                 }
                 if (continuousCenterTone) {
-                    runCatching { toneGenerator.stopTone() }
+                    toneGenerator.stopTone()
                     continuousCenterTone = false
-                    delay(40)
                 }
-                // FLOAT conserva únicamente el anuncio de voz GNSS ya existente.
-                // No emitir un pitido extra de llegada ni confirmar precisión.
-                if (isFloat && distance <= latestTolerance) {
+                // Conservar las voces GNSS existentes: no añadir avisos para FLOAT.
+                if (distance == null || !latestGnssConnected ||
+                    latestGnssSolution.contains("FLOAT", ignoreCase = true)) {
                     delay(200)
-                    continue
-                }
-                if (isFix && distance <= latestTolerance) {
-                    delay(120)
                     continue
                 }
                 when {
                     distance <= 0.05 -> {
-                        // Entre 5 cm y 5 mm: pulsos muy rápidos.
                         toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 90)
                         delay(150)
                     }
@@ -2203,7 +2182,7 @@ private fun StakeoutGuidancePanel(
 
                         // Rosa giratoria según rumbo magnético de la tablet.
                         // Centro = objetivo; marcador = posición actual de la antena.
-                        val declinationRad = Math.toRadians(magneticDeclinationDeg)
+                        val declinationRad = Math.toRadians(if (compassEnabled && rotationSensor != null) magneticDeclinationDeg else 0.0)
                         val headingRad = Math.toRadians(if (compassEnabled && rotationSensor != null) headingMagneticDeg else 0.0)
 
                         fun projectToMagnetic(worldEast: Double, worldNorth: Double): Pair<Double, Double> {
@@ -2259,20 +2238,24 @@ private fun StakeoutGuidancePanel(
                             )
                         }
 
-                        val displayDistanceM = hypot(northM, eastM)
+                        // La tolerancia elegida define el radio exterior de la mira
+                        // en la zona de precisión: 2 cm = anillo exterior de 2 cm.
+                        // Mismo delta RTK para números, aviso y marcador.
+                        val displayDistanceM = rawDistanceM
                         val displayScaleM = when {
-                            displayDistanceM > 5.0 -> 10.0
-                            displayDistanceM > 0.5 -> 2.0
-                            displayDistanceM > 0.10 -> 0.5
-                            displayDistanceM > 0.05 -> 0.20
-                            displayDistanceM > 0.02 -> 0.10
-                            else -> 0.05
+                            displayDistanceM <= toleranceM -> toleranceM
+                            displayDistanceM <= toleranceM * 2.0 -> toleranceM * 2.0
+                            displayDistanceM <= toleranceM * 5.0 -> toleranceM * 5.0
+                            displayDistanceM <= 0.50 -> 0.50
+                            displayDistanceM <= 2.0 -> 2.0
+                            displayDistanceM <= 10.0 -> 10.0
+                            else -> displayDistanceM * 1.2
                         }
 
                         // northM/eastM son objetivo - antena (corrección).
                         // Para dibujar la ANTENA respecto al objetivo usamos el signo opuesto.
-                        val antennaNorth = -northM
-                        val antennaEast = -eastM
+                        val antennaNorth = -rawNorthM
+                        val antennaEast = -rawEastM
                         val (antennaMagEast, antennaMagNorth) =
                             projectToMagnetic(
                                 antennaEast / displayScaleM,
