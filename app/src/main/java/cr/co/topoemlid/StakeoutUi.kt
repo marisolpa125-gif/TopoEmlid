@@ -140,10 +140,10 @@ fun StakeoutScreen(
         val lon0 = gnss.longitude!!
         val scaleE = 111320.0 * cos(Math.toRadians(lat0))
         lineSegments.mapIndexed { index, pair ->
-            val ax = (pair.first.longitude() - lon0) * scaleE
-            val ay = (pair.first.latitude() - lat0) * 111132.0
-            val bx = (pair.second.longitude() - lon0) * scaleE
-            val by = (pair.second.latitude() - lat0) * 111132.0
+            val ax = (pair.first.longitude - lon0) * scaleE
+            val ay = (pair.first.latitude - lat0) * 111132.0
+            val bx = (pair.second.longitude - lon0) * scaleE
+            val by = (pair.second.latitude - lat0) * 111132.0
             val vx = bx - ax
             val vy = by - ay
             val len2 = vx * vx + vy * vy
