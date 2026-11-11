@@ -1839,21 +1839,54 @@ private fun StakeoutGuidancePanel(
     // Rumbo de la tablet medido en reposo. Si falta el sensor, mantener norte arriba.
     val sensorManager = remember { context.getSystemService(Context.SENSOR_SERVICE) as SensorManager }
     val rotationSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR) }
+    val magneticSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD) }
+    val gravitySensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) }
+    val compassAvailable = rotationSensor != null || (magneticSensor != null && gravitySensor != null)
     var headingMagneticDeg by remember { mutableDoubleStateOf(0.0) }
     var compassEnabled by remember { mutableStateOf(true) }
-    DisposableEffect(sensorManager, rotationSensor, compassEnabled) {
+    DisposableEffect(sensorManager, rotationSensor, magneticSensor, gravitySensor, compassEnabled) {
+        var gravity: FloatArray? = null
+        var magnetic: FloatArray? = null
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
                 val matrix = FloatArray(9)
-                SensorManager.getRotationMatrixFromVector(matrix, event.values)
+                when (event.sensor.type) {
+                    Sensor.TYPE_ROTATION_VECTOR ->
+                        SensorManager.getRotationMatrixFromVector(matrix, event.values)
+                    Sensor.TYPE_ACCELEROMETER -> {
+                        gravity = event.values.clone()
+                        if (magnetic == null || !SensorManager.getRotationMatrix(matrix, null, gravity, magnetic)) return
+                    }
+                    Sensor.TYPE_MAGNETIC_FIELD -> {
+                        magnetic = event.values.clone()
+                        if (gravity == null || !SensorManager.getRotationMatrix(matrix, null, gravity, magnetic)) return
+                    }
+                    else -> return
+                }
+                // Compensar la orientación de pantalla; no usar el rumbo GNSS de marcha.
+                val displayRotation = (context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager)
+                    .defaultDisplay.rotation
+                val (axisX, axisY) = when (displayRotation) {
+                    android.view.Surface.ROTATION_90 -> SensorManager.AXIS_Y to SensorManager.AXIS_MINUS_X
+                    android.view.Surface.ROTATION_180 -> SensorManager.AXIS_MINUS_X to SensorManager.AXIS_MINUS_Y
+                    android.view.Surface.ROTATION_270 -> SensorManager.AXIS_MINUS_Y to SensorManager.AXIS_X
+                    else -> SensorManager.AXIS_X to SensorManager.AXIS_Y
+                }
+                val remapped = FloatArray(9)
+                if (!SensorManager.remapCoordinateSystem(matrix, axisX, axisY, remapped)) return
                 val angles = FloatArray(3)
-                SensorManager.getOrientation(matrix, angles)
+                SensorManager.getOrientation(remapped, angles)
                 headingMagneticDeg = (Math.toDegrees(angles[0].toDouble()) + 360.0) % 360.0
             }
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
         }
-        if (compassEnabled && rotationSensor != null) {
-            sensorManager.registerListener(listener, rotationSensor, SensorManager.SENSOR_DELAY_GAME)
+        if (compassEnabled) {
+            if (rotationSensor != null) {
+                sensorManager.registerListener(listener, rotationSensor, SensorManager.SENSOR_DELAY_GAME)
+            } else if (gravitySensor != null && magneticSensor != null) {
+                sensorManager.registerListener(listener, gravitySensor, SensorManager.SENSOR_DELAY_GAME)
+                sensorManager.registerListener(listener, magneticSensor, SensorManager.SENSOR_DELAY_GAME)
+            }
         }
         onDispose { sensorManager.unregisterListener(listener) }
     }
@@ -2017,11 +2050,11 @@ private fun StakeoutGuidancePanel(
                 style = MaterialTheme.typography.bodySmall
             )
             Text(
-                if (rotationSensor == null) "Sin brújula: norte arriba" else if (compassEnabled) "Brújula de tablet activa" else "Norte arriba",
+                if (!compassAvailable) "Sin brújula: norte arriba" else if (compassEnabled) "Brújula de tablet activa" else "Norte arriba",
                 style = MaterialTheme.typography.labelSmall
             )
 
-            if (rotationSensor != null) {
+            if (compassAvailable) {
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     Text("Orientar con tablet")
                     Switch(checked = compassEnabled, onCheckedChange = { compassEnabled = it })
@@ -2182,8 +2215,8 @@ private fun StakeoutGuidancePanel(
 
                         // Rosa giratoria según rumbo magnético de la tablet.
                         // Centro = objetivo; marcador = posición actual de la antena.
-                        val declinationRad = Math.toRadians(if (compassEnabled && rotationSensor != null) magneticDeclinationDeg else 0.0)
-                        val headingRad = Math.toRadians(if (compassEnabled && rotationSensor != null) headingMagneticDeg else 0.0)
+                        val declinationRad = Math.toRadians(if (compassEnabled && compassAvailable) magneticDeclinationDeg else 0.0)
+                        val headingRad = Math.toRadians(if (compassEnabled && compassAvailable) headingMagneticDeg else 0.0)
 
                         fun projectToMagnetic(worldEast: Double, worldNorth: Double): Pair<Double, Double> {
                             val magEast =
@@ -2241,16 +2274,10 @@ private fun StakeoutGuidancePanel(
                         // La tolerancia elegida define el radio exterior de la mira
                         // en la zona de precisión: 2 cm = anillo exterior de 2 cm.
                         // Mismo delta RTK para números, aviso y marcador.
-                        val displayDistanceM = rawDistanceM
-                        val displayScaleM = when {
-                            displayDistanceM <= toleranceM -> toleranceM
-                            displayDistanceM <= toleranceM * 2.0 -> toleranceM * 2.0
-                            displayDistanceM <= toleranceM * 5.0 -> toleranceM * 5.0
-                            displayDistanceM <= 0.50 -> 0.50
-                            displayDistanceM <= 2.0 -> 2.0
-                            displayDistanceM <= 10.0 -> 10.0
-                            else -> displayDistanceM * 1.2
-                        }
+                        // Escala visual fija en la zona cercana: evita saltos al
+                        // cruzar umbrales de distancia entre épocas GNSS.
+                        val displayScaleM = 0.25
+
 
                         // northM/eastM son objetivo - antena (corrección).
                         // Para dibujar la ANTENA respecto al objetivo usamos el signo opuesto.
