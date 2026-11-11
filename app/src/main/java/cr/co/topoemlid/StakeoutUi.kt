@@ -49,6 +49,16 @@ import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.layers.PropertyFactory
 import kotlin.math.*
 
+private data class LineStakeoutProjection(
+    val segmentIndex: Int,
+    val distanceM: Double,
+    val northM: Double,
+    val eastM: Double,
+    val alongSegmentM: Double,
+    val footLat: Double,
+    val footLon: Double
+)
+
 enum class StakeoutViewMode(val label: String) {
     MAP("Vista de mapa"),
     CLOSE("Vista cercana"),
@@ -118,7 +128,36 @@ fun StakeoutScreen(
             hypot(north, east)
         } else null
     }
-    val latestStakeoutDistance by rememberUpdatedState(currentStakeoutDistanceM)
+    // Proyección al punto más cercano de un segmento, con distancia métrica local.
+    val lineVertices = selectedGeometry?.let { geometryPath(it) }.orEmpty()
+    val lineSegments = if (lineVertices.size >= 2) {
+        lineVertices.zipWithNext() + if (selectedGeometry != null &&
+            geometrySupportsArea(selectedGeometry) && lineVertices.size > 2)
+            listOf(lineVertices.last() to lineVertices.first()) else emptyList()
+    } else emptyList()
+    val nearestLine = if (gnss.latitude != null && gnss.longitude != null) {
+        val lat0 = gnss.latitude!!
+        val lon0 = gnss.longitude!!
+        val scaleE = 111320.0 * cos(Math.toRadians(lat0))
+        lineSegments.mapIndexed { index, pair ->
+            val ax = (pair.first.longitude() - lon0) * scaleE
+            val ay = (pair.first.latitude() - lat0) * 111132.0
+            val bx = (pair.second.longitude() - lon0) * scaleE
+            val by = (pair.second.latitude() - lat0) * 111132.0
+            val vx = bx - ax
+            val vy = by - ay
+            val len2 = vx * vx + vy * vy
+            val t = if (len2 > 0.000001) ((-ax) * vx + (-ay) * vy) / len2 else 0.0
+            val clamped = t.coerceIn(0.0, 1.0)
+            val ex = ax + clamped * vx
+            val ny = ay + clamped * vy
+            LineStakeoutProjection(index + 1, hypot(ex, ny), ny, ex,
+                hypot(vx, vy) * clamped,
+                lat0 + ny / 111132.0, lon0 + ex / scaleE)
+        }.minByOrNull { it.distanceM }
+    } else null
+    val activeDistanceM = if (mode == StakeoutMode.POINT) currentStakeoutDistanceM else nearestLine?.distanceM
+    val latestStakeoutDistance by rememberUpdatedState(activeDistanceM)
     val latestGnssSolution by rememberUpdatedState(gnss.solution)
     val latestGnssConnected by rememberUpdatedState(gnss.connected)
     val latestTolerance by rememberUpdatedState(targetToleranceM)
@@ -133,9 +172,9 @@ fun StakeoutScreen(
         }
     }
 
-    LaunchedEffect(showGuidance, mode, selectedPointId) {
+    LaunchedEffect(showGuidance, mode, selectedPointId, selectedGeometryId) {
         runCatching { toneGenerator.stopTone() }
-        if (!showGuidance || mode != StakeoutMode.POINT || selectedPointId == null) return@LaunchedEffect
+        if (!showGuidance || (mode == StakeoutMode.POINT && selectedPointId == null)) return@LaunchedEffect
 
         var continuousCenterTone = false
         try {
@@ -253,6 +292,30 @@ fun StakeoutScreen(
                 runCatching { toneGenerator.stopTone() }
             }
         )
+        return
+    }
+
+    if (showGuidance && mode != StakeoutMode.POINT && selectedGeometry != null) {
+        Column(Modifier.fillMaxSize()) {
+            StakeoutMapPreview(project, points, geometries, null, gnss, pointDisplaySettings,
+                modifier = Modifier.weight(1f))
+            Card(Modifier.fillMaxWidth().padding(8.dp)) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("Replanteo de línea / perímetro", fontWeight = FontWeight.Bold)
+                    Text("Distancia perpendicular: " +
+                        (nearestLine?.let { "%.3f m".format(it.distanceM) } ?: "Sin posición"))
+                    Text("Tramo: " + (nearestLine?.segmentIndex ?: "—"))
+                    Text("Desde inicio del tramo: " +
+                        (nearestLine?.let { "%.3f m".format(it.alongSegmentM) } ?: "—"))
+                    Text("Norte / Sur: " +
+                        (nearestLine?.let { "%.3f m".format(it.northM) } ?: "—"))
+                    Text("Este / Oeste: " +
+                        (nearestLine?.let { "%.3f m".format(it.eastM) } ?: "—"))
+                    Button(onClick = { showGuidance = false; onActiveChanged(false);
+                        runCatching { toneGenerator.stopTone() } }) { Text("Finalizar") }
+                }
+            }
+        }
         return
     }
 
