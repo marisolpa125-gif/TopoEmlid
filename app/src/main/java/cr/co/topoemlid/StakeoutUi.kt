@@ -1844,7 +1844,7 @@ private fun StakeoutGuidancePanel(
     val compassAvailable = rotationSensor != null || (magneticSensor != null && gravitySensor != null)
     var headingMagneticDeg by remember { mutableDoubleStateOf(0.0) }
     var compassEnabled by remember { mutableStateOf(true) }
-    DisposableEffect(sensorManager, rotationSensor, magneticSensor, gravitySensor, compassEnabled) {
+    DisposableEffect(sensorManager, rotationSensor, magneticSensor, gravitySensor) {
         var gravity: FloatArray? = null
         var magnetic: FloatArray? = null
         val listener = object : SensorEventListener {
@@ -1880,7 +1880,7 @@ private fun StakeoutGuidancePanel(
             }
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
         }
-        if (compassEnabled) {
+        if (compassAvailable) {
             if (rotationSensor != null) {
                 sensorManager.registerListener(listener, rotationSensor, SensorManager.SENSOR_DELAY_GAME)
             } else if (gravitySensor != null && magneticSensor != null) {
@@ -1966,10 +1966,10 @@ private fun StakeoutGuidancePanel(
     // Los cálculos de replanteo conservan el delta verdadero del proyecto.
     // La guía numérica gira con la misma orientación magnética de la mira.
     val trueHeadingRad = Math.toRadians(
-        if (compassEnabled && compassAvailable) headingMagneticDeg + magneticDeclinationDeg else 0.0
+        if (compassAvailable) headingMagneticDeg + magneticDeclinationDeg else 0.0
     )
-    val northM = rawEastM * sin(trueHeadingRad) + rawNorthM * cos(trueHeadingRad)
-    val eastM = rawEastM * cos(trueHeadingRad) - rawNorthM * sin(trueHeadingRad)
+    val northM = if (compassEnabled) rawNorthM else rawEastM * sin(trueHeadingRad) + rawNorthM * cos(trueHeadingRad)
+    val eastM = if (compassEnabled) rawEastM else rawEastM * cos(trueHeadingRad) - rawNorthM * sin(trueHeadingRad)
     val distanceM = rawDistanceM
 
 
@@ -2000,13 +2000,13 @@ private fun StakeoutGuidancePanel(
     // northM/eastM representan el desplazamiento que debe hacer la antena
     // desde su posición actual hasta el objetivo.
     val nsLabel = when {
-        northM > 0.0005 -> if (compassEnabled && compassAvailable) "ADELANTE" else "AL NORTE"
-        northM < -0.0005 -> if (compassEnabled && compassAvailable) "ATRÁS" else "AL SUR"
+        northM > 0.0005 -> if (!compassEnabled && compassAvailable) "ADELANTE" else "AL NORTE"
+        northM < -0.0005 -> if (!compassEnabled && compassAvailable) "ATRÁS" else "AL SUR"
         else -> "N/S OK"
     }
     val ewLabel = when {
-        eastM > 0.0005 -> if (compassEnabled && compassAvailable) "DERECHA" else "AL ESTE"
-        eastM < -0.0005 -> if (compassEnabled && compassAvailable) "IZQUIERDA" else "AL OESTE"
+        eastM > 0.0005 -> if (!compassEnabled && compassAvailable) "DERECHA" else "AL ESTE"
+        eastM < -0.0005 -> if (!compassEnabled && compassAvailable) "IZQUIERDA" else "AL OESTE"
         else -> "E/O OK"
     }
     val verticalLabel = when {
@@ -2055,13 +2055,13 @@ private fun StakeoutGuidancePanel(
                 style = MaterialTheme.typography.bodySmall
             )
             Text(
-                if (!compassAvailable) "Sin brújula: norte arriba" else if (compassEnabled) "Brújula de tablet activa" else "Norte arriba",
+                if (!compassAvailable) "Sin brújula: norte arriba" else if (compassEnabled) "Norte magnético: guía N/S/E/O" else "Guía relativa: adelante/atrás/izquierda/derecha",
                 style = MaterialTheme.typography.labelSmall
             )
 
             if (compassAvailable) {
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Text("Orientar con tablet")
+                    Text("Seguir norte magnético")
                     Switch(checked = compassEnabled, onCheckedChange = { compassEnabled = it })
                 }
             }
@@ -2220,8 +2220,8 @@ private fun StakeoutGuidancePanel(
 
                         // Rosa giratoria según rumbo magnético de la tablet.
                         // Centro = objetivo; marcador = posición actual de la antena.
-                        val declinationRad = Math.toRadians(if (compassEnabled && compassAvailable) magneticDeclinationDeg else 0.0)
-                        val headingRad = Math.toRadians(if (compassEnabled && compassAvailable) headingMagneticDeg else 0.0)
+                        val declinationRad = Math.toRadians(if (compassAvailable) magneticDeclinationDeg else 0.0)
+                        val headingRad = Math.toRadians(if (compassAvailable) headingMagneticDeg else 0.0)
 
                         fun projectToMagnetic(worldEast: Double, worldNorth: Double): Pair<Double, Double> {
                             val magEast =
