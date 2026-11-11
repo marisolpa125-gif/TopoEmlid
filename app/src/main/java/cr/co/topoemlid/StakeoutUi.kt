@@ -2271,41 +2271,31 @@ private fun StakeoutGuidancePanel(
                             )
                         }
 
-                        // La tolerancia elegida define el radio exterior de la mira
-                        // en la zona de precisión: 2 cm = anillo exterior de 2 cm.
-                        // Mismo delta RTK para números, aviso y marcador.
-                        // Escala visual fija en la zona cercana: evita saltos al
-                        // cruzar umbrales de distancia entre épocas GNSS.
-                        val displayScaleM = 0.25
-
-
-                        // northM/eastM son objetivo - antena (corrección).
-                        // Para dibujar la ANTENA respecto al objetivo usamos el signo opuesto.
-                        val antennaNorth = -rawNorthM
+                        // El centro es el objetivo. El marcador usa el vector opuesto
+                        // a la corrección para mostrar la posición de la antena.
                         val antennaEast = -rawEastM
-                        val (antennaMagEast, antennaMagNorth) =
-                            projectToMagnetic(
-                                antennaEast / displayScaleM,
-                                antennaNorth / displayScaleM
-                            )
+                        val antennaNorth = -rawNorthM
+                        val distanceM = hypot(antennaEast, antennaNorth)
+                        val markerRadius = 14f
+                        val markerTravelPx = (maxR - markerRadius - 3f).coerceAtLeast(0f)
 
-                        val marker = magneticToScreen(
-                            antennaMagEast,
-                            antennaMagNorth,
-                            maxR
+                        // La curva radial fija deja espacio al entrar en la mira y
+                        // da más recorrido visual a los últimos centímetros.
+                        val (screenEast, screenNorth) = projectToMagnetic(
+                            antennaEast / (distanceM + 0.75),
+                            antennaNorth / (distanceM + 0.75)
                         )
-                        val markerX = marker.x.coerceIn(center.x - maxR, center.x + maxR)
-                        val markerY = marker.y.coerceIn(center.y - maxR, center.y + maxR)
+                        val marker = magneticToScreen(screenEast, screenNorth, markerTravelPx)
 
                         drawCircle(
                             color = if (withinTolerance && isRtkFix) Color(0xFF2E7D32) else Color(0xFFFFC107),
-                            radius = 14f,
-                            center = Offset(markerX, markerY)
+                            radius = markerRadius,
+                            center = marker
                         )
                         drawCircle(
                             color = Color(0xFF1F2937),
-                            radius = 14f,
-                            center = Offset(markerX, markerY),
+                            radius = markerRadius,
+                            center = marker,
                             style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)
                         )
 
