@@ -1963,9 +1963,14 @@ private fun StakeoutGuidancePanel(
         }
     }
 
-    val northM = rawNorthM
-    val eastM = rawEastM
-    val distanceM = hypot(northM, eastM)
+    // Los cálculos de replanteo conservan el delta verdadero del proyecto.
+    // La guía numérica gira con la misma orientación magnética de la mira.
+    val trueHeadingRad = Math.toRadians(
+        if (compassEnabled && compassAvailable) headingMagneticDeg + magneticDeclinationDeg else 0.0
+    )
+    val northM = rawEastM * sin(trueHeadingRad) + rawNorthM * cos(trueHeadingRad)
+    val eastM = rawEastM * cos(trueHeadingRad) - rawNorthM * sin(trueHeadingRad)
+    val distanceM = rawDistanceM
 
 
     val useGeoid = !project?.geoidFileUri.isNullOrBlank()
@@ -1995,13 +2000,13 @@ private fun StakeoutGuidancePanel(
     // northM/eastM representan el desplazamiento que debe hacer la antena
     // desde su posición actual hasta el objetivo.
     val nsLabel = when {
-        northM > 0.0005 -> "AL NORTE"
-        northM < -0.0005 -> "AL SUR"
+        northM > 0.0005 -> if (compassEnabled && compassAvailable) "ADELANTE" else "AL NORTE"
+        northM < -0.0005 -> if (compassEnabled && compassAvailable) "ATRÁS" else "AL SUR"
         else -> "N/S OK"
     }
     val ewLabel = when {
-        eastM > 0.0005 -> "AL ESTE"
-        eastM < -0.0005 -> "AL OESTE"
+        eastM > 0.0005 -> if (compassEnabled && compassAvailable) "DERECHA" else "AL ESTE"
+        eastM < -0.0005 -> if (compassEnabled && compassAvailable) "IZQUIERDA" else "AL OESTE"
         else -> "E/O OK"
     }
     val verticalLabel = when {
