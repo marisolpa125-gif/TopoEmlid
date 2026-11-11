@@ -2260,8 +2260,8 @@ private fun StakeoutGuidancePanel(
                             Triple("S", 0.0, -1.0),
                             Triple("O", -1.0, 0.0)
                         ).forEach { (label, e, n) ->
-                            val screenE = e * cos(headingRad) - n * sin(headingRad)
-                            val screenN = n * cos(headingRad) + e * sin(headingRad)
+                            // Mismo norte verdadero/magnético y orientación que el marcador.
+                            val (screenE, screenN) = projectToMagnetic(e, n)
                             val p = magneticToScreen(screenE, screenN, labelR)
                             drawContext.canvas.nativeCanvas.drawText(
                                 label,
