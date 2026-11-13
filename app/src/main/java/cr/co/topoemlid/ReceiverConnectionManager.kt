@@ -32,6 +32,8 @@ class ReceiverConnectionManager(context: Context) {
     private var requestedProfileId: String? = null
     private var floatStreak = 0
     private val usedSatelliteIds = java.util.Collections.synchronizedSet(linkedSetOf<String>())
+    private val gsvByTalker = mutableMapOf<String, MutableMap<String, SatelliteSignal>>()
+    private val gsvCycleStarted = mutableMapOf<String, Long>()
 
     var status by mutableStateOf(GnssStatus())
         private set
@@ -356,37 +358,37 @@ class ReceiverConnectionManager(context: Context) {
                     }
 
                     NmeaParser.parseGsv(line)?.let { gsv ->
-                        val merged = status.satelliteSignals
-                            .associateBy { it.id }
-                            .toMutableMap()
-
+                        val nowGsv = System.currentTimeMillis()
+                        val key = gsv.talker
+                        val startNew = gsv.messageNumber == 1 ||
+                            nowGsv - (gsvCycleStarted[key] ?: 0L) > 10_000L
+                        val cycle = if (startNew) {
+                            gsvCycleStarted[key] = nowGsv
+                            mutableMapOf<String, SatelliteSignal>().also { gsvByTalker[key] = it }
+                        } else gsvByTalker.getOrPut(key) { mutableMapOf() }
                         gsv.satellites.forEach { sat ->
-                            merged[sat.id] = SatelliteSignal(
-                                id = sat.id,
-                                constellation = sat.constellation,
-                                snrDbHz = sat.snrDbHz,
-                                elevationDeg = sat.elevationDeg,
+                            cycle[sat.id] = SatelliteSignal(
+                                id = sat.id, constellation = sat.constellation,
+                                snrDbHz = sat.snrDbHz, elevationDeg = sat.elevationDeg,
                                 azimuthDeg = sat.azimuthDeg,
                                 usedInFix = sat.id in usedSatelliteIds
                             )
                         }
-
-                        val satellites = merged.values
+                        // GSV is multipart and its "in view" count belongs to a talker,
+                        // not the combined GNSS constellation. Merge completed/partial cycles.
+                        val satellites = gsvByTalker.values.flatMap { it.values }
+                            .associateBy { it.id }.values
                             .sortedWith(compareBy<SatelliteSignal> { it.constellation }.thenBy { it.id })
                         val snrValues = satellites.mapNotNull { it.snrDbHz }
-                        val avg = snrValues.takeIf { it.isNotEmpty() }?.average()
-
-                        postStatus(
-                            status.copy(
-                                satellitesInView = gsv.satellitesInView ?: status.satellitesInView,
-                                signalNoiseAvgDbHz = avg ?: status.signalNoiseAvgDbHz,
-                                satelliteSnrValues = snrValues,
-                                satelliteSignals = satellites,
-                                nmeaReceiving = true,
-                                lastNmeaSentence = line.take(160),
-                                lastNmeaAt = System.currentTimeMillis()
-                            )
-                        )
+                        postStatus(status.copy(
+                            satellitesInView = satellites.size.takeIf { it > 0 },
+                            signalNoiseAvgDbHz = snrValues.takeIf { it.isNotEmpty() }?.average(),
+                            satelliteSnrValues = snrValues,
+                            satelliteSignals = satellites,
+                            nmeaReceiving = true,
+                            lastNmeaSentence = line.take(160),
+                            lastNmeaAt = nowGsv
+                        ))
                     }
                 }
             } catch (e: Exception) {
@@ -484,6 +486,8 @@ class ReceiverConnectionManager(context: Context) {
         // únicamente después de haber invalidado requestedProfileId.
         worker = null
         usedSatelliteIds.clear()
+        gsvByTalker.clear()
+        gsvCycleStarted.clear()
 
         connecting = false
         lastError = null
