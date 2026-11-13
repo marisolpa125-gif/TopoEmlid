@@ -411,7 +411,10 @@ class ReceiverConnectionManager(context: Context) {
                             // GSV reported totals may exceed the individual bars because the
                             // Bluetooth output omits some satellite details. Use the
                             // larger observed count, never fabricate signal bars.
-                            satellitesInView = maxOf(satellites.size, gsvReported.values.sum()).takeIf { it > 0 },
+                            satellitesInView = maxOf(
+                                satellites.size,
+                                maxOf(gsvReported["GN"] ?: 0, gsvReported.filterKeys { it != "GN" }.values.sum())
+                            ).takeIf { it > 0 },
                             nmeaGsvMessages = gsvMessageCount,
                             nmeaGsvTalkers = gsvByTalker.keys.sorted().joinToString(", ").ifBlank { "—" },
                             nmeaGsvReported = gsvReported.toSortedMap().entries.joinToString(" · ") { "${it.key}: ${it.value}" }.ifBlank { "—" },
