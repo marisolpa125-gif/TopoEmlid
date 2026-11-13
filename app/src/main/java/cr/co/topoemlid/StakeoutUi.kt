@@ -298,7 +298,8 @@ fun StakeoutScreen(
     if (showGuidance && mode != StakeoutMode.POINT && selectedGeometry != null) {
         Column(Modifier.fillMaxSize()) {
             StakeoutMapPreview(project, points, geometries, null, gnss, pointDisplaySettings,
-                modifier = Modifier.weight(1f))
+                modifier = Modifier.weight(1f),
+                perpendicularFoot = nearestLine?.let { LatLng(it.footLat, it.footLon) })
             Card(Modifier.fillMaxWidth().padding(8.dp)) {
                 Column(Modifier.padding(12.dp)) {
                     Text("Replanteo de línea / perímetro", fontWeight = FontWeight.Bold)
@@ -1450,7 +1451,8 @@ private fun StakeoutMapPreview(
     gnss: GnssStatus,
     pointDisplaySettings: PointDisplaySettings,
     modifier: Modifier = Modifier.fillMaxWidth().height(280.dp),
-    closeView: Boolean = false
+    closeView: Boolean = false,
+    perpendicularFoot: LatLng? = null
 ) {
     val context = LocalContext.current
     val layerStore = remember(project?.id) { LayerStore(context) }
@@ -1490,6 +1492,7 @@ private fun StakeoutMapPreview(
         }
 
         ensureStakeoutGuidanceLineOnTop(map, gnss, target)
+        ensureStakeoutPerpendicularOnTop(map, gnss, perpendicularFoot)
         ensureStakeoutCriticalOverlayOnTop(map, target, gnss)
     }
 
@@ -1696,6 +1699,31 @@ private fun StakeoutMapPreview(
 }
 
 
+
+private fun ensureStakeoutPerpendicularOnTop(
+    map: MapLibreMap, gnss: GnssStatus, foot: LatLng?
+) {
+    val style = map.style ?: return
+    val sourceId = "stakeout-perpendicular-source"
+    val layerId = "stakeout-perpendicular-layer"
+    val features = if (gnss.latitude != null && gnss.longitude != null && foot != null) {
+        listOf(Feature.fromGeometry(LineString.fromLngLats(listOf(
+            Point.fromLngLat(gnss.longitude!!, gnss.latitude!!),
+            Point.fromLngLat(foot.longitude, foot.latitude)
+        ))))
+    } else emptyList()
+    val source = style.getSourceAs<GeoJsonSource>(sourceId)
+    if (source == null) {
+        style.addSource(GeoJsonSource(sourceId, FeatureCollection.fromFeatures(features)))
+    } else source.setGeoJson(FeatureCollection.fromFeatures(features))
+    if (style.getLayer(layerId) == null) {
+        style.addLayer(LineLayer(layerId, sourceId).withProperties(
+            PropertyFactory.lineColor(android.graphics.Color.rgb(0, 188, 212)),
+            PropertyFactory.lineWidth(5f),
+            PropertyFactory.lineDasharray(arrayOf(2f, 2f))
+        ))
+    }
+}
 
 private fun ensureStakeoutGuidanceLineOnTop(
     map: MapLibreMap,
