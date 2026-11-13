@@ -408,7 +408,10 @@ class ReceiverConnectionManager(context: Context) {
                             .sortedWith(compareBy<SatelliteSignal> { it.constellation }.thenBy { it.id })
                         val snrValues = satellites.mapNotNull { it.snrDbHz }
                         postStatus(status.copy(
-                            satellitesInView = satellites.size.takeIf { it > 0 },
+                            // GSV reported totals may exceed the individual bars because the
+                            // Bluetooth output omits some satellite details. Use the
+                            // larger observed count, never fabricate signal bars.
+                            satellitesInView = maxOf(satellites.size, gsvReported.values.sum()).takeIf { it > 0 },
                             nmeaGsvMessages = gsvMessageCount,
                             nmeaGsvTalkers = gsvByTalker.keys.sorted().joinToString(", ").ifBlank { "—" },
                             nmeaGsvReported = gsvReported.toSortedMap().entries.joinToString(" · ") { "${it.key}: ${it.value}" }.ifBlank { "—" },
