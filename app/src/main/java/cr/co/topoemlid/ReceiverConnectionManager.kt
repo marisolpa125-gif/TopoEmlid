@@ -38,6 +38,7 @@ class ReceiverConnectionManager(context: Context) {
     private var gsvMessageCount = 0
     private var gsaMessageCount = 0
     private var ggaMessageCount = 0
+    private var lastGsaCycleAt = 0L
 
     var status by mutableStateOf(GnssStatus())
         private set
@@ -351,6 +352,10 @@ class ReceiverConnectionManager(context: Context) {
 
                     NmeaParser.parseGsa(line)?.let { gsa ->
                         gsaMessageCount++
+                        // Drop stale GSA satellite IDs between reporting windows.
+                        val nowGsa = System.currentTimeMillis()
+                        if (nowGsa - lastGsaCycleAt > 2500L) usedSatelliteIds.clear()
+                        lastGsaCycleAt = nowGsa
                         usedSatelliteIds += gsa.usedSatelliteIds
                         val marked = status.satelliteSignals.map { sat ->
                             sat.copy(usedInFix = sat.id in usedSatelliteIds)
@@ -505,6 +510,7 @@ class ReceiverConnectionManager(context: Context) {
         gsvMessageCount = 0
         gsaMessageCount = 0
         ggaMessageCount = 0
+        lastGsaCycleAt = 0L
 
         connecting = false
         lastError = null
