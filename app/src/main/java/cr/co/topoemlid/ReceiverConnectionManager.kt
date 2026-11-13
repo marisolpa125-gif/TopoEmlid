@@ -34,6 +34,10 @@ class ReceiverConnectionManager(context: Context) {
     private val usedSatelliteIds = java.util.Collections.synchronizedSet(linkedSetOf<String>())
     private val gsvByTalker = mutableMapOf<String, MutableMap<String, SatelliteSignal>>()
     private val gsvCycleStarted = mutableMapOf<String, Long>()
+    private val gsvReported = mutableMapOf<String, Int>()
+    private var gsvMessageCount = 0
+    private var gsaMessageCount = 0
+    private var ggaMessageCount = 0
 
     var status by mutableStateOf(GnssStatus())
         private set
@@ -279,6 +283,7 @@ class ReceiverConnectionManager(context: Context) {
                 while (!Thread.currentThread().isInterrupted) {
                     val line = reader.readLine() ?: break
                     NmeaParser.parseGga(line)?.let { gga ->
+                        ggaMessageCount++
                         val now = System.currentTimeMillis()
                         if (lastGgaAtMs > 0L) {
                             val dt = now - lastGgaAtMs
@@ -322,6 +327,7 @@ class ReceiverConnectionManager(context: Context) {
                                 connectionTransport = "Bluetooth / NMEA",
                                 solution = solution,
                                 satellites = gga.satellites,
+                                nmeaGgaMessages = ggaMessageCount,
                                 latitude = gga.latitude,
                                 longitude = gga.longitude,
                                 ellipsoidalHeightM = gga.ellipsoidalHeightM,
@@ -344,6 +350,7 @@ class ReceiverConnectionManager(context: Context) {
                     }
 
                     NmeaParser.parseGsa(line)?.let { gsa ->
+                        gsaMessageCount++
                         usedSatelliteIds += gsa.usedSatelliteIds
                         val marked = status.satelliteSignals.map { sat ->
                             sat.copy(usedInFix = sat.id in usedSatelliteIds)
@@ -351,6 +358,7 @@ class ReceiverConnectionManager(context: Context) {
                         postStatus(
                             status.copy(
                                 pdop = gsa.pdop,
+                                nmeaGsaMessages = gsaMessageCount,
                                 positioningMode = gsa.mode,
                                 satelliteSignals = marked
                             )
@@ -358,6 +366,8 @@ class ReceiverConnectionManager(context: Context) {
                     }
 
                     NmeaParser.parseGsv(line)?.let { gsv ->
+                        gsvMessageCount++
+                        gsv.satellitesInView?.let { gsvReported[gsv.talker] = it }
                         val nowGsv = System.currentTimeMillis()
                         val key = gsv.talker
                         val startNew = gsv.messageNumber == 1 ||
@@ -382,6 +392,9 @@ class ReceiverConnectionManager(context: Context) {
                         val snrValues = satellites.mapNotNull { it.snrDbHz }
                         postStatus(status.copy(
                             satellitesInView = satellites.size.takeIf { it > 0 },
+                            nmeaGsvMessages = gsvMessageCount,
+                            nmeaGsvTalkers = gsvByTalker.keys.sorted().joinToString(", ").ifBlank { "—" },
+                            nmeaGsvReported = gsvReported.toSortedMap().entries.joinToString(" · ") { "${it.key}: ${it.value}" }.ifBlank { "—" },
                             signalNoiseAvgDbHz = snrValues.takeIf { it.isNotEmpty() }?.average(),
                             satelliteSnrValues = snrValues,
                             satelliteSignals = satellites,
@@ -488,6 +501,10 @@ class ReceiverConnectionManager(context: Context) {
         usedSatelliteIds.clear()
         gsvByTalker.clear()
         gsvCycleStarted.clear()
+        gsvReported.clear()
+        gsvMessageCount = 0
+        gsaMessageCount = 0
+        ggaMessageCount = 0
 
         connecting = false
         lastError = null
