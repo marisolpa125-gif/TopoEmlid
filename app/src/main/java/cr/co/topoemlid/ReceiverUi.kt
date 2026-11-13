@@ -890,8 +890,9 @@ private fun ReceiverSubPage(
                 if ((gnss.satellites ?: 0) > gnss.satelliteSignals.size) {
                     Text("El receptor utiliza ${gnss.satellites} satélites (GGA), pero solo envió detalle de ${gnss.satelliteSignals.size} por GSV. Las barras NO representan todos los satélites. Revisar la salida GSV del Reach.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
+                Text("GPS G • GLONASS R • Galileo E • BeiDou C • QZSS J • NavIC I. ● usado (GSA) • ○ visible (GSV).", style = MaterialTheme.typography.bodySmall)
                 Text(
-                    "Altura de barra = SNR/CN0. Rojo: débil • amarillo: media • verde: buena.",
+                    "Altura de barra = SNR/CN0. Rojo: débil • amarillo: media • verde: buena. Solo se dibujan satélites con detalle GSV real.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(Modifier.height(8.dp))
