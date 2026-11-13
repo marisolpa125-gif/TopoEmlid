@@ -881,7 +881,15 @@ private fun ReceiverSubPage(
                 }
 
                 Spacer(Modifier.height(14.dp))
-                Text("Señal de satélites", fontWeight = FontWeight.Bold)
+                Text("Señal de satélites (detalle GSV)", fontWeight = FontWeight.Bold)
+                StatusLine("Satélites usados en posición (GGA)", gnss.satellites?.toString() ?: "—")
+                StatusLine("Satélites con detalle de señal (GSV)", gnss.satelliteSignals.size.toString())
+                StatusLine("Mensajes recibidos GGA / GSA / GSV", "${gnss.nmeaGgaMessages} / ${gnss.nmeaGsaMessages} / ${gnss.nmeaGsvMessages}")
+                StatusLine("Constelaciones NMEA GSV", gnss.nmeaGsvTalkers)
+                StatusLine("Reportados por constelación", gnss.nmeaGsvReported)
+                if ((gnss.satellites ?: 0) > gnss.satelliteSignals.size) {
+                    Text("El receptor utiliza ${gnss.satellites} satélites (GGA), pero solo envió detalle de ${gnss.satelliteSignals.size} por GSV. Las barras NO representan todos los satélites. Revisar la salida GSV del Reach.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
                 Text(
                     "Altura de barra = SNR/CN0. Rojo: débil • amarillo: media • verde: buena.",
                     style = MaterialTheme.typography.bodySmall
@@ -948,7 +956,7 @@ private fun ReceiverSubPage(
                     val medium = gnss.satelliteSignals.count { (it.snrDbHz ?: 0.0) in 21.0..<36.0 }
                     val weak = gnss.satelliteSignals.count { (it.snrDbHz ?: 0.0) < 21.0 }
                     Text(
-                        "Buena: $good • Media: $medium • Débil: $weak • ● usado en solución • ○ visible",
+                        "Con detalle GSV: Buena: $good • Media: $medium • Débil: $weak • ● indicado por GSA • ○ no indicado por GSA",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
