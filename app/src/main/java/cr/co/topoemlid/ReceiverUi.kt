@@ -884,11 +884,13 @@ private fun ReceiverSubPage(
                 Text("Señal de satélites (detalle GSV)", fontWeight = FontWeight.Bold)
                 StatusLine("Satélites usados en posición (GGA)", gnss.satellites?.toString() ?: "—")
                 StatusLine("Satélites con detalle de señal (GSV)", gnss.satelliteSignals.size.toString())
+                StatusLine("Total reportado en mensajes GSV", gnss.nmeaGsvReported)
+                Text("GGA cuenta satélites usados para posicionamiento; GSV describe satélites visibles y señales. Sus cantidades no tienen por qué coincidir, y no deben sumarse entre mensajes duplicados.", style = MaterialTheme.typography.bodySmall)
                 StatusLine("Mensajes recibidos GGA / GSA / GSV", "${gnss.nmeaGgaMessages} / ${gnss.nmeaGsaMessages} / ${gnss.nmeaGsvMessages}")
                 StatusLine("Constelaciones NMEA GSV", gnss.nmeaGsvTalkers)
                 StatusLine("Reportados por constelación", gnss.nmeaGsvReported)
                 if ((gnss.satellites ?: 0) > gnss.satelliteSignals.size) {
-                    Text("El receptor utiliza ${gnss.satellites} satélites (GGA), pero solo envió detalle de ${gnss.satelliteSignals.size} por GSV. Las barras NO representan todos los satélites. Revisar la salida GSV del Reach.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    Text("GGA reporta ${gnss.satellites} satélites usados y las barras contienen ${gnss.satelliteSignals.size} satélites con detalle GSV. Son métricas distintas; si faltan barras, revisar la configuración GSV del Reach.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
                 Text("GPS G • GLONASS R • Galileo E • BeiDou C • QZSS J • NavIC I. ● usado (GSA) • ○ visible (GSV).", style = MaterialTheme.typography.bodySmall)
                 Text(
