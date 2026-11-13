@@ -68,7 +68,7 @@ synchronized(outputLock) {
                 val input = s.getInputStream()
                 val header = readHeader(input)
                 val statusLine = header.lineSequence().firstOrNull().orEmpty()
-                val accepted = statusLine.contains("200") || statusLine.startsWith("ICY 200", ignoreCase = true)
+                val accepted = Regex("^(HTTP/\\d(?:\\.\\d)? 200\\b|ICY 200\\b)", RegexOption.IGNORE_CASE).containsMatchIn(statusLine)
                 if (!accepted) {
                     error("El caster rechazó la conexión: ${statusLine.ifBlank { "respuesta vacía" }}")
                 }
@@ -82,6 +82,7 @@ synchronized(outputLock) {
                     lastError = null
                 )
 
+                // Bytes forwarded mean written to the transport, NOT RTK corrections applied.
                 val buffer = ByteArray(4096)
                 while (!Thread.currentThread().isInterrupted) {
                     val n = input.read(buffer)
@@ -99,7 +100,7 @@ synchronized(outputLock) {
                         bytesForwarded = forwarded,
                         lastDataAt = System.currentTimeMillis(),
                         lastError = if (!sent)
-                            "Se reciben correcciones RTCM, pero todavía no se están enviando al receptor por el enlace activo."
+                            "Se reciben RTCM, pero no se pueden escribir al enlace del receptor."
                         else null
                     )
                 }
