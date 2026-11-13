@@ -35,6 +35,7 @@ class ReceiverConnectionManager(context: Context) {
     private val gsvByTalker = mutableMapOf<String, MutableMap<String, SatelliteSignal>>()
     private val gsvCycleStarted = mutableMapOf<String, Long>()
     private val gsvReported = mutableMapOf<String, Int>()
+    private val gsvSatelliteSeenAt = mutableMapOf<String, Long>()
     private var gsvMessageCount = 0
     private var gsaMessageCount = 0
     private var ggaMessageCount = 0
@@ -375,22 +376,33 @@ class ReceiverConnectionManager(context: Context) {
                         gsv.satellitesInView?.let { gsvReported[gsv.talker] = it }
                         val nowGsv = System.currentTimeMillis()
                         val key = gsv.talker
-                        val startNew = gsv.messageNumber == 1 ||
-                            nowGsv - (gsvCycleStarted[key] ?: 0L) > 10_000L
-                        val cycle = if (startNew) {
-                            gsvCycleStarted[key] = nowGsv
-                            mutableMapOf<String, SatelliteSignal>().also { gsvByTalker[key] = it }
-                        } else gsvByTalker.getOrPut(key) { mutableMapOf() }
+                        // NMEA 4.x may interleave multiple GSV signal-ID cycles for the
+                        // same constellation. Resetting on every message #1 discards
+                        // other signal groups and undercounts visible satellites.
+                        val cycle = gsvByTalker.getOrPut(key) { mutableMapOf() }
+                        gsvCycleStarted[key] = nowGsv
                         gsv.satellites.forEach { sat ->
+                            val existing = cycle[sat.id]
                             cycle[sat.id] = SatelliteSignal(
                                 id = sat.id, constellation = sat.constellation,
-                                snrDbHz = sat.snrDbHz, elevationDeg = sat.elevationDeg,
-                                azimuthDeg = sat.azimuthDeg,
+                                snrDbHz = sat.snrDbHz ?: existing?.snrDbHz,
+                                elevationDeg = sat.elevationDeg ?: existing?.elevationDeg,
+                                azimuthDeg = sat.azimuthDeg ?: existing?.azimuthDeg,
                                 usedInFix = sat.id in usedSatelliteIds
                             )
+                            gsvSatelliteSeenAt["$key:${sat.id}"] = nowGsv
                         }
-                        // GSV is multipart and its "in view" count belongs to a talker,
-                        // not the combined GNSS constellation. Merge completed/partial cycles.
+                        // Keep overlapping signal cycles, but expire old satellite
+                        // entries instead of displaying satellites indefinitely.
+                        gsvByTalker.forEach { (talker, signals) ->
+                            val expired = signals.keys.filter { id ->
+                                nowGsv - (gsvSatelliteSeenAt["$talker:$id"] ?: 0L) > 15_000L
+                            }
+                            expired.forEach { id ->
+                                signals.remove(id)
+                                gsvSatelliteSeenAt.remove("$talker:$id")
+                            }
+                        }
                         val satellites = gsvByTalker.values.flatMap { it.values }
                             .associateBy { it.id }.values
                             .sortedWith(compareBy<SatelliteSignal> { it.constellation }.thenBy { it.id })
@@ -507,6 +519,7 @@ class ReceiverConnectionManager(context: Context) {
         gsvByTalker.clear()
         gsvCycleStarted.clear()
         gsvReported.clear()
+        gsvSatelliteSeenAt.clear()
         gsvMessageCount = 0
         gsaMessageCount = 0
         ggaMessageCount = 0
