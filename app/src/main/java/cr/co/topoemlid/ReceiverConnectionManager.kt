@@ -42,6 +42,8 @@ class ReceiverConnectionManager(context: Context) {
     private var ggaMessageCount = 0
     private var lastGsaCycleAt = 0L
 
+    @Volatile private var latestNmeaStatus = GnssStatus()
+
     var status by mutableStateOf(GnssStatus())
         private set
 
@@ -324,7 +326,7 @@ class ReceiverConnectionManager(context: Context) {
                             }
                         }
                         postStatus(
-                            status.copy(
+                            latestNmeaStatus.copy(
                                 connected = true,
                                 receiverName = profile.name,
                                 connectionTransport = "Bluetooth / NMEA",
@@ -345,7 +347,7 @@ class ReceiverConnectionManager(context: Context) {
 
                     NmeaParser.parseGst(line)?.let { gst ->
                         postStatus(
-                            status.copy(
+                            latestNmeaStatus.copy(
                                 horizontalAccuracyM = gst.horizontalAccuracyM,
                                 verticalAccuracyM = gst.verticalAccuracyM
                             )
@@ -363,7 +365,7 @@ class ReceiverConnectionManager(context: Context) {
                             sat.copy(usedInFix = sat.id in usedSatelliteIds)
                         }
                         postStatus(
-                            status.copy(
+                            latestNmeaStatus.copy(
                                 pdop = gsa.pdop,
                                 nmeaGsaMessages = gsaMessageCount,
                                 positioningMode = gsa.mode,
@@ -415,7 +417,7 @@ class ReceiverConnectionManager(context: Context) {
                             .associateBy { it.id }.values
                             .sortedWith(compareBy<SatelliteSignal> { it.constellation }.thenBy { it.id })
                         val snrValues = satellites.mapNotNull { it.snrDbHz }
-                        postStatus(status.copy(
+                        postStatus(latestNmeaStatus.copy(
                             // GSV reported totals may exceed the individual bars because the
                             // Bluetooth output omits some satellite details. Use the
                             // larger observed count, never fabricate signal bars.
@@ -542,7 +544,8 @@ class ReceiverConnectionManager(context: Context) {
 
         connecting = false
         lastError = null
-        status = GnssStatus(receiverName = status.receiverName)
+        latestNmeaStatus = GnssStatus(receiverName = status.receiverName)
+        status = latestNmeaStatus
     }
 
     private fun isEmlidLike(name: String): Boolean {
@@ -551,6 +554,10 @@ class ReceiverConnectionManager(context: Context) {
     }
 
     private fun postStatus(newStatus: GnssStatus) {
-        mainHandler.post { status = newStatus }
+        // The NMEA reader produces GGA/GSA/GSV updates faster than the UI thread.
+        // Keep one latest snapshot so queued UI posts cannot erase satellite bars
+        // or reset message counters with older copies of status.
+        latestNmeaStatus = newStatus
+        mainHandler.post { status = latestNmeaStatus }
     }
 }
