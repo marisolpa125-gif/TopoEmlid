@@ -893,6 +893,13 @@ private fun ReceiverSubPage(
                     Text("GGA reporta ${gnss.satellites} satélites usados y las barras contienen ${gnss.satelliteSignals.size} satélites con detalle GSV. Son métricas distintas; si faltan barras, revisar la configuración GSV del Reach.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
                 Text("GPS G • GLONASS R • Galileo E • BeiDou C • QZSS J • NavIC I. ● usado (GSA) • ○ visible (GSV).", style = MaterialTheme.typography.bodySmall)
+                val constellationGroups = gnss.satelliteSignals.groupBy { it.constellation }
+                if (constellationGroups.isNotEmpty()) {
+                    Text("Satélites por constelación", fontWeight = FontWeight.SemiBold)
+                    constellationGroups.toSortedMap().forEach { (constellation, signals) ->
+                        StatusLine(constellation, "${signals.size} con señal • ${signals.count { it.usedInFix }} marcados en GSA")
+                    }
+                }
                 Text(
                     "Altura de barra = SNR/CN0. Rojo: débil • amarillo: media • verde: buena. Solo se dibujan satélites con detalle GSV real.",
                     style = MaterialTheme.typography.bodySmall
