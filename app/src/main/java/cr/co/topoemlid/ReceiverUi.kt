@@ -885,6 +885,10 @@ private fun ReceiverSubPage(
                 StatusLine("Satélites usados en posición (GGA)", gnss.satellites?.toString() ?: "—")
                 StatusLine("Satélites con detalle de señal (GSV)", gnss.satelliteSignals.size.toString())
                 StatusLine("Total reportado en mensajes GSV", gnss.nmeaGsvReported)
+                StatusLine("Total visible GSV (sin duplicar GN)", gnss.satellitesInView?.toString() ?: "—")
+                if (gnss.satelliteSignals.isEmpty()) {
+                    Text("Esperando mensajes GSV del Reach. Las barras reaparecerán cuando lleguen datos individuales de señal; GGA por sí solo no permite dibujarlas.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
                 Text("GGA cuenta satélites usados para posicionamiento; GSV describe satélites visibles y señales. Sus cantidades no tienen por qué coincidir, y no deben sumarse entre mensajes duplicados.", style = MaterialTheme.typography.bodySmall)
                 StatusLine("Mensajes recibidos GGA / GSA / GSV", "${gnss.nmeaGgaMessages} / ${gnss.nmeaGsaMessages} / ${gnss.nmeaGsvMessages}")
                 StatusLine("Constelaciones NMEA GSV", gnss.nmeaGsvTalkers)
