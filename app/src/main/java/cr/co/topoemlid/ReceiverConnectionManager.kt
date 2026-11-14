@@ -35,6 +35,7 @@ class ReceiverConnectionManager(context: Context) {
     private val gsvByTalker = mutableMapOf<String, MutableMap<String, SatelliteSignal>>()
     private val gsvCycleStarted = mutableMapOf<String, Long>()
     private val gsvReported = mutableMapOf<String, Int>()
+    private val gsvReportedAt = mutableMapOf<String, Long>()
     private val gsvSatelliteSeenAt = mutableMapOf<String, Long>()
     private var gsvMessageCount = 0
     private var gsaMessageCount = 0
@@ -373,8 +374,15 @@ class ReceiverConnectionManager(context: Context) {
 
                     NmeaParser.parseGsv(line)?.let { gsv ->
                         gsvMessageCount++
-                        gsv.satellitesInView?.let { gsvReported[gsv.talker] = it }
                         val nowGsv = System.currentTimeMillis()
+                        gsv.satellitesInView?.let {
+                            gsvReported[gsv.talker] = it
+                            gsvReportedAt[gsv.talker] = nowGsv
+                        }
+                        gsvReportedAt.keys.filter { nowGsv - (gsvReportedAt[it] ?: 0L) > 15_000L }.forEach {
+                            gsvReportedAt.remove(it)
+                            gsvReported.remove(it)
+                        }
                         val key = gsv.talker
                         // NMEA 4.x may interleave multiple GSV signal-ID cycles for the
                         // same constellation. Resetting on every message #1 discards
@@ -525,6 +533,7 @@ class ReceiverConnectionManager(context: Context) {
         gsvByTalker.clear()
         gsvCycleStarted.clear()
         gsvReported.clear()
+        gsvReportedAt.clear()
         gsvSatelliteSeenAt.clear()
         gsvMessageCount = 0
         gsaMessageCount = 0
