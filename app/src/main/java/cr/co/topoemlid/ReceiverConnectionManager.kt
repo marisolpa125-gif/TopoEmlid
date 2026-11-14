@@ -395,7 +395,10 @@ class ReceiverConnectionManager(context: Context) {
                             val existing = cycle[sat.id]
                             cycle[sat.id] = SatelliteSignal(
                                 id = sat.id, constellation = sat.constellation,
-                                snrDbHz = sat.snrDbHz ?: existing?.snrDbHz,
+                                // Multiple NMEA 4.x GSV signal groups can report the
+                                // same satellite with different carrier strengths.
+                                // Keep the strongest current reading for its bar.
+                                snrDbHz = listOfNotNull(sat.snrDbHz, existing?.snrDbHz).maxOrNull(),
                                 elevationDeg = sat.elevationDeg ?: existing?.elevationDeg,
                                 azimuthDeg = sat.azimuthDeg ?: existing?.azimuthDeg,
                                 usedInFix = sat.id in usedSatelliteIds
