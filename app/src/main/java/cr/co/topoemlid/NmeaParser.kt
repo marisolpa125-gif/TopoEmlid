@@ -89,9 +89,20 @@ object NmeaParser {
             else -> null
         }
         val talker = sentence.drop(1).take(2)
+        // NMEA 4.1 GSA may use GN as talker and append a system ID:
+        // 1 GPS, 2 GLONASS, 3 Galileo, 4 BeiDou, 5 QZSS, 6 NavIC.
+        val systemTalker = if (talker == "GN") when (p.getOrNull(18)?.toIntOrNull()) {
+            1 -> "GP"
+            2 -> "GL"
+            3 -> "GA"
+            4 -> "GB"
+            5 -> "GQ"
+            6 -> "GI"
+            else -> talker
+        } else talker
         val used = (3..14)
             .mapNotNull { p.getOrNull(it)?.toIntOrNull() }
-            .map { satelliteLabel(talker, it) }
+            .map { satelliteLabel(systemTalker, it) }
             .toSet()
         return GsaStatus(
             mode = mode,
