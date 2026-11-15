@@ -287,6 +287,7 @@ class ReceiverConnectionManager(context: Context) {
 
                 while (!Thread.currentThread().isInterrupted) {
                     val line = reader.readLine() ?: break
+                    GnssNmeaDiagnostics.record(line)
                     NmeaParser.parseGga(line)?.let { gga ->
                         ggaMessageCount++
                         val now = System.currentTimeMillis()
