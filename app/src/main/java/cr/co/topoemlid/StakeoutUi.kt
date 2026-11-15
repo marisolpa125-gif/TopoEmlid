@@ -2093,7 +2093,7 @@ private fun StakeoutGuidancePanel(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                "Distancia estable al objetivo: %.3f m".format(stableDistanceM),
+                "Distancia actual al objetivo: %.3f m".format(rawDistanceM),
                 style = MaterialTheme.typography.bodySmall
             )
             Text(
