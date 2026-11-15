@@ -75,6 +75,9 @@ synchronized(outputLock) {
 
                 var received = 0L
                 var forwarded = 0L
+                var lastDiagnosticAt = 0L
+                var lastForwardSucceeded = true
+                GnssNmeaDiagnostics.recordEvent("NTRIP connected; RTCM stream accepted")
                 status = status.copy(
                     connecting = false,
                     connected = true,
@@ -92,6 +95,12 @@ synchronized(outputLock) {
                     received += n
                     val sent = forwardCorrections(buffer, n)
                     if (sent) forwarded += n
+                    val diagnosticNow = System.currentTimeMillis()
+                    if (diagnosticNow - lastDiagnosticAt >= 1_000L || sent != lastForwardSucceeded) {
+                        GnssNmeaDiagnostics.recordEvent("RTCM received=$received forwarded=$forwarded writeOk=$sent chunkBytes=$n")
+                        lastDiagnosticAt = diagnosticNow
+                    }
+                    lastForwardSucceeded = sent
 
                     status = status.copy(
                         connected = true,
@@ -106,6 +115,7 @@ synchronized(outputLock) {
                 }
 
                 if (!Thread.currentThread().isInterrupted) {
+                    GnssNmeaDiagnostics.recordEvent("NTRIP disconnected: caster closed stream")
                     status = status.copy(
                         connected = false,
                         connecting = false,
@@ -113,6 +123,7 @@ synchronized(outputLock) {
                     )
                 }
             } catch (t: Throwable) {
+                GnssNmeaDiagnostics.recordEvent("NTRIP error: " + t.javaClass.simpleName)
                 if (!Thread.currentThread().isInterrupted) {
                     status = status.copy(
                         connected = false,
