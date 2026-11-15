@@ -32,6 +32,9 @@ class ReceiverConnectionManager(context: Context) {
     private var requestedProfileId: String? = null
     private var floatStreak = 0
     private val usedSatelliteIds = java.util.Collections.synchronizedSet(linkedSetOf<String>())
+    // GSA reports arrive separately per constellation. Expire each constellation's
+    // previous report instead of accumulating obsolete "used" flags indefinitely.
+    private val gsaUsedByConstellation = mutableMapOf<String, Pair<Long, Set<String>>>()
     private val gsvByTalker = mutableMapOf<String, MutableMap<String, SatelliteSignal>>()
     private val gsvCycleStarted = mutableMapOf<String, Long>()
     private val gsvReported = mutableMapOf<String, Int>()
@@ -357,11 +360,19 @@ class ReceiverConnectionManager(context: Context) {
 
                     NmeaParser.parseGsa(line)?.let { gsa ->
                         gsaMessageCount++
-                        // Drop stale GSA satellite IDs between reporting windows.
+                        // Refresh only constellations represented by this GSA message.
+                        // Empty satellite lists are valid and must clear old "used" flags.
                         val nowGsa = System.currentTimeMillis()
-                        if (nowGsa - lastGsaCycleAt > 2500L) usedSatelliteIds.clear()
+                        val grouped = gsa.usedSatelliteIds.groupBy { it.take(1) }
+                        if (grouped.isNotEmpty()) {
+                            grouped.forEach { (prefix, ids) ->
+                                gsaUsedByConstellation[prefix] = nowGsa to ids.toSet()
+                            }
+                        }
+                        gsaUsedByConstellation.entries.removeAll { nowGsa - it.value.first > 4_000L }
+                        usedSatelliteIds.clear()
+                        gsaUsedByConstellation.values.forEach { usedSatelliteIds.addAll(it.second) }
                         lastGsaCycleAt = nowGsa
-                        usedSatelliteIds += gsa.usedSatelliteIds
                         // Use the newest parser snapshot, not Compose's potentially
                         // delayed UI state. A stale snapshot can erase recent GSV bars.
                         val marked = latestNmeaStatus.satelliteSignals.map { sat ->
@@ -544,6 +555,7 @@ class ReceiverConnectionManager(context: Context) {
         // El worker saldrá al cerrarse su socket. Quitamos nuestra referencia
         // únicamente después de haber invalidado requestedProfileId.
         worker = null
+        gsaUsedByConstellation.clear()
         usedSatelliteIds.clear()
         gsvByTalker.clear()
         gsvCycleStarted.clear()
