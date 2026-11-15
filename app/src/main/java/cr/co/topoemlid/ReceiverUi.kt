@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.UUID
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 private data class NearbyReceiver(
     val name: String,
@@ -1614,6 +1615,16 @@ private fun InfoCard(text: String) {
 private fun NmeaCaptureControls() {
     val context = LocalContext.current
     var started by remember { mutableStateOf(false) }
+    var secondsLeft by remember { mutableIntStateOf(0) }
+    LaunchedEffect(secondsLeft > 0) {
+        if (secondsLeft > 0) {
+            while (secondsLeft > 0) {
+                delay(1000L)
+                secondsLeft = (secondsLeft - 1).coerceAtLeast(0)
+            }
+            GnssNmeaDiagnostics.isRecording() // Finalize capture when 30s elapse.
+        }
+    }
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
     ) { uri ->
@@ -1633,18 +1644,19 @@ private fun NmeaCaptureControls() {
         Button(onClick = {
             GnssNmeaDiagnostics.start()
             started = true
-        }, enabled = !GnssNmeaDiagnostics.isRecording()) {
+            secondsLeft = 30
+        }, enabled = secondsLeft == 0) {
             Text("Grabar NMEA 30 s")
         }
         OutlinedButton(onClick = {
             exportLauncher.launch("TopoEmlid_NMEA_diagnostico.txt")
-        }, enabled = started && !GnssNmeaDiagnostics.isRecording()) {
+        }, enabled = started && secondsLeft == 0) {
             Text("Guardar TXT")
         }
     }
     if (started) {
         Text(
-            if (GnssNmeaDiagnostics.isRecording()) "Grabando 30 segundos. Espere antes de guardar."
+            if (secondsLeft > 0) "Grabando NMEA: faltan $secondsLeft segundos."
             else "Grabación finalizada. Pulse Guardar TXT.",
             style = MaterialTheme.typography.bodySmall
         )
