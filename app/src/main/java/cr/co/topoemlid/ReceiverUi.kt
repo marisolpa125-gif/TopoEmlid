@@ -851,6 +851,7 @@ private fun ReceiverSubPage(
                 StatusLine("Satélites usados (GGA)", gnss.satellites?.toString() ?: "—")
                 Spacer(Modifier.height(8.dp))
                 Text("Diagnóstico NMEA", fontWeight = FontWeight.Bold)
+                NmeaCaptureControls()
                 StatusLine("Mensajes GGA / GSA / GSV", "${gnss.nmeaGgaMessages} / ${gnss.nmeaGsaMessages} / ${gnss.nmeaGsvMessages}")
                 StatusLine("Constelaciones recibidas (GSV)", gnss.nmeaGsvTalkers)
                 StatusLine("Satélites reportados por GSV", gnss.nmeaGsvReported)
@@ -1607,4 +1608,46 @@ private fun InfoCard(text: String) {
     Card(Modifier.fillMaxWidth().padding(top = 10.dp)) {
         Text(text, modifier = Modifier.padding(14.dp))
     }
+}
+
+@Composable
+private fun NmeaCaptureControls() {
+    val context = LocalContext.current
+    var started by remember { mutableStateOf(false) }
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { stream ->
+                    stream.write(GnssNmeaDiagnostics.snapshot().toByteArray(Charsets.UTF_8))
+                } ?: error("No se pudo abrir el archivo")
+            }.onSuccess {
+                android.widget.Toast.makeText(context, "Diagnóstico NMEA guardado", android.widget.Toast.LENGTH_LONG).show()
+            }.onFailure {
+                android.widget.Toast.makeText(context, "Error al guardar: ${it.message}", android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = {
+            GnssNmeaDiagnostics.start()
+            started = true
+        }, enabled = !GnssNmeaDiagnostics.isRecording()) {
+            Text("Grabar NMEA 30 s")
+        }
+        OutlinedButton(onClick = {
+            exportLauncher.launch("TopoEmlid_NMEA_diagnostico.txt")
+        }, enabled = started && !GnssNmeaDiagnostics.isRecording()) {
+            Text("Guardar TXT")
+        }
+    }
+    if (started) {
+        Text(
+            if (GnssNmeaDiagnostics.isRecording()) "Grabando 30 segundos. Espere antes de guardar."
+            else "Grabación finalizada. Pulse Guardar TXT.",
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+    Text("El archivo incluye tramas NMEA originales y puede contener coordenadas precisas. Revíselo antes de compartirlo.", style = MaterialTheme.typography.bodySmall)
 }
