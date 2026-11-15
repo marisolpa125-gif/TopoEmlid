@@ -35,6 +35,17 @@ object GnssNmeaDiagnostics {
         }
     }
 
+    /** Diagnostic events contain transport counters only, never credentials or RTCM payloads. */
+    @Synchronized fun recordEvent(event: String) {
+        if (!active) return
+        val now = System.currentTimeMillis()
+        if (now - startedAt >= DURATION_MS || lines.size >= MAX_LINES) {
+            active = false
+            return
+        }
+        lines.add("$now | # " + event.take(256))
+    }
+
     @Synchronized fun isRecording(): Boolean {
         if (active && System.currentTimeMillis() - startedAt >= DURATION_MS) active = false
         return active
