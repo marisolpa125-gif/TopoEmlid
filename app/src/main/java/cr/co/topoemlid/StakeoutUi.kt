@@ -2311,8 +2311,14 @@ private fun StakeoutGuidancePanel(
 
                         // Rosa giratoria según rumbo magnético de la tablet.
                         // Centro = objetivo; marcador = posición actual de la antena.
-                        val declinationRad = Math.toRadians(if (compassAvailable) magneticDeclinationDeg else 0.0)
-                        val headingRad = Math.toRadians(if (compassAvailable) headingMagneticDeg else 0.0)
+                        // ON: fixed geographic north at the top, matching the N/E
+                        // numeric guidance. OFF: rotate with tablet heading and
+                        // match the forward/right guidance shown to the operator.
+                        val declinationRad = 0.0
+                        val headingRad = Math.toRadians(
+                            if (!compassEnabled && compassAvailable)
+                                headingMagneticDeg + magneticDeclinationDeg else 0.0
+                        )
 
                         fun projectToMagnetic(worldEast: Double, worldNorth: Double): Pair<Double, Double> {
                             val magEast =
