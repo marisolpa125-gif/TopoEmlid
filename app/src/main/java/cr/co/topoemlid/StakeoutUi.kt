@@ -1982,58 +1982,9 @@ private fun StakeoutGuidancePanel(
         onDispose { sensorManager.unregisterListener(listener) }
     }
 
-    // La posición RTK cruda se conserva para cálculos/guardado. La mira usa
-    // una ventana mediana corta para rechazar saltos aislados de varios centímetros.
-    var recentDeltas by remember(target.id) {
-        mutableStateOf(listOf(rawNorthM to rawEastM))
-    }
-    var displayNorthM by remember(target.id) { mutableDoubleStateOf(rawNorthM) }
-    var displayEastM by remember(target.id) { mutableDoubleStateOf(rawEastM) }
-
-    fun median(values: List<Double>): Double {
-        if (values.isEmpty()) return 0.0
-        val sorted = values.sorted()
-        val mid = sorted.size / 2
-        return if (sorted.size % 2 == 1) sorted[mid]
-        else (sorted[mid - 1] + sorted[mid]) / 2.0
-    }
-
-    LaunchedEffect(rawNorthM, rawEastM, target.id) {
-        recentDeltas = (recentDeltas + (rawNorthM to rawEastM)).takeLast(5)
-
-        val medianNorth = median(recentDeltas.map { it.first })
-        val medianEast = median(recentDeltas.map { it.second })
-        val jumpFromMedian = hypot(rawNorthM - medianNorth, rawEastM - medianEast)
-
-        if (rawDistanceM <= 1.0) {
-            // Replanteo fino: seguir la época RTK más reciente casi en tiempo real.
-            // Solo rechazar un salto claramente aislado respecto a las últimas épocas.
-            val useRaw = recentDeltas.size < 3 || jumpFromMedian <= 0.20
-            val targetNorth = if (useRaw) rawNorthM else medianNorth
-            val targetEast = if (useRaw) rawEastM else medianEast
-            val alpha = if (rawDistanceM <= 0.20) 0.92 else 0.86
-
-            displayNorthM += (targetNorth - displayNorthM) * alpha
-            displayEastM += (targetEast - displayEastM) * alpha
-        } else {
-            // Lejos del punto: algo de suavizado hace la guía más estable.
-            displayNorthM += (medianNorth - displayNorthM) * 0.78
-            displayEastM += (medianEast - displayEastM) * 0.78
-        }
-
-        // Zona muerta mínima: no esconder desplazamientos de centímetros.
-        if (abs(displayNorthM) < 0.001) displayNorthM = 0.0
-        if (abs(displayEastM) < 0.001) displayEastM = 0.0
-    }
-
-    // Para la distancia y el estado de llegada, en la mira fina usamos la
-    // posición RTK actual. Lejos del punto usamos la mediana estable.
-    val medianNorthM = median(recentDeltas.map { it.first })
-    val medianEastM = median(recentDeltas.map { it.second })
-    val stableNorthM = if (rawDistanceM <= 1.0) rawNorthM else medianNorthM
-    val stableEastM = if (rawDistanceM <= 1.0) rawEastM else medianEastM
-    val stableDistanceM = hypot(stableNorthM, stableEastM)
-
+    // Render the current GNSS epoch directly. Median filtering and exponential
+    // smoothing lag behind the antenna and can disagree with numeric guidance.
+    // GNSS quality remains reported separately; do not synthesize precision.
     // La mira nunca "teletransporta" el punto al centro.
     // Siempre muestra la posición estable calculada.
     val isRtkFix = gnss.connected && gnss.solution.contains("FIX", ignoreCase = true)
@@ -2383,10 +2334,16 @@ private fun StakeoutGuidancePanel(
 
                         // La curva radial fija deja espacio al entrar en la mira y
                         // da más recorrido visual a los últimos centímetros.
-                        val (screenEast, screenNorth) = projectToMagnetic(
-                            antennaEast / (distanceM + 0.75),
-                            antennaNorth / (distanceM + 0.75)
-                        )
+                        // At the 5 m transition the antenna must already be
+                        // inside the reticle. The same raw delta drives both
+                        // the numeric distance and this marker.
+                        val radialFraction = (distanceM / (distanceM + 0.75)).coerceIn(0.0, 1.0)
+                        val (screenEast, screenNorth) = if (distanceM > 0.0) {
+                            projectToMagnetic(
+                                antennaEast / distanceM * radialFraction,
+                                antennaNorth / distanceM * radialFraction
+                            )
+                        } else 0.0 to 0.0
                         val marker = magneticToScreen(screenEast, screenNorth, markerTravelPx)
 
                         drawCircle(
