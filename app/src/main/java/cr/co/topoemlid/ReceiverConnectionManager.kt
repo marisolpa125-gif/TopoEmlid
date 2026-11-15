@@ -362,7 +362,9 @@ class ReceiverConnectionManager(context: Context) {
                         if (nowGsa - lastGsaCycleAt > 2500L) usedSatelliteIds.clear()
                         lastGsaCycleAt = nowGsa
                         usedSatelliteIds += gsa.usedSatelliteIds
-                        val marked = status.satelliteSignals.map { sat ->
+                        // Use the newest parser snapshot, not Compose's potentially
+                        // delayed UI state. A stale snapshot can erase recent GSV bars.
+                        val marked = latestNmeaStatus.satelliteSignals.map { sat ->
                             sat.copy(usedInFix = sat.id in usedSatelliteIds)
                         }
                         postStatus(
@@ -417,8 +419,15 @@ class ReceiverConnectionManager(context: Context) {
                                 gsvSatelliteSeenAt.remove("$talker:$id")
                             }
                         }
+                        // Merge by constellation AND satellite ID. Different GNSS
+                        // constellations can reuse PRNs, and a later signal group
+                        // must not erase the stronger signal or fix-use marker.
                         val satellites = gsvByTalker.values.flatMap { it.values }
-                            .associateBy { it.id }.values
+                            .groupBy { it.constellation to it.id }
+                            .values.map { group ->
+                                val best = group.maxByOrNull { it.snrDbHz ?: -1.0 } ?: group.first()
+                                best.copy(usedInFix = group.any { it.usedInFix } || best.id in usedSatelliteIds)
+                            }
                             .sortedWith(compareBy<SatelliteSignal> { it.constellation }.thenBy { it.id })
                         val snrValues = satellites.mapNotNull { it.snrDbHz }
                         postStatus(latestNmeaStatus.copy(
